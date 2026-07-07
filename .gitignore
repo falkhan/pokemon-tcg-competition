@@ -1,0 +1,8 @@
+.kaggle
+.claude
+.venv
+
+replays/**
+dist/**
+cg
+pokemon-tcg-ai-battle
