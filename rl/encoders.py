@@ -35,6 +35,10 @@ N_STATUS = 5         # poisoned/burned/asleep/paralyzed/confused
 
 BASIC_FIGHTING_ENERGY = 6  # card id; teacher's Mega Brave scales on discarded copies
 
+# NOTE: a per-card-id "revealed opponent cards" feature was tried and reverted — a probe
+# showed the opponent archetype is ALREADY ~98% identifiable from the pooled features below,
+# so it was redundant and only added overfitting. See docs/DECISIONS.md 2026-07-08.
+
 # Per-Pokémon-slot: card features + hp/maxHp/energy-count + energy-type counts + tools pool
 SLOT_DIM = FEAT_DIM + 3 + N_ENERGY + FEAT_DIM
 # globals + my hand pool + 2 discard pools + my discarded-fighting-energy count
