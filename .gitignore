@@ -7,3 +7,8 @@ dist/**
 cg
 pokemon-tcg-ai-battle
 __pycache__/
+
+# Competition-provided files: rules PDFs and the original card database.
+# Downloaded via the Kaggle CLI, not committed (see README setup step 2).
+*.pdf
+data/EN_Card_Data.csv

@@ -45,33 +45,46 @@ in [`docs/`](docs/):
 - A [Kaggle](https://www.kaggle.com) account (to download competition files; an API
   token is only needed if you want to submit from the CLI)
 
-### 2. Download the sample submission from the Kaggle competition (required!)
+### 2. Download the competition files from Kaggle (required!)
 
-The game engine bindings (`cg/` — `api.py`, `sim.py`, `utils.py`, and the compiled
-`libcg.so`) are **not in this repository** (they are competition-provided and
-gitignored). Nothing in this project runs without them.
+The competition-provided files are **not in this repository** (all gitignored):
 
-1. Go to the competition page:
-   <https://www.kaggle.com/competitions/pokemon-tcg-ai-battle>
-2. Download the **sample submission** — e.g. the output tarball
-   (`submission.tar.gz`) of the official sample rule-based agent
-   ([A Sample Rule-Based Agent: Mega Lucario ex Deck](https://www.kaggle.com/code/kiyotah/a-sample-rule-based-agent-mega-lucario-ex-deck)),
-   which bundles `main.py`, `deck.csv`, and the `cg/` engine.
-3. Extract it and copy the **`cg/` folder into the repository root**:
+- `cg/` — the game engine bindings (`api.py`, `sim.py`, `utils.py`, and the compiled
+  `libcg.so`). Nothing in this project runs without them.
+- `data/EN_Card_Data.csv` — the original card database (needed by
+  `deck_analysis.ipynb` to regenerate the feature tables).
+- The rules/API PDFs.
 
-   ```
-   pokemon-tcg-competition/
-   ├── cg/            <- from the sample submission (api.py, sim.py, utils.py, libcg.so)
-   ├── rl/
-   ├── submission/
-   └── ...
-   ```
+Get them via the Kaggle CLI (installed by `uv sync`; needs a
+[Kaggle API token](https://www.kaggle.com/settings)) from the
+[competition page](https://www.kaggle.com/competitions/pokemon-tcg-ai-battle):
+
+```bash
+# Competition data: sample submission (with the cg/ engine), card database, rules PDFs
+uv run kaggle competitions download -c pokemon-tcg-ai-battle
+unzip pokemon-tcg-ai-battle.zip -d pokemon-tcg-ai-battle
+```
+
+Then place the files where the project expects them:
+
+1. Copy the **`cg/` folder** from the sample submission into the repository root
+   (it's bundled in the sample agent's `submission.tar.gz` — the official
+   [Mega Lucario ex rule-based agent](https://www.kaggle.com/code/kiyotah/a-sample-rule-based-agent-mega-lucario-ex-deck) —
+   alongside `main.py` and `deck.csv`).
+2. Copy **`EN_Card_Data.csv`** into `data/`.
+
+```
+pokemon-tcg-competition/
+├── cg/                      <- from the sample submission (api.py, sim.py, utils.py, libcg.so)
+├── data/
+│   └── EN_Card_Data.csv     <- from the competition data download
+├── rl/
+├── submission/
+└── ...
+```
 
 The build pipeline (`rl/export.py`) later syncs `cg/` into `submission/` automatically —
 Kaggle's agent runtime does not provide the engine, so it must ship inside the tarball.
-
-Optionally also download the competition's data files (rules PDFs etc.) into
-`pokemon-tcg-ai-battle/` (also gitignored).
 
 ### 3. Install dependencies
 
@@ -122,7 +135,7 @@ replay's `visualize` JSON to the official ptcgvis visualizer — see
 ```
 ├── ARCHITECTURE.md      <- full design: policies, training plan, tooling decisions
 ├── docs/                <- milestone diary (M0.md, M1.md, ...)
-├── data/                <- card database + extracted feature tables (parquet)
+├── data/                <- extracted feature tables (parquet); EN_Card_Data.csv is downloaded, not committed
 ├── rl/                  <- training side (torch): encoders, policy, BC, PPO, gates
 ├── submission/          <- the shipped agent: numpy-only main.py + weights + deck
 ├── reference/           <- official sample notebooks from the competition
