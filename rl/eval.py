@@ -15,12 +15,19 @@ def _agent_name(agent) -> str:
 
 
 def play_games(agent_a, agent_b, n_games: int, replay_prefix: str | None = None,
-               names: tuple[str, str] | None = None) -> tuple[float, list[list[int]]]:
+               names: tuple[str, str] | None = None,
+               swap_slots: bool = True) -> tuple[float, list[list[int]]]:
     """Run n_games of agent_a vs agent_b. Returns (win_rate_a, per-game rewards).
 
     Agents may be callables or file paths / built-in names ("random", "first") —
     anything kaggle_environments' env.run accepts. Rewards per game are
-    [reward_a, reward_b] with +1 win / -1 loss / 0 draw.
+    [reward_a, reward_b] with +1 win / -1 loss / 0 draw, ALWAYS reported from
+    agent_a's perspective regardless of which slot it occupied.
+
+    swap_slots (default True): agent_a plays even games in the player-0 slot and
+    odd games in player-1. Slot 0 carries a measured ~61% built-in advantage in
+    this engine, so unswapped head-to-head numbers are biased by ~+10pp; only
+    disable this for slot-bias experiments.
 
     If replay_prefix is set, EVERY game is saved to replays/ as a self-contained
     HTML page (embedded visualize JSON + button opening the official ptcgvis
@@ -29,11 +36,16 @@ def play_games(agent_a, agent_b, n_games: int, replay_prefix: str | None = None,
     names = names or (_agent_name(agent_a), _agent_name(agent_b))
     results = []
     for g in range(n_games):
+        a_slot = g % 2 if swap_slots else 0
         env = make("cabt")
-        env.run([agent_a, agent_b])
-        results.append([env.state[0].reward, env.state[1].reward])
+        env.run([agent_a, agent_b] if a_slot == 0 else [agent_b, agent_a])
+        r = [env.state[0].reward, env.state[1].reward]
+        if a_slot == 1:
+            r = r[::-1]                       # report from agent_a's perspective
+        results.append(r)
         if replay_prefix:
-            save_replay(env, f"{replay_prefix}_{g:03d}", names)
+            slot_names = names if a_slot == 0 else (names[1], names[0])
+            save_replay(env, f"{replay_prefix}_{g:03d}", slot_names)
 
     wins = sum((r[0] or 0) > (r[1] or 0) for r in results)
     return wins / n_games, results

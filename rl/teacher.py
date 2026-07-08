@@ -13,24 +13,39 @@ import os
 import sys
 from pathlib import Path
 
-TEACHER_PATH = Path(__file__).resolve().parent.parent / "sample-agent" / "main.py"
+ROOT = Path(__file__).resolve().parent.parent
+TEACHER_PATHS = {                          # rule-based agent per archetype
+    "lucario": ROOT / "sample-agent" / "main.py",
+    "iono": ROOT / "sample-agent-iono" / "main.py",
+}
+DECK_PATHS = {name: ROOT / "decks" / f"{name}.csv"
+              for name in ("kyogre", "lucario", "iono")}
 
 
-def load_teacher(instance_name: str):
-    """Exec a fresh, isolated instance of the teacher module. Returns its agent callable.
+def load_teacher(instance_name: str, agent: str = "lucario", deck: str | None = None):
+    """Exec a fresh, isolated instance of a rule-based agent. Returns its callable.
 
-    instance_name must be unique per live instance (e.g. "teacher_p0", "teacher_p1").
+    instance_name must be unique per live instance (globals are module-level state).
+    agent: which rule brain ("lucario" or "iono").
+    deck:  which deck it pilots ("kyogre"/"lucario"/"iono"); defaults to the agent's
+           own archetype. The brain's card-specific heuristics only fire on matching
+           cards, so a mismatched deck is piloted on generic fallback scores (this is
+           exactly how the Lucario brain played the Kyogre deck through all of M1).
     """
+    path = TEACHER_PATHS[agent]
+    deck = deck or agent
     module_name = f"_teacher_{instance_name}"
-    spec = importlib.util.spec_from_file_location(module_name, TEACHER_PATH)
+    spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
 
     cwd = os.getcwd()
-    os.chdir(TEACHER_PATH.parent)          # so the teacher's "../deck.csv" resolves
+    os.chdir(path.parent)                  # so the agent's "../deck.csv" import resolves
     try:
-        sys.modules[module_name] = module  # so dataclass/module internals resolve
+        sys.modules[module_name] = module
         spec.loader.exec_module(module)
     finally:
         os.chdir(cwd)
 
+    # Override the deck the agent returns at setup (its heuristics are deck-independent).
+    module.my_deck = [int(x) for x in DECK_PATHS[deck].read_text().split() if x.strip()]
     return module.agent

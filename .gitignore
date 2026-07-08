@@ -12,3 +12,4 @@ __pycache__/
 # Downloaded via the Kaggle CLI, not committed (see README setup step 2).
 *.pdf
 data/EN_Card_Data.csv
+events.out.*
