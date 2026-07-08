@@ -7,3 +7,5 @@ dist/**
 cg
 pokemon-tcg-ai-battle
 __pycache__/
+
+events.out.*

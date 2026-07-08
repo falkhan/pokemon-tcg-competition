@@ -1,33 +1,58 @@
+"""Export a (checkpoint, deck) pair into the numpy-only submission bundle.
+
+A policy and the deck it was trained on are ONE artifact — a policy trained on
+Lucario plays Kyogre badly and vice-versa (M1 lesson). So export always ships a
+matching pair, and the deck travels with the weights.
+
+  python -m rl.export --checkpoint bc_lucario.pt --deck lucario
+  python -m rl.export                      # defaults below
+"""
+import argparse
 import shutil
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
 from rl.encoders import FEAT
 from rl.policy import OptionScorer, save_npz
 
-SUBMISSION_PATH = Path(__file__).parent.parent / "submission"
-ROOT_PATH = Path(__file__).parent.parent
+ROOT = Path(__file__).resolve().parent.parent
+SUBMISSION = ROOT / "submission"
 
-torch.manual_seed(0)
-model = OptionScorer()
+# Current shipping pair = our best agent so far. bc_lucario was WORSE (BC can't
+# capture the Lucario expert's hidden-state lookahead — see docs/M2 findings), so
+# bc_v1+Kyogre remains the champion until PPO/search beats it.
+DEFAULT_CHECKPOINT = "bc_v1.pt"
+DEFAULT_DECK = "kyogre"
 
-# Ship the newest trained checkpoint when one exists; fall back to the seeded
-# random init otherwise (M0 behavior).
-checkpoints = sorted((ROOT_PATH / "checkpoints").glob("*.pt"),
-                     key=lambda p: p.stat().st_mtime)
-if checkpoints:
-    model.load_state_dict(torch.load(checkpoints[-1], map_location="cpu"))
-    print(f"exporting trained checkpoint: {checkpoints[-1].name}")
-else:
-    print("no checkpoint found -- exporting seeded random weights")
 
-save_npz(model,str(SUBMISSION_PATH / "policy_weights.npz"))
-np.save(str(SUBMISSION_PATH / "card_features.npy"), FEAT)
-shutil.copy(str(ROOT_PATH / "deck.csv"), str(SUBMISSION_PATH / "deck.csv"))
+def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> None:
+    model = OptionScorer()
+    ckpt_path = ROOT / "checkpoints" / checkpoint
+    if ckpt_path.exists():
+        model.load_state_dict(torch.load(ckpt_path, map_location="cpu"))
+        print(f"exporting checkpoint {checkpoint} paired with deck '{deck}'")
+    else:
+        torch.manual_seed(0)
+        print(f"checkpoint {checkpoint} not found -- exporting seeded random weights")
 
-# The Kaggle agent runtime provides numpy but NOT the cg engine bindings -- the
-# agent only gets what's inside its own bundle, so cg/ must ship with it.
-shutil.copytree(ROOT_PATH / "cg", SUBMISSION_PATH / "cg",
-                ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
+    deck_src = ROOT / "decks" / f"{deck}.csv"
+    if not deck_src.exists():                      # fall back to the root deck
+        deck_src = ROOT / "deck.csv"
+
+    save_npz(model, str(SUBMISSION / "policy_weights.npz"))
+    np.save(str(SUBMISSION / "card_features.npy"), FEAT)
+    shutil.copy(str(deck_src), str(SUBMISSION / "deck.csv"))
+
+    # Kaggle provides numpy but NOT the cg engine bindings -- bundle cg/ with the agent.
+    shutil.copytree(ROOT / "cg", SUBMISSION / "cg",
+                    ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
+
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
+    p.add_argument("--deck", default=DEFAULT_DECK)
+    args = p.parse_args()
+    export(args.checkpoint, args.deck)

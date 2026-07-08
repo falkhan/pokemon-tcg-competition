@@ -26,13 +26,19 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "bc"
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _load_deck() -> list[int]:
-    return [int(x) for x in (ROOT / "deck.csv").read_text().split() if x.strip()]
+def _load_deck(name: str | None = None) -> list[int]:
+    path = (ROOT / "deck.csv") if name is None else (ROOT / "decks" / f"{name}.csv")
+    return [int(x) for x in path.read_text().split() if x.strip()]
 
 
 def collect_games(n_games: int, out_dir: Path = DATA_DIR, shard_size: int = 200,
-                  log_every: int = 25) -> None:
-    """Teacher-vs-teacher self-play; record every decision of BOTH players.
+                  log_every: int = 25, agent: str = "lucario", deck: str = "lucario") -> None:
+    """Rule-agent self-play on a chosen (agent, deck); record every decision of BOTH players.
+
+    Pair the agent with its OWN deck (agent="lucario", deck="lucario") so its
+    card-specific heuristics fire — that's the expert-quality demonstration the
+    M1 mismatch was missing (M1 cloned the Lucario brain on the Kyogre deck =
+    generic play). See docs/M2 round-robin: Lucario is the strongest archetype.
 
     Shard layout (ragged options stored flat + per-decision lengths):
       states    (D, STATE_DIM + N_CONTEXTS) float32   state ++ context one-hot
@@ -45,9 +51,10 @@ def collect_games(n_games: int, out_dir: Path = DATA_DIR, shard_size: int = 200,
                                                       deciding player (value-head target)
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    deck = _load_deck()
+    deck_ids = _load_deck(deck)
     # Two ISOLATED teacher instances -- they hold per-player mutable globals.
-    teachers = [load_teacher("p0"), load_teacher("p1")]
+    teachers = [load_teacher("p0", agent=agent, deck=deck),
+                load_teacher("p1", agent=agent, deck=deck)]
 
     shard: dict[str, list] = {k: [] for k in
                               ("states", "options", "n_options", "labels", "game_ids", "results")}
@@ -72,7 +79,7 @@ def collect_games(n_games: int, out_dir: Path = DATA_DIR, shard_size: int = 200,
             v.clear()
 
     for game in range(n_games):
-        obs_dict, start_data = battle_start(deck, deck)
+        obs_dict, start_data = battle_start(deck_ids, deck_ids)
         if start_data.errorPlayer >= 0:
             raise ValueError(f"battle_start rejected the deck (errorType={start_data.errorType})")
 
@@ -256,12 +263,15 @@ if __name__ == "__main__":
     c = sub.add_parser("collect", help="run teacher self-play and write shards")
     c.add_argument("--games", type=int, default=1000)
     c.add_argument("--shard-size", type=int, default=200)
+    c.add_argument("--agent", type=str, default="lucario")
+    c.add_argument("--deck", type=str, default="lucario")
     t = sub.add_parser("train", help="train the BC policy on collected shards")
     t.add_argument("--epochs", type=int, default=10)
     t.add_argument("--name", type=str, default="bc_v1")
     args = p.parse_args()
 
     if args.cmd == "collect":
-        collect_games(args.games, shard_size=args.shard_size)
+        collect_games(args.games, shard_size=args.shard_size,
+                      agent=args.agent, deck=args.deck)
     elif args.cmd == "train":
         train(epochs=args.epochs, name=args.name)
