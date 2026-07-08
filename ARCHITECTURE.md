@@ -4,6 +4,11 @@ Plan for building a reinforcement-learning agent we can submit to the Kaggle sim
 initially just watching it play against itself, then learning until it starts winning
 BIGLY.
 
+> **Living docs:** this file is the intended design. What we actually tried, measured, and
+> changed our minds about lives in the milestone diaries (`docs/M0.md` … `docs/M2.md`) and,
+> in fast-index form, `docs/DECISIONS.md`. When a measurement contradicts the plan below,
+> add a DECISIONS entry and update the relevant section here — keep them in sync.
+
 ---
 
 ## 1. The big picture
