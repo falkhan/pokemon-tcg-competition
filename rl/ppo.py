@@ -28,7 +28,10 @@ CKPT_DIR = ROOT / "checkpoints"
 GAMMA = 0.99          # discount: how much future reward is worth now
 LAM = 0.95            # GAE lambda: bias/variance dial for advantage estimates
 CLIP_EPS = 0.2        # PPO ratio clip
-ENTROPY_COEF = 0.01   # exploration pressure (the M0 ATTACH lesson, as a loss term)
+ENTROPY_COEF = 0.001  # was 0.01 -- too high: the 25-iter run showed entropy RISING
+                      # (0.82 -> 1.0), i.e. the bonus overpowered the weak advantage signal
+                      # and diffused the policy toward random. Lowered 10x so the policy
+                      # gradient can actually sharpen the policy.
 VALUE_COEF = 0.5
 
 
