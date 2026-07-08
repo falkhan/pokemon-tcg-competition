@@ -7,6 +7,22 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-08 · Combat-lookahead features don't rescue Lucario BC → the wall is comprehensive
+**Hypothesis:** the experts' edge is *computable* combat lookahead (damage/KO/prize); exposing
+it as features would lift BC fidelity past its 55% ceiling and yield a strong Lucario pilot.
+**Result (docs/M3.md):** fidelity 55%→56.4% (flat); win rate vs bc_v1 champion **25%** (worse
+than the 38% *without* combat features). Refuted on both metrics. State-level aggregate
+features don't drive the expert's fine decisions, and ~56% is near the structural aliased-option
+ceiling.
+**Comprehensive finding:** across BC (Kyogre/Lucario ± combat features), PPO, MCTS, and
+supervised-value+search, **nothing beats bc_v1+Kyogre**, and it loses to the rule experts. The
+rule experts encode multi-turn planning that is very hard to learn or search on a CPU budget.
+**Next is a STRATEGY decision, not a tweak** — options: (a) engineer an improved rule-based
+agent (Piotr rejects verbatim reuse, but tuning/deck-building is fair), (b) full AlphaGo-Zero
+(train value on search-distribution states + MCTS policy targets — big, low-confidence given
+MCTS barely beats the policy), (c) accept bc_v1 (90% vs random) and pivot effort to deck search,
+(d) reassess scope. Learning goal (RL/NN mastery) is richly met regardless.
+
 ### 2026-07-08 · Search (MCTS or 1-ply) doesn't beat the greedy policy even with a good critic → value head is a classifier, not a fine-grained ranker
 **Observation:** with the good value head (0.87 sign-acc), MCTS was 53% vs greedy at n_sims=32
 but got WORSE with more sims (64→40%, 128→45%) — the value head is out-of-distribution on
