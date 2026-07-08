@@ -279,5 +279,7 @@ if __name__ == "__main__":
     p.add_argument("--iterations", type=int, default=50)
     p.add_argument("--games-per-iter", type=int, default=400)
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--start", type=str, default="bc_v1.pt")
     args = p.parse_args()
-    train(args.iterations, args.games_per_iter, args.workers)
+    train(args.iterations, args.games_per_iter, args.workers, lr=args.lr, start=args.start)

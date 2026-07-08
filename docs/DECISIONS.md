@@ -7,6 +7,21 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-08 · Supervised value-head training WORKS where PPO failed → the critic was trainable all along
+**Context:** 3 PPO attempts all failed to improve on bc_v1 (stall at low lr, degrade at high
+lr) — policy-gradient advantages are too noisy for this sparse-reward, mirror-heavy problem.
+**Decisive experiment (decoupled critic):** froze bc_v1's policy+body, trained ONLY the value
+head by supervised regression to self-play outcomes (11.5k states vs the opponent pool).
+Result: bc_v1's original value head was **useless** (MSE 1.0, sign-acc 0.62 ≈ chance); the
+trained head hit **MSE 0.35, sign-acc 0.87** — on the *same frozen features*. So the info was
+there, PPO just couldn't extract it; direct supervision nails it.
+**MCTS with the good critic:** 47% → **53%** vs greedy bc_v1 (correct determinization) — search
+*finally beats its own policy*, though modestly (likely sim-count-limited at n_sims=32).
+**Pivot:** stop training the critic with PPO. Train the value head **supervised on self-play
+outcomes** (stable, fast, effective) — an AlphaGo-Zero-lite recipe: self-play → outcome
+targets → supervised value head → MCTS with enough sims. (`checkpoints/bc_v1_value.pt`,
+`data/value_train.npz`) Sim-count sweep + archetype-inferred determinization are the next levers.
+
 ### 2026-07-08 · Opponent IS observable AND already well-encoded → value head problem is TRAINING, not representation
 **Observation (Piotr):** we don't see the opponent's hand/deck/prizes, but we *do* see
 their active/bench Pokémon (+ attached energy/tools) and their full discard pile — verified
