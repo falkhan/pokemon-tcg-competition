@@ -7,6 +7,20 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-08 · Search (MCTS or 1-ply) doesn't beat the greedy policy even with a good critic → value head is a classifier, not a fine-grained ranker
+**Observation:** with the good value head (0.87 sign-acc), MCTS was 53% vs greedy at n_sims=32
+but got WORSE with more sims (64→40%, 128→45%) — the value head is out-of-distribution on
+determinized/deep search states, so more search converges to a wrong answer. Shallow 1-ply
+value lookahead was also worse than greedy (38%).
+**Reading:** a 0.87 win/loss *classifier* isn't precise enough to *rank sibling actions*
+(their value differences are small and swamped by determinization noise). The well-trained
+BC policy head is a better action-ranker than value-based lookahead.
+**Implication:** to make search help, the value net must be trained ON the states search
+actually visits (AlphaGo-Zero style, fixes OOD) AND/OR determinization must be much better
+(archetype-inferred, multiple samples). Otherwise the greedy BC policy is the best pilot we
+have — and it's below the rule experts, so the DECK and a rule-agent baseline become the
+highest-leverage levers. See docs/M2.md synthesis.
+
 ### 2026-07-08 · Supervised value-head training WORKS where PPO failed → the critic was trainable all along
 **Context:** 3 PPO attempts all failed to improve on bc_v1 (stall at low lr, degrade at high
 lr) — policy-gradient advantages are too noisy for this sparse-reward, mirror-heavy problem.
