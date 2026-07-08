@@ -39,6 +39,41 @@ def play_games(agent_a, agent_b, n_games: int, replay_prefix: str | None = None,
     return wins / n_games, results
 
 
+def option_type_report(agent, opponent="random", n_games: int = 3) -> str:
+    """Behavioral fingerprint: in MAIN decisions, which OptionTypes does `agent`
+    pick vs what's offered? (The M0 diagnostic that explained losing to random:
+    ATTACH offered 1,439x, chosen 2x.) Returns a printable table.
+
+    `agent` must be a callable; `opponent` is anything env.run accepts.
+    """
+    from collections import Counter
+
+    from cg.api import OptionType, SelectContext, to_observation_class
+
+    offered, chosen = Counter(), Counter()
+
+    def spy(obs_dict):
+        picks = agent(obs_dict)
+        if obs_dict.get("select") is not None:
+            obs = to_observation_class(obs_dict)
+            if obs.select.context == SelectContext.MAIN:
+                for o in obs.select.option:
+                    offered[OptionType(o.type).name] += 1
+                for i in picks[:obs.select.maxCount]:
+                    chosen[OptionType(obs.select.option[i].type).name] += 1
+        return picks
+
+    for _ in range(n_games):
+        env = make("cabt")
+        env.run([spy, opponent])
+
+    lines = [f"{'OptionType':<12} {'offered':>8} {'chosen':>7} {'take%':>6}"]
+    for t in sorted(offered, key=offered.get, reverse=True):
+        take = chosen.get(t, 0)
+        lines.append(f"{t:<12} {offered[t]:>8} {take:>7} {100 * take // max(1, offered[t]):>5}%")
+    return "\n".join(lines)
+
+
 class RecordingAgent:
     """Wrap an agent to log every (obs, action) decision for BC / PPO training."""
 

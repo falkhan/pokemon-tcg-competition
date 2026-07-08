@@ -45,6 +45,40 @@ def parity_check() -> float:
     return float(np.abs(ours - ref).max())
 
 
+def encoder_parity_check(steps: int = 40) -> int:
+    """Guard against train/serve ENCODER drift (M0 lesson #5): walk a real game and
+    assert rl.encoders and the submission module encode every observation and
+    option identically. The weight-parity test can't catch this — it feeds random
+    vectors, never real observations. Returns the number of decisions compared."""
+    from cg.api import to_observation_class
+    from cg.game import battle_start, battle_select, battle_finish
+    from rl import encoders as enc
+
+    sub = load_submission_module()
+    assert (enc.STATE_DIM, enc.OPTION_DIM) == (sub.STATE_DIM, sub.OPTION_DIM), \
+        f"dim mismatch: rl {(enc.STATE_DIM, enc.OPTION_DIM)} vs sub {(sub.STATE_DIM, sub.OPTION_DIM)}"
+
+    deck = [int(x) for x in open("submission/deck.csv") if x.strip()]
+    obs_dict, _ = battle_start(deck, deck)
+    compared = 0
+    try:
+        for _ in range(steps):
+            if obs_dict["current"]["result"] >= 0:
+                break
+            obs = to_observation_class(obs_dict)
+            a = np.concatenate([enc.encode_state(obs.current), enc.encode_context(obs.select.context)])
+            b = np.concatenate([sub.encode_state(obs.current), sub.encode_context(obs.select.context)])
+            assert np.allclose(a, b), "encode_state/context drift between rl.encoders and submission"
+            for o in obs.select.option:
+                assert np.allclose(enc.encode_option(o, obs), sub.encode_option(o, obs)), \
+                    "encode_option drift between rl.encoders and submission"
+            compared += 1
+            obs_dict = battle_select(list(range(obs_dict["select"]["maxCount"])))
+    finally:
+        battle_finish()
+    return compared
+
+
 def deck_check() -> int:
     """Shipped deck.csv is a legal deck. Returns deck size."""
     from rl.deck_search import validate_deck
@@ -69,6 +103,8 @@ def gate_game() -> dict:
 def main() -> None:
     diff = parity_check()
     print(f"parity OK (max diff {diff:.2e})")
+    n = encoder_parity_check()
+    print(f"encoder parity OK ({n} decisions compared)")
     n = deck_check()
     print(f"deck legal ({n} cards)")
     g = gate_game()
