@@ -1,18 +1,24 @@
 """Pre-submission gates: everything that must be true before a package ships.
 
-Run all gates:  python -m rl.gate
+Run neural gates:  python -m rl.gate
+Run rule gates:    python -m rl.gate --agent rules
 Each check is importable on its own (notebook, tests, future CI).
 """
+import argparse
 import importlib.util
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 
 SUBMISSION_MAIN = "submission/main.py"
+SUBMISSION_RULES_MAIN = "submission_rules/main.py"
 
 
-def load_submission_module():
-    """Import submission/main.py as a module (defines __file__, unlike Kaggle's exec)."""
-    spec = importlib.util.spec_from_file_location("sub_main", SUBMISSION_MAIN)
+def load_submission_module(main_path: str = SUBMISSION_MAIN):
+    """Import a submission main.py as a module (defines __file__, unlike Kaggle's exec)."""
+    spec = importlib.util.spec_from_file_location("sub_main", main_path)
     sub = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sub)
     return sub
@@ -79,28 +85,62 @@ def encoder_parity_check(steps: int = 40) -> int:
     return compared
 
 
-def deck_check() -> int:
+def deck_check(base: str = "submission") -> int:
     """Shipped deck.csv is a legal deck. Returns deck size."""
     from rl.deck_search import validate_deck
 
-    deck = [int(x) for x in open("submission/deck.csv") if x.strip()]
+    deck = [int(x) for x in open(f"{base}/deck.csv") if x.strip()]
     legal, reasons = validate_deck(deck)
     assert legal, f"illegal deck: {reasons}"
     return len(deck)
 
 
-def gate_game() -> dict:
+def gate_game(main_path: str = SUBMISSION_MAIN) -> dict:
     """Full self-play game with the agent loaded Kaggle-style (file path -> exec)."""
     from kaggle_environments import make
 
     env = make("cabt")
-    env.run([SUBMISSION_MAIN, SUBMISSION_MAIN])
+    env.run([main_path, main_path])
     statuses = [s.status for s in env.state]
     assert statuses == ["DONE", "DONE"], f"gate game failed: {statuses}"
     return {"rewards": [s.reward for s in env.state], "decisions": len(env.steps)}
 
 
-def main() -> None:
+def bundle_isolation_check(base: str = "submission_rules") -> int:
+    """Prove the bundle is self-contained: run main.py + a full game in a subprocess whose
+    sys.path is ONLY the bundle dir (no project root), and assert it never imports polars/
+    torch. This is what the in-process gate can't catch — the real Kaggle isolation. Rule
+    bundle only (the neural bundle ships flat numpy files, not a package)."""
+    bdir = Path(base).resolve()
+    here = bdir.as_posix()            # forward slashes: safe inside a source string on all OSes
+    root = bdir.parent.as_posix()
+    driver = (
+        "import sys,os\n"
+        "nc=lambda p: os.path.normcase(os.path.abspath(p))\n"
+        f"here=nc('{here}');root=nc('{root}')\n"
+        "sys.path[:]=[p for p in sys.path if nc(p or os.getcwd())!=root]\n"
+        f"sys.path.insert(0,'{here}')\n"  # bundled cg/rl take precedence; stdlib+site kept
+        "import main\n"
+        "from cg.game import battle_start,battle_select,battle_finish\n"
+        "od,_=battle_start(main.DECK,main.DECK);n=0\n"
+        "while od['current']['result']<0 and n<5000:\n"
+        "    od=battle_select([int(i) for i in main.agent(od)]);n+=1\n"
+        "battle_finish()\n"
+        "assert od['current']['result'] in (0,1,2),'game did not finish'\n"
+        "assert 'polars' not in sys.modules and 'torch' not in sys.modules,'bundle pulled a heavy dep'\n"
+        "rlf=nc(sys.modules['rl'].__file__)\n"
+        "assert rlf.startswith(here),'imported project rl (%s), not bundled rl'%rlf\n"
+        "print('ISO_OK',n)"
+    )
+    env = {k: v for k, v in __import__("os").environ.items() if k != "PYTHONPATH"}
+    r = subprocess.run([sys.executable, "-c", driver], cwd=str(bdir),
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 0 and "ISO_OK" in r.stdout, \
+        f"bundle isolation FAILED:\n{r.stdout}\n{r.stderr}"
+    return int(r.stdout.strip().split("ISO_OK")[-1])
+
+
+def main_neural() -> None:
     diff = parity_check()
     print(f"parity OK (max diff {diff:.2e})")
     n = encoder_parity_check()
@@ -111,5 +151,17 @@ def main() -> None:
     print(f"gate game OK: rewards {g['rewards']}, {g['decisions']} decisions")
 
 
+def main_rules() -> None:
+    n = deck_check("submission_rules")
+    print(f"deck legal ({n} cards)")
+    d = bundle_isolation_check("submission_rules")
+    print(f"bundle isolation OK (self-contained; {d} decisions, no polars/torch)")
+    g = gate_game(SUBMISSION_RULES_MAIN)
+    print(f"gate game OK: rewards {g['rewards']}, {g['decisions']} decisions")
+
+
 if __name__ == "__main__":
-    main()
+    p = argparse.ArgumentParser()
+    p.add_argument("--agent", choices=["neural", "rules"], default="neural")
+    args = p.parse_args()
+    (main_rules if args.agent == "rules" else main_neural)()

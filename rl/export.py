@@ -1,33 +1,66 @@
-"""Export a (checkpoint, deck) pair into the numpy-only submission bundle.
+"""Export a submission bundle.
 
-A policy and the deck it was trained on are ONE artifact — a policy trained on
-Lucario plays Kyogre badly and vice-versa (M1 lesson). So export always ships a
-matching pair, and the deck travels with the weights.
+Two agent kinds:
+  --agent neural  (default): a (checkpoint, deck) pair -> numpy-only net bundle in submission/.
+      A policy and the deck it was trained on are ONE artifact — a policy trained on Lucario
+      plays Kyogre badly and vice-versa (M1 lesson) — so the deck travels with the weights.
+  --agent rules: the deck-agnostic generic pilot (rl/generic_pilot.py) + a deck -> a torch-free
+      bundle in submission_rules/ (bundles cg/ and a minimal rl/ package; ships the ACTUAL pilot
+      module we test — no drift-prone hand-copy). See docs/M6.md.
 
+  python -m rl.export --agent rules --deck lucario
   python -m rl.export --checkpoint bc_lucario.pt --deck lucario
-  python -m rl.export                      # defaults below
+  python -m rl.export                      # defaults below (neural, kyogre)
 """
 import argparse
 import shutil
 from pathlib import Path
 
-import numpy as np
-import torch
-
-from rl.encoders import FEAT
-from rl.policy import OptionScorer, save_npz
-
 ROOT = Path(__file__).resolve().parent.parent
 SUBMISSION = ROOT / "submission"
+SUBMISSION_RULES = ROOT / "submission_rules"
 
 # Current shipping pair = our best agent so far. bc_lucario was WORSE (BC can't
 # capture the Lucario expert's hidden-state lookahead — see docs/M2 findings), so
 # bc_v1+Kyogre remains the champion until PPO/search beats it.
 DEFAULT_CHECKPOINT = "bc_v1.pt"
 DEFAULT_DECK = "kyogre"
+# Rule agent ships our strongest tested deck (M6.0 legibility work).
+DEFAULT_RULES_DECK = "lucario"
+
+
+def _copy_cg(dest: Path) -> None:
+    """Kaggle provides numpy but NOT the cg engine bindings -- bundle cg/ with the agent."""
+    shutil.copytree(ROOT / "cg", dest / "cg",
+                    ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
+
+
+def _deck_src(deck: str) -> Path:
+    src = ROOT / "decks" / f"{deck}.csv"
+    return src if src.exists() else ROOT / "deck.csv"   # fall back to the root deck
+
+
+def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:
+    """Bundle the rule-based generic pilot: cg/, a minimal rl/ package (only the pure-Python
+    combat core + pilot — no torch/polars), and the deck. main.py is committed source."""
+    SUBMISSION_RULES.mkdir(exist_ok=True)
+    _copy_cg(SUBMISSION_RULES)
+
+    rl_pkg = SUBMISSION_RULES / "rl"
+    rl_pkg.mkdir(exist_ok=True)
+    for name in ("__init__.py", "combat.py", "generic_pilot.py"):
+        shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
+
+    shutil.copy(str(_deck_src(deck)), str(SUBMISSION_RULES / "deck.csv"))
+    print(f"exported RULE agent (generic pilot) paired with deck '{deck}' -> {SUBMISSION_RULES}")
 
 
 def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> None:
+    import numpy as np
+    import torch
+    from rl.encoders import FEAT
+    from rl.policy import OptionScorer, save_npz
+
     model = OptionScorer()
     ckpt_path = ROOT / "checkpoints" / checkpoint
     if ckpt_path.exists():
@@ -37,22 +70,20 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
         torch.manual_seed(0)
         print(f"checkpoint {checkpoint} not found -- exporting seeded random weights")
 
-    deck_src = ROOT / "decks" / f"{deck}.csv"
-    if not deck_src.exists():                      # fall back to the root deck
-        deck_src = ROOT / "deck.csv"
-
     save_npz(model, str(SUBMISSION / "policy_weights.npz"))
     np.save(str(SUBMISSION / "card_features.npy"), FEAT)
-    shutil.copy(str(deck_src), str(SUBMISSION / "deck.csv"))
-
-    # Kaggle provides numpy but NOT the cg engine bindings -- bundle cg/ with the agent.
-    shutil.copytree(ROOT / "cg", SUBMISSION / "cg",
-                    ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
+    shutil.copy(str(_deck_src(deck)), str(SUBMISSION / "deck.csv"))
+    _copy_cg(SUBMISSION)
 
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
+    p.add_argument("--agent", choices=["neural", "rules"], default="neural")
     p.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
-    p.add_argument("--deck", default=DEFAULT_DECK)
+    p.add_argument("--deck", default=None,
+                   help="deck name in decks/ (defaults: neural=kyogre, rules=lucario)")
     args = p.parse_args()
-    export(args.checkpoint, args.deck)
+    if args.agent == "rules":
+        export_rules(args.deck or DEFAULT_RULES_DECK)
+    else:
+        export(args.checkpoint, args.deck or DEFAULT_DECK)

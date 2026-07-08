@@ -42,12 +42,9 @@ BASIC_FIGHTING_ENERGY = 6  # card id; teacher's Mega Brave scales on discarded c
 # --- Combat-lookahead tables (from the engine; available in training AND submission) ---
 # The rule experts reason with hidden-state combat math (damage / KO / prize race) that BC
 # couldn't imitate from raw board features. We compute the SAME quantities and expose them.
-from cg.api import all_card_data as _all_card_data, all_attack as _all_attack  # noqa: E402
-_ATK = {a.attackId: (a.damage, tuple(int(e) for e in a.energies)) for a in _all_attack()}
-_CARD = {c.cardId: (c.weakness, c.resistance, int(c.energyType), c.attacks,
-                    3 if c.megaEx else 2 if c.ex else 1)
-         for c in _all_card_data()}
-COLORLESS = 0
+# The core lives in rl.combat (pure-Python, polars-free) so the rule submission can ship it;
+# re-exported here so existing `from rl.encoders import _CARD, _best_damage` imports still work.
+from rl.combat import COLORLESS, _ATK, _CARD, _can_afford, _best_damage  # noqa: E402,F401
 N_COMBAT = 11        # combat-lookahead features (see _combat_features)
 
 # Per-Pokémon-slot: card features + hp/maxHp/energy-count + energy-type counts + tools pool
@@ -58,48 +55,6 @@ STATE_DIM = (7 + FEAT_DIM + 2 * FEAT_DIM + 1 + 2 * N_STATUS + FEAT_DIM + N_COMBA
              + 2 * (1 + N_BENCH) * SLOT_DIM)
 # option-type one-hot + acted card features + TARGET card features + target-is-active flag
 OPTION_DIM = N_OPTION_TYPES + FEAT_DIM + FEAT_DIM + 1
-
-
-def _can_afford(energies, cost) -> bool:
-    """Do a Pokémon's attached energies cover an attack's cost (colorless=any)?"""
-    have = {}
-    for e in energies:
-        have[e] = have.get(e, 0) + 1
-    total = len(energies)
-    n_colorless = sum(1 for c in cost if c == COLORLESS)
-    used = 0
-    for c in cost:
-        if c == COLORLESS:
-            continue
-        if have.get(c, 0) <= 0:
-            return False
-        have[c] -= 1
-        used += 1
-    return total - used >= n_colorless
-
-
-def _best_damage(attacker, target, extra_energy: int = 0) -> int:
-    """Max damage `attacker` can deal to `target` this turn (best affordable attack,
-    after weakness/resistance vs the attacker's type). extra_energy simulates attaching
-    that many of the attacker's own energy (the '+1 attach enables the attack' case)."""
-    if attacker is None or target is None or attacker.id not in _CARD:
-        return 0
-    _, _, atk_type, attacks, _ = _CARD[attacker.id]
-    energies = list(attacker.energies) + [atk_type] * extra_energy
-    t_weak, t_res, _, _, _ = _CARD.get(target.id, (None, None, 0, [], 1))
-    best = 0
-    for aid in attacks:
-        if aid not in _ATK:
-            continue
-        dmg, cost = _ATK[aid]
-        if dmg <= 0 or not _can_afford(energies, cost):
-            continue
-        if t_weak is not None and int(t_weak) == atk_type:
-            dmg *= 2
-        elif t_res is not None and int(t_res) == atk_type:
-            dmg = max(0, dmg - 30)
-        best = max(best, dmg)
-    return best
 
 
 def _combat_features(state) -> np.ndarray:
