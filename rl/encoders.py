@@ -39,13 +39,56 @@ BASIC_FIGHTING_ENERGY = 6  # card id; teacher's Mega Brave scales on discarded c
 # showed the opponent archetype is ALREADY ~98% identifiable from the pooled features below,
 # so it was redundant and only added overfitting. See docs/DECISIONS.md 2026-07-08.
 
+# --- Combat-lookahead tables (from the engine; available in training AND submission) ---
+# The rule experts reason with hidden-state combat math (damage / KO / prize race) that BC
+# couldn't imitate from raw board features. We compute the SAME quantities and expose them.
+# The core lives in rl.combat (pure-Python, polars-free) so the rule submission can ship it;
+# re-exported here so existing `from rl.encoders import _CARD, _best_damage` imports still work.
+from rl.combat import COLORLESS, _ATK, _CARD, _can_afford, _best_damage  # noqa: E402,F401
+N_COMBAT = 11        # combat-lookahead features (see _combat_features)
+
 # Per-Pokémon-slot: card features + hp/maxHp/energy-count + energy-type counts + tools pool
 SLOT_DIM = FEAT_DIM + 3 + N_ENERGY + FEAT_DIM
 # globals + my hand pool + 2 discard pools + my discarded-fighting-energy count
-# + status x2 + stadium + 6 of my slots + 6 opponent slots
-STATE_DIM = 7 + FEAT_DIM + 2 * FEAT_DIM + 1 + 2 * N_STATUS + FEAT_DIM + 2 * (1 + N_BENCH) * SLOT_DIM
+# + status x2 + stadium + combat features + 6 of my slots + 6 opponent slots
+STATE_DIM = (7 + FEAT_DIM + 2 * FEAT_DIM + 1 + 2 * N_STATUS + FEAT_DIM + N_COMBAT
+             + 2 * (1 + N_BENCH) * SLOT_DIM)
 # option-type one-hot + acted card features + TARGET card features + target-is-active flag
 OPTION_DIM = N_OPTION_TYPES + FEAT_DIM + FEAT_DIM + 1
+
+
+def _combat_features(state) -> np.ndarray:
+    """The tactical quantities the rule experts reason over (damage / KO / prize race)."""
+    me = state.players[state.yourIndex]
+    op = state.players[1 - state.yourIndex]
+    my_act = me.active[0] if me.active else None
+    op_act = op.active[0] if op.active else None
+
+    my_dmg = _best_damage(my_act, op_act)
+    op_dmg = _best_damage(op_act, my_act)
+    my_ko = float(op_act is not None and my_dmg >= op_act.hp)
+    op_ko = float(my_act is not None and op_dmg >= my_act.hp)
+    one_from = float(op_act is not None and not my_ko
+                     and _best_damage(my_act, op_act, extra_energy=1) >= op_act.hp)
+    my_can_attack = float(_best_damage(my_act, op_act) > 0 or
+                          (my_act is not None and any(
+                              _ATK.get(a, (0, ()))[0] > 0 and _can_afford(my_act.energies, _ATK[a][1])
+                              for a in _CARD.get(my_act.id, (None, None, 0, [], 1))[3] if a in _ATK)))
+    op_prize = _CARD.get(op_act.id, (None, None, 0, [], 1))[4] / 3.0 if op_act else 0.0
+    n_ready = sum(1 for p in ([my_act] + list(me.bench))
+                  if p is not None and any(
+                      a in _ATK and _ATK[a][0] > 0 and _can_afford(p.energies, _ATK[a][1])
+                      for a in _CARD.get(p.id, (None, None, 0, [], 1))[3]))
+
+    return np.array([
+        my_dmg / 340.0, my_ko, my_can_attack, one_from,
+        op_dmg / 340.0, op_ko,
+        (len(me.prize) - len(op.prize)) / 6.0,   # prize race (negative = I'm ahead)
+        op_prize,
+        n_ready / 6.0,
+        (my_act.hp / max(1, my_act.maxHp)) if my_act else 0.0,
+        (op_act.hp / max(1, op_act.maxHp)) if op_act else 0.0,
+    ], dtype=np.float32)
 
 
 def _pool(cards, scale: float = 1.0) -> np.ndarray:
@@ -106,7 +149,7 @@ def encode_state(state) -> np.ndarray:
         return [active] + bench
 
     parts = [glob, hand, my_discard, op_discard, fighting_in_discard,
-             status(me), status(op), stadium]
+             status(me), status(op), stadium, _combat_features(state)]
     parts += [_poke_vec(p) for p in slots(me)]
     parts += [_poke_vec(p) for p in slots(op)]
     return np.concatenate(parts)

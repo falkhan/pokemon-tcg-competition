@@ -7,6 +7,38 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-08 · Deck search: robust + honest, but the tuned deck can't be improved against a small field
+**Built (rl/deck_search.py):** matchup evaluator, openskill rating, `evolve()`, `hill_climb()`,
+`mutate_flex()`. **Findings:** (a) noisy population openskill *regressed* (picked a deck that lost
+to the seed 44%) — use large-sample hill-climbing instead; (b) mirror-only hill-climbing overfits
+(evolved deck 60% vs seed mirror but 79% vs Iono < seed's 82%) — same mirror-overfit as PPO;
+(c) with a *diverse fixed field* (Iono + bc_v1), seed fitness is already 0.84 and **0/30** mutations
+improve it. **Conclusion:** the Lucario deck is well-tuned; deck search is bottlenecked by opponent
+diversity (2 rule pilots + bc_v1 ≠ the real 4500-team meta), not by method.
+**Comprehensive (M1–M4):** the provided rule agents + tuned decks beat everything we can build
+(bc_v1 640 vs ~1100+ top; rule Lucario beats bc_v1 ~86%) OR improve. Leaderboard climb via
+from-scratch neural/deck-search on a CPU budget is not panning out. Honest strategy options:
+(a) engineer/extend a rule agent (manual heuristic + deck work — legit, likely what top teams do),
+(b) submit bc_v1 as our trained agent (640, real but mid-pack), (c) accept the learning outcome
+and stop. The RL/NN learning goal is richly met; the leaderboard-win goal hits the reality that
+domain-engineered agents dominate here.
+
+### 2026-07-08 · Combat-lookahead features don't rescue Lucario BC → the wall is comprehensive
+**Hypothesis:** the experts' edge is *computable* combat lookahead (damage/KO/prize); exposing
+it as features would lift BC fidelity past its 55% ceiling and yield a strong Lucario pilot.
+**Result (docs/M3.md):** fidelity 55%→56.4% (flat); win rate vs bc_v1 champion **25%** (worse
+than the 38% *without* combat features). Refuted on both metrics. State-level aggregate
+features don't drive the expert's fine decisions, and ~56% is near the structural aliased-option
+ceiling.
+**Comprehensive finding:** across BC (Kyogre/Lucario ± combat features), PPO, MCTS, and
+supervised-value+search, **nothing beats bc_v1+Kyogre**, and it loses to the rule experts. The
+rule experts encode multi-turn planning that is very hard to learn or search on a CPU budget.
+**Next is a STRATEGY decision, not a tweak** — options: (a) engineer an improved rule-based
+agent (Piotr rejects verbatim reuse, but tuning/deck-building is fair), (b) full AlphaGo-Zero
+(train value on search-distribution states + MCTS policy targets — big, low-confidence given
+MCTS barely beats the policy), (c) accept bc_v1 (90% vs random) and pivot effort to deck search,
+(d) reassess scope. Learning goal (RL/NN mastery) is richly met regardless.
+
 ### 2026-07-08 · Search (MCTS or 1-ply) doesn't beat the greedy policy even with a good critic → value head is a classifier, not a fine-grained ranker
 **Observation:** with the good value head (0.87 sign-acc), MCTS was 53% vs greedy at n_sims=32
 but got WORSE with more sims (64→40%, 128→45%) — the value head is out-of-distribution on
