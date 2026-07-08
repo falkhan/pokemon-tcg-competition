@@ -135,6 +135,29 @@ def rate_population(decks, n_rounds: int = 4, games_per_pair: int = 8,
     return [r.ordinal() for r in ratings]
 
 
+def hill_climb(seed_deck: list[int], proposals: int = 50, games: int = 150,
+               threshold: float = 0.57, agent: str = "lucario", seed: int = 0):
+    """Robust local search that CANNOT regress: propose a flex mutation, play it vs the
+    current champion over `games` (slot-fair), and accept only if it clears `threshold`
+    (a clear win, not rating noise). Honest — reports if no improvement exists.
+    Returns (champion_deck, n_accepted, log)."""
+    rng = random.Random(seed)
+    champ = list(seed_deck)
+    accepted, log = 0, []
+    for p in range(proposals):
+        cand = mutate_flex(champ, n_swaps=rng.randint(1, 2))
+        r = matchup(cand, champ, games, agent)
+        a = sum(1 for x in r if x == 0); b = sum(1 for x in r if x == 1)
+        wr = a / max(1, a + b)
+        if wr >= threshold:
+            champ, accepted = cand, accepted + 1
+            log.append((p, round(wr, 3), "ACCEPT"))
+            print(f"proposal {p}: wr {wr:.2f} vs champ -> ACCEPTED (#{accepted})", flush=True)
+        else:
+            log.append((p, round(wr, 3), "reject"))
+    return champ, accepted, log
+
+
 def evolve(seed_deck: list[int], pop_size: int = 12, generations: int = 6,
            agent: str = "lucario", seed: int = 0):
     """Mutation-bandit deck search: seed a population of flex-mutations, and each
