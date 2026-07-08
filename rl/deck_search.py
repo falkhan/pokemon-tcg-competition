@@ -65,6 +65,95 @@ def mutate(deck: list[int], n_swaps: int | None = None,
     raise RuntimeError("could not produce a legal mutation in 200 tries")
 
 
-# TODO(Phase 1): population loop — evaluate each deck with the current play
-# policy (rl.eval.play_games), rate with openskill, replace the bottom quartile
-# with mutations of the top quartile.
+def mutate_flex(deck: list[int], n_swaps: int | None = None) -> list[int]:
+    """Archetype-preserving mutation: keep the Pokémon core fixed, swap only the
+    non-Pokémon (trainer/energy) 'flex' slots for other legal non-Pokémon cards.
+    This searches deck *builds* within an archetype (how real TCG deckbuilding works)
+    instead of destroying the engine."""
+    flex_pool = [i for i in ALL_IDS if not _ft[i]["is_pokemon"]]
+    flex_idx = [k for k, c in enumerate(deck) if not _ft[c]["is_pokemon"]]
+    if not flex_idx:
+        return list(deck)
+    for _ in range(200):
+        d = list(deck)
+        for _ in range(n_swaps or random.randint(1, 3)):
+            d[random.choice(flex_idx)] = random.choice(flex_pool)
+        if validate_deck(d)[0]:
+            return d
+    raise RuntimeError("could not produce a legal flex mutation in 200 tries")
+
+
+# --- Self-play deck evaluation + evolutionary search (M4) ---
+
+def matchup(deckA: list[int], deckB: list[int], n_games: int = 12,
+            agent: str = "lucario") -> list[int]:
+    """Play deckA vs deckB, the SAME rule agent piloting both sides, slot-fair.
+    Returns per-game results: 0 = A won, 1 = B won, 2 = draw. Direct engine loop (fast)."""
+    from cg.game import battle_start, battle_select, battle_finish
+    from rl.teacher import load_teacher
+
+    pilots = [load_teacher(f"dm_{agent}_0", agent=agent, deck=agent),
+              load_teacher(f"dm_{agent}_1", agent=agent, deck=agent)]
+    out = []
+    for g in range(n_games):
+        a_seat = g % 2                                   # slot-fair
+        d0, d1 = (deckA, deckB) if a_seat == 0 else (deckB, deckA)
+        obs_dict, start = battle_start(d0, d1)
+        if start.errorPlayer >= 0:
+            battle_finish()
+            raise ValueError(f"battle_start rejected a deck (errorType={start.errorType})")
+        while obs_dict["current"]["result"] < 0:
+            seat = obs_dict["current"]["yourIndex"]
+            obs_dict = battle_select([int(i) for i in pilots[seat](obs_dict)])
+        res = obs_dict["current"]["result"]              # 0/1 winner seat, 2 draw
+        battle_finish()
+        if res == 2:
+            out.append(2)
+        else:                                            # map winner seat -> A/B
+            a_won = (res == 0) if a_seat == 0 else (res == 1)
+            out.append(0 if a_won else 1)
+    return out
+
+
+def rate_population(decks, n_rounds: int = 4, games_per_pair: int = 8,
+                    agent: str = "lucario", seed: int = 0):
+    """Random-pairing tournament with openskill ratings. Returns list of ordinals."""
+    from openskill.models import PlackettLuce
+    rng = random.Random(seed)
+    model = PlackettLuce()
+    ratings = [model.rating(name=str(i)) for i in range(len(decks))]
+    idx = list(range(len(decks)))
+    for _ in range(n_rounds):
+        rng.shuffle(idx)
+        for a, b in zip(idx[::2], idx[1::2]):
+            for r in matchup(decks[a], decks[b], games_per_pair, agent):
+                if r == 2:
+                    continue
+                win, lose = (a, b) if r == 0 else (b, a)
+                res = model.rate([[ratings[win]], [ratings[lose]]])  # winner first
+                ratings[win], ratings[lose] = res[0][0], res[1][0]
+    return [r.ordinal() for r in ratings]
+
+
+def evolve(seed_deck: list[int], pop_size: int = 12, generations: int = 6,
+           agent: str = "lucario", seed: int = 0):
+    """Mutation-bandit deck search: seed a population of flex-mutations, and each
+    generation rate by self-play and replace the bottom half with mutations of the
+    top half. Returns (best_deck, best_ordinal, history)."""
+    rng = random.Random(seed)
+    assert validate_deck(seed_deck)[0], "seed deck is illegal"
+    pop = [list(seed_deck)] + [mutate_flex(seed_deck) for _ in range(pop_size - 1)]
+    history = []
+    for gen in range(generations):
+        ords = rate_population(pop, agent=agent, seed=rng.randint(0, 1 << 30))
+        order = sorted(range(len(pop)), key=lambda k: ords[k], reverse=True)
+        best_i = order[0]
+        history.append((gen, round(ords[best_i], 2)))
+        print(f"gen {gen}: best ordinal {ords[best_i]:.2f} (deck {best_i})", flush=True)
+        # keep top half, refill bottom half with mutations of the top
+        keep = [pop[k] for k in order[: pop_size // 2]]
+        pop = keep + [mutate_flex(rng.choice(keep)) for _ in range(pop_size - len(keep))]
+    # final rating to pick the winner
+    ords = rate_population(pop, n_rounds=6, agent=agent, seed=rng.randint(0, 1 << 30))
+    best = max(range(len(pop)), key=lambda k: ords[k])
+    return pop[best], round(ords[best], 2), history
