@@ -7,6 +7,22 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-08 · Deck search: robust + honest, but the tuned deck can't be improved against a small field
+**Built (rl/deck_search.py):** matchup evaluator, openskill rating, `evolve()`, `hill_climb()`,
+`mutate_flex()`. **Findings:** (a) noisy population openskill *regressed* (picked a deck that lost
+to the seed 44%) — use large-sample hill-climbing instead; (b) mirror-only hill-climbing overfits
+(evolved deck 60% vs seed mirror but 79% vs Iono < seed's 82%) — same mirror-overfit as PPO;
+(c) with a *diverse fixed field* (Iono + bc_v1), seed fitness is already 0.84 and **0/30** mutations
+improve it. **Conclusion:** the Lucario deck is well-tuned; deck search is bottlenecked by opponent
+diversity (2 rule pilots + bc_v1 ≠ the real 4500-team meta), not by method.
+**Comprehensive (M1–M4):** the provided rule agents + tuned decks beat everything we can build
+(bc_v1 640 vs ~1100+ top; rule Lucario beats bc_v1 ~86%) OR improve. Leaderboard climb via
+from-scratch neural/deck-search on a CPU budget is not panning out. Honest strategy options:
+(a) engineer/extend a rule agent (manual heuristic + deck work — legit, likely what top teams do),
+(b) submit bc_v1 as our trained agent (640, real but mid-pack), (c) accept the learning outcome
+and stop. The RL/NN learning goal is richly met; the leaderboard-win goal hits the reality that
+domain-engineered agents dominate here.
+
 ### 2026-07-08 · Combat-lookahead features don't rescue Lucario BC → the wall is comprehensive
 **Hypothesis:** the experts' edge is *computable* combat lookahead (damage/KO/prize); exposing
 it as features would lift BC fidelity past its 55% ceiling and yield a strong Lucario pilot.
