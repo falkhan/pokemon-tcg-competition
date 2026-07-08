@@ -17,12 +17,15 @@ ROOT = Path(__file__).resolve().parent.parent
 TEACHER_PATHS = {                          # rule-based agent per archetype
     "lucario": ROOT / "sample-agent" / "main.py",
     "iono": ROOT / "sample-agent-iono" / "main.py",
+    "tuned": ROOT / "sample-agent-tuned" / "main.py",   # parameterized Lucario (M5)
 }
 DECK_PATHS = {name: ROOT / "decks" / f"{name}.csv"
               for name in ("kyogre", "lucario", "iono")}
+DECK_PATHS["tuned"] = DECK_PATHS["lucario"]   # the tuned agent pilots the Lucario deck
 
 
-def load_teacher(instance_name: str, agent: str = "lucario", deck: str | None = None):
+def load_teacher(instance_name: str, agent: str = "lucario", deck: str | None = None,
+                 weights: dict | None = None):
     """Exec a fresh, isolated instance of a rule-based agent. Returns its callable.
 
     instance_name must be unique per live instance (globals are module-level state).
@@ -48,4 +51,8 @@ def load_teacher(instance_name: str, agent: str = "lucario", deck: str | None = 
 
     # Override the deck the agent returns at setup (its heuristics are deck-independent).
     module.my_deck = [int(x) for x in DECK_PATHS[deck].read_text().split() if x.strip()]
+    # Override tunable heuristic weights (M5 parameter search on the "tuned" agent).
+    if weights:
+        for k, v in weights.items():
+            setattr(module, k, v)
     return module.agent
