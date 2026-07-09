@@ -40,6 +40,7 @@ class AreaType(IntEnum):
     BENCH = 5
     PRIZE = 6
     STADIUM = 7
+    LOOKING = 12  # cards revealed by a search/look effect
 
 
 class OptionType(IntEnum):
@@ -154,6 +155,21 @@ def to_observation_class(obs_dict):
     return obs_dict
 
 
+# Determinized-search API (rl/mcts.py, tcg/search.py). The stub only provides
+# the names so the modules import; tests monkeypatch the module-bound names
+# (e.g. ``tcg.search.search_step``) with scripted engines.
+def search_begin(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's search_begin")
+
+
+def search_step(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's search_step")
+
+
+def search_end(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's search_end")
+
+
 def _install():
     cg = types.ModuleType("cg")
     api = types.ModuleType("cg.api")
@@ -163,6 +179,8 @@ def _install():
         ("SelectContext", SelectContext),
         ("all_attack", all_attack), ("all_card_data", all_card_data),
         ("to_observation_class", to_observation_class),
+        ("search_begin", search_begin), ("search_step", search_step),
+        ("search_end", search_end),
     ):
         setattr(api, name, value)
     cg.api = api
