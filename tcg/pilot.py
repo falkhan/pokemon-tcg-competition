@@ -1,0 +1,242 @@
+"""The deck-agnostic rule-based pilot.
+
+``make_generic_pilot(deck)`` returns a Kaggle agent that, on every decision,
+scores each presented option by general TCG principles (develop the board,
+load an attacker, take the KO, don't mill your own deck) plus the combat
+lookahead in ``tcg.combat``, and answers with the highest-scoring options.
+
+Behavior is identical to the old ``rl/generic_pilot.py``; the score tiers and
+the reasoning behind them live in ``tcg.constants`` and docs/M6.md.
+"""
+from collections.abc import Callable
+
+from cg.api import AreaType, OptionType, to_observation_class
+
+from tcg import constants
+from tcg.combat import best_damage
+from tcg.library import ATTACKS, CARDS, ENERGY_CARD_IDS, POKEMON_CARD_IDS, known_attacks
+from tcg.models import UNKNOWN_ATTACK, UNKNOWN_CARD
+
+
+def make_generic_pilot(deck: list[int]) -> Callable[[dict], list[int]]:
+    """Build a Kaggle agent (``obs_dict -> list[int]``) that pilots ``deck``."""
+    def agent(obs_dict: dict) -> list[int]:
+        observation = to_observation_class(obs_dict)
+        if observation.select is None:  # game start: return the deck list
+            return deck
+        scores = [score_option(option, observation)
+                  for option in observation.select.option]
+        # Stable sort: equal scores keep their original (ascending) index order.
+        ranked = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+        return [int(i) for i in ranked[:observation.select.maxCount]]
+    return agent
+
+
+def score_option(option, observation) -> float:
+    """Score one presented option; higher wins (see the ladder in constants)."""
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    my_active = me.active[0] if me.active else None
+    opponent_active = opponent.active[0] if opponent.active else None
+
+    option_type = option.type
+    if option_type == OptionType.ATTACK:
+        return score_attack(option, my_active, opponent_active)
+    if option_type == OptionType.ATTACH:
+        return score_attach(option, observation)
+    if option_type == OptionType.ABILITY:
+        return constants.SCORE_ABILITY
+    if option_type == OptionType.EVOLVE:
+        return constants.SCORE_EVOLVE
+    if option_type == OptionType.PLAY:
+        return score_play(option, observation)
+    if option_type == OptionType.RETREAT:
+        return score_retreat(observation)
+    if option_type == OptionType.CARD:
+        return score_card(option, observation)
+    return constants.FALLBACK_PRIORITY.get(option_type, 0)
+
+
+def card_at(observation, area, index, player_index):
+    """Resolve an option's (area, index) to the card/Pokémon it refers to.
+
+    Returns None when the area is unknown, the zone is hidden, or the index is
+    out of range.
+    """
+    player = observation.current.players[player_index]
+    zones = {
+        int(AreaType.DECK): observation.select.deck,
+        int(AreaType.HAND): player.hand,
+        int(AreaType.DISCARD): player.discard,
+        int(AreaType.ACTIVE): player.active,
+        int(AreaType.BENCH): player.bench,
+        int(AreaType.STADIUM): observation.current.stadium,
+    }
+    zone = zones.get(int(area)) if area is not None else None
+    try:
+        return zone[index]
+    except (TypeError, IndexError):  # zone is None / hidden, or index out of range
+        return None
+
+
+def attacker_quality(card_id: int) -> int:
+    """Best raw attack damage a card can deal (0 if not an attacker)."""
+    return max((attack.damage for attack in known_attacks(CARDS[card_id])),
+               default=0)
+
+
+def card_usefulness(card_id: int) -> int:
+    """How valuable a card is to KEEP / fetch: attackers > energy > other."""
+    if card_id in POKEMON_CARD_IDS:
+        return constants.USEFULNESS_POKEMON_BASE + min(
+            attacker_quality(card_id), constants.ATTACKER_QUALITY_CAP)
+    if card_id in ENERGY_CARD_IDS:
+        return constants.USEFULNESS_ENERGY
+    return constants.USEFULNESS_OTHER
+
+
+def score_card(option, observation) -> float:
+    """Card-selection contexts (SETUP/SWITCH/TO_HAND/DISCARD/...) — no coin flips."""
+    state = observation.current
+    opponent = state.players[1 - state.yourIndex]
+    opponent_active = opponent.active[0] if opponent.active else None
+    context = observation.select.context
+    player_index = (option.playerIndex if option.playerIndex is not None
+                    else state.yourIndex)
+    card = card_at(observation, option.area, option.index, player_index)
+    if card is None:
+        return 0
+
+    if context in constants.PROMOTE_CONTEXTS:
+        # Start / promote / bench MY best attacker; bonus if it hits right now.
+        # (hasattr guard: only in-play Pokémon have energies; hand cards don't.)
+        quality = attacker_quality(card.id)
+        can_hit_now = (opponent_active is not None and hasattr(card, "energies")
+                       and best_damage(card, opponent_active) > 0)
+        return quality + (constants.PROMOTE_READY_BONUS if can_hit_now else 0)
+    if context in constants.KEEP_CONTEXTS:
+        return card_usefulness(card.id)
+    if context in constants.DISCARD_CONTEXTS:  # discard the LEAST useful
+        return -card_usefulness(card.id)
+    if context in constants.TARGET_CONTEXTS:   # damage the highest-prize Pokémon
+        prize = CARDS.get(card.id, UNKNOWN_CARD).prize_count
+        return constants.TARGET_PRIZE_WEIGHT * prize
+    return constants.SCORE_CARD_NEUTRAL
+
+
+def score_attack(option, my_active, opponent_active) -> float:
+    if opponent_active is None:
+        return constants.SCORE_ATTACK_NO_TARGET
+
+    damage = ATTACKS.get(option.attackId, UNKNOWN_ATTACK).damage
+    attack_type = CARDS[my_active.id].energy_type
+    defender = CARDS[opponent_active.id]
+
+    if defender.weakness is not None and defender.weakness == attack_type:
+        damage *= constants.WEAKNESS_MULTIPLIER
+    elif defender.resistance is not None and defender.resistance == attack_type:
+        # Deliberately NOT floored at 0 (unlike combat.best_damage): a weak
+        # resisted attack scores slightly below SCORE_CHIP_BASE. Test-pinned.
+        damage -= constants.RESISTANCE_REDUCTION
+
+    if damage >= opponent_active.hp:
+        # KO takes a prize NOW — see the ladder rationale in tcg.constants.
+        return constants.SCORE_KO_BASE + constants.KO_PRIZE_BONUS * defender.prize_count
+    return constants.SCORE_CHIP_BASE + damage / constants.CHIP_DAMAGE_DIVISOR
+
+
+def score_retreat(observation) -> float:
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    my_active = me.active[0] if me.active else None
+    opponent_active = opponent.active[0] if opponent.active else None
+    bench = [pokemon for pokemon in me.bench if pokemon is not None]
+    if my_active is None or not bench:
+        return constants.SCORE_RETREAT_NEVER
+
+    bench_best_damage = max(attacker_quality(pokemon.id) for pokemon in bench)
+
+    # 1) Promote a lethal attacker from the bench if the active can't KO.
+    if (opponent_active is not None
+            and best_damage(my_active, opponent_active) < opponent_active.hp):
+        if any(best_damage(pokemon, opponent_active) >= opponent_active.hp
+               for pokemon in bench):
+            return constants.SCORE_RETREAT_PROMOTE_LETHAL
+
+    # 2) Escape a KO.
+    in_danger = (opponent_active is not None
+                 and best_damage(opponent_active, my_active) >= my_active.hp)
+    if in_danger and bench_best_damage > 0:
+        return constants.SCORE_RETREAT_ESCAPE_KO
+
+    # 3) Otherwise low; ~0 when healthy, a bit higher if a strong bench
+    #    attacker wants in.
+    hp_fraction = my_active.hp / max(1, my_active.maxHp)
+    if hp_fraction > constants.HEALTHY_HP_FRACTION:
+        return constants.SCORE_RETREAT_NEVER
+    return (constants.SCORE_RETREAT_HURT_BASE
+            + bench_best_damage // constants.RETREAT_BENCH_DAMAGE_DIVISOR)
+
+
+def score_play(option, observation) -> float:
+    my_index = observation.current.yourIndex
+    me = observation.current.players[my_index]
+    card = card_at(observation, option.area, option.index, my_index)
+
+    if card is None:
+        return constants.SCORE_PLAY_UNRESOLVED_CARD
+    if card.id in POKEMON_CARD_IDS:
+        return constants.SCORE_PLAY_POKEMON
+
+    has_board = ((bool(me.active) and me.active[0] is not None)
+                 or any(pokemon for pokemon in me.bench))
+    if not has_board:
+        return constants.SCORE_PLAY_TRAINER_NO_BOARD
+
+    # Trainer: value on NEED, not flat — the anti-deck-out fix (see constants).
+    hand_size = me.handCount or 0
+    deck_size = me.deckCount or 0
+    if deck_size <= constants.DECKOUT_RESERVE_CARDS:
+        return constants.SCORE_PLAY_NEAR_DECKOUT
+    tapered = (constants.SCORE_TRAINER_BASE - constants.TRAINER_HAND_TAPER
+               * max(0, hand_size - constants.COMFORTABLE_HAND_SIZE))
+    return max(constants.SCORE_TRAINER_FLOOR, tapered)
+
+
+def score_attach(option, observation) -> float:
+    my_index = observation.current.yourIndex
+    opponent = observation.current.players[1 - my_index]
+    opponent_active = opponent.active[0] if opponent.active else None
+
+    target = card_at(observation, option.inPlayArea, option.inPlayIndex, my_index)
+    if target is None:
+        return constants.SCORE_ATTACH_NO_TARGET
+
+    is_active = option.inPlayArea == AreaType.ACTIVE
+
+    # 1) Lookahead: does this attach UNBLOCK a KO on the opponent's active?
+    if opponent_active is not None:
+        damage_now = best_damage(target, opponent_active, extra_energy=0)
+        damage_after = best_damage(target, opponent_active, extra_energy=1)
+        if damage_now < opponent_active.hp <= damage_after:
+            return (constants.SCORE_ATTACH_UNBLOCKS_KO_ACTIVE if is_active
+                    else constants.SCORE_ATTACH_UNBLOCKS_KO_BENCH)
+
+    # 2) Otherwise: is the target a real attacker that still needs energy?
+    damaging_attacks = [(attack.damage, len(attack.cost))
+                        for attack in known_attacks(CARDS[target.id])
+                        if attack.damage > 0]
+    if not damaging_attacks:
+        return constants.SCORE_ATTACH_NON_ATTACKER
+
+    best_dmg = max(damage for damage, _ in damaging_attacks)
+    cheapest_cost = min(cost_size for _, cost_size in damaging_attacks)
+    if len(target.energies) >= cheapest_cost:
+        return constants.SCORE_ATTACH_ALREADY_LOADED
+
+    base = (constants.SCORE_ATTACH_ACTIVE_BASE if is_active
+            else constants.SCORE_ATTACH_BENCH_BASE)
+    return base + (min(best_dmg, constants.ATTACH_DAMAGE_BONUS_CAP)
+                   // constants.ATTACH_DAMAGE_BONUS_DIVISOR)
