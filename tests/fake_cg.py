@@ -170,6 +170,19 @@ def search_end(*args, **kwargs):
     raise NotImplementedError("monkeypatch the consuming module's search_end")
 
 
+# Direct battle loop (cg.game) — name-only stubs, same idea as the search_* API.
+def battle_start(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's battle_start")
+
+
+def battle_select(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's battle_select")
+
+
+def battle_finish(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's battle_finish")
+
+
 def _install():
     cg = types.ModuleType("cg")
     api = types.ModuleType("cg.api")
@@ -184,8 +197,15 @@ def _install():
     ):
         setattr(api, name, value)
     cg.api = api
+    game = types.ModuleType("cg.game")
+    for name, value in (("battle_start", battle_start),
+                        ("battle_select", battle_select),
+                        ("battle_finish", battle_finish)):
+        setattr(game, name, value)
+    cg.game = game
     sys.modules.setdefault("cg", cg)
     sys.modules.setdefault("cg.api", api)
+    sys.modules.setdefault("cg.game", game)
 
 
 _install()

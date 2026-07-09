@@ -15,9 +15,9 @@ def test_import_tcg_is_side_effect_free():
 
 CG_ONLY_MODULES = ["tcg.models", "tcg.constants", "tcg.library", "tcg.combat",
                    "tcg.pilot", "tcg.decks", "tcg.teachers"]
-NUMPY_MODULES = []
+NUMPY_MODULES = ["tcg.selfplay", "tcg.value_training"]
 POLARS_MODULES = ["tcg.encoders"]
-TORCH_MODULES = ["tcg.network"]
+TORCH_MODULES = ["tcg.network", "tcg.behavior_cloning", "tcg.ppo"]
 KAGGLE_ENV_MODULES = []
 
 
