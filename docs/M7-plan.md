@@ -1,6 +1,6 @@
 # M7 Plan — The Deck Factory Loop: deck building + pilot training + real-meta ingestion
 
-**Status:** 📋 Planned (2026-07-09). Implementation diary will live in `docs/M7.md`.
+**Status:** 🚧 Active (2026-07-09) — M7.0 infrastructure landed. Implementation diary: [M7.md](M7.md).
 
 ## Context
 
@@ -455,11 +455,13 @@ honest n everywhere, few precious training runs.
 
 ## 7. Milestones
 
-- **M7.0 — Ingestion spike (2d).** Fetch episodes for 54474043 (+ bc_v1's old sub);
-  verify the JSON schema; extract ≥20 opponent decks + outcomes. **Go/no-go:** decklists
-  extractable → full plan; only outcomes → keep forensics, drop meta-field/BC edges,
-  recalibrate gates to the old anchor field. Also settles: are opponent observations
-  present (unlocks BC-on-winners)?
+- **M7.0 — Ingestion spike (2d).** *Status 2026-07-09: infrastructure + 21 offline
+  tests landed (`rl/kaggle_ingest.py`); the [NET] verification runs via the runbook in
+  [M7.md](M7.md) — this sandbox has no Kaggle access (risk 8).* Fetch episodes for
+  54474043 (+ bc_v1's old sub); verify the JSON schema; extract ≥20 opponent decks +
+  outcomes. **Go/no-go:** decklists extractable → full plan; only outcomes → keep
+  forensics, drop meta-field/BC edges, recalibrate gates to the old anchor field. Also
+  settles: are opponent observations present (unlocks BC-on-winners)?
 - **M7.1 — Deck factory (2–3d).** `deck_build.py` + shells v1; 40 candidates
   league-rated under the generic pilot. **Gate:** ≥1 generated deck ≥50% vs the Lucario
   deck same-pilot (n=400) — factory reaches parity with the human-tuned seed; ≥3

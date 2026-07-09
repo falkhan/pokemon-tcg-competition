@@ -7,6 +7,18 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-09 · Kaggle ingestion built offline-first; the schema is an assumption until the [NET] spike
+**Built (rl/kaggle_ingest.py, M7.0):** injectable fetch layer (immutable gzip cache, ~1 req/s
+throttle) over `EpisodeService/{ListEpisodes,GetEpisodeReplay}`, a schema-tolerant
+`parse_episode`, deck harvesting with exact-hash + pooled-FEAT-cosine archetype clustering,
+frozen `meta_v<N>` snapshots, per-archetype forensics, and a BC-on-winners audit. 21 offline
+tests on canned env.toJSON()-shaped fixtures; full suite green. **Decision:** fetch and parse
+were split so the sandbox's lack of kaggle.com access blocks nothing except the final
+verification — the three schema bets (deck at first action, endpoint reachable, opponent obs
+present) are tracked in docs/M7.md with a runbook; `python -m rl.kaggle_ingest verify` is the
+go/no-go command. Hard asserts live in `verify`, not the parser, so `refresh` stays resumable
+over a mixed-quality episode set.
+
 ### 2026-07-08 · Deck search: robust + honest, but the tuned deck can't be improved against a small field
 **Built (rl/deck_search.py):** matchup evaluator, openskill rating, `evolve()`, `hill_climb()`,
 `mutate_flex()`. **Findings:** (a) noisy population openskill *regressed* (picked a deck that lost
