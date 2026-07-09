@@ -40,6 +40,7 @@ class AreaType(IntEnum):
     BENCH = 5
     PRIZE = 6
     STADIUM = 7
+    LOOKING = 12  # cards revealed by a search/look effect
 
 
 class OptionType(IntEnum):
@@ -154,6 +155,34 @@ def to_observation_class(obs_dict):
     return obs_dict
 
 
+# Determinized-search API (rl/mcts.py, tcg/search.py). The stub only provides
+# the names so the modules import; tests monkeypatch the module-bound names
+# (e.g. ``tcg.search.search_step``) with scripted engines.
+def search_begin(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's search_begin")
+
+
+def search_step(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's search_step")
+
+
+def search_end(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's search_end")
+
+
+# Direct battle loop (cg.game) — name-only stubs, same idea as the search_* API.
+def battle_start(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's battle_start")
+
+
+def battle_select(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's battle_select")
+
+
+def battle_finish(*args, **kwargs):
+    raise NotImplementedError("monkeypatch the consuming module's battle_finish")
+
+
 def _install():
     cg = types.ModuleType("cg")
     api = types.ModuleType("cg.api")
@@ -163,11 +192,20 @@ def _install():
         ("SelectContext", SelectContext),
         ("all_attack", all_attack), ("all_card_data", all_card_data),
         ("to_observation_class", to_observation_class),
+        ("search_begin", search_begin), ("search_step", search_step),
+        ("search_end", search_end),
     ):
         setattr(api, name, value)
     cg.api = api
+    game = types.ModuleType("cg.game")
+    for name, value in (("battle_start", battle_start),
+                        ("battle_select", battle_select),
+                        ("battle_finish", battle_finish)):
+        setattr(game, name, value)
+    cg.game = game
     sys.modules.setdefault("cg", cg)
     sys.modules.setdefault("cg.api", api)
+    sys.modules.setdefault("cg.game", game)
 
 
 _install()

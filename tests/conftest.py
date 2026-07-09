@@ -11,4 +11,5 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-import tests.fake_cg  # noqa: E402,F401  (side effect: registers cg / cg.api)
+import tests.fake_cg  # noqa: E402,F401  (side effect: registers cg / cg.api / cg.game)
+import tests.fake_kaggle_environments  # noqa: E402,F401  (registers kaggle_environments)

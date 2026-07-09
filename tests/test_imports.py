@@ -1,0 +1,54 @@
+"""Every tcg module imports cleanly under the test stubs, and ``import tcg``
+itself stays side-effect free (no submodule imports, no engine calls)."""
+import importlib
+import sys
+
+import pytest
+
+
+def test_import_tcg_is_side_effect_free():
+    for name in [name for name in sys.modules if name.startswith("tcg")]:
+        del sys.modules[name]
+    import tcg  # noqa: F401
+    assert not any(name.startswith("tcg.") for name in sys.modules)
+
+
+CG_ONLY_MODULES = ["tcg.models", "tcg.constants", "tcg.library", "tcg.combat",
+                   "tcg.pilot", "tcg.decks", "tcg.teachers"]
+NUMPY_MODULES = ["tcg.selfplay", "tcg.value_training"]
+POLARS_MODULES = ["tcg.encoders", "tcg.deck_search"]
+TORCH_MODULES = ["tcg.network", "tcg.behavior_cloning", "tcg.ppo", "tcg.search"]
+KAGGLE_ENV_MODULES = ["tcg.evaluation", "tcg.shipping"]
+
+
+@pytest.mark.parametrize("name", CG_ONLY_MODULES)
+def test_cg_only_modules_import(name):
+    importlib.import_module(name)
+
+
+@pytest.mark.parametrize("name", NUMPY_MODULES)
+def test_numpy_modules_import(name):
+    pytest.importorskip("numpy")
+    importlib.import_module(name)
+
+
+@pytest.mark.parametrize("name", POLARS_MODULES)
+def test_polars_modules_import(name):
+    pytest.importorskip("numpy")
+    pytest.importorskip("polars")
+    importlib.import_module(name)
+
+
+@pytest.mark.parametrize("name", TORCH_MODULES)
+def test_torch_modules_import(name):
+    pytest.importorskip("numpy")
+    pytest.importorskip("polars")
+    pytest.importorskip("torch")
+    importlib.import_module(name)
+
+
+@pytest.mark.parametrize("name", KAGGLE_ENV_MODULES)
+def test_kaggle_env_modules_import(name):
+    pytest.importorskip("numpy")
+    pytest.importorskip("polars")
+    importlib.import_module(name)
