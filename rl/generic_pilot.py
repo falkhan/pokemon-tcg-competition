@@ -235,13 +235,21 @@ def score_attach(o, obs, me):
     #    target's own turns-to-first-KO must match the board minimum; ties
     #    bonus every tied target and self-commit after the first attach
     #    (the winner's energy gap drops, making it strictly unique).
+    #    The BENCH tier additionally requires an attack-ready ACTIVE — banking
+    #    on a benched closer while the active can neither attack nor pay its
+    #    retreat starves the whole board and mills the deck (the measured
+    #    floor-test failure, docs/M7.md 2026-07-09).
     if opponent_active_card is not None:
-        board = ([me.active[0]] if me.active and me.active[0] is not None else [])
+        my_active = me.active[0] if me.active and me.active[0] is not None else None
+        board = ([my_active] if my_active is not None else [])
         board += [p for p in me.bench if p is not None]
         mine = _turns_to_first_ko(target_pokemon, opponent_active_card)
         if mine < UNREACHABLE and board and \
                 mine <= min(_turns_to_first_ko(p, opponent_active_card) for p in board):
-            return (2750 if is_active else 2680) + bonus
+            if is_active:
+                return 2750 + bonus
+            if my_active is not None and _turns_to_ready(my_active, opponent_active_card) == 0:
+                return 2680 + bonus
 
     return (2600 if is_active else 2400) + bonus
 

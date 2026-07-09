@@ -263,15 +263,22 @@ def score_attach(option, observation) -> float:
     #    target's own turns-to-first-KO must match the board minimum; ties
     #    bonus every tied target and self-commit after the first attach
     #    (the winner's energy gap drops, making it strictly unique).
+    #    The BENCH tier additionally requires an attack-ready ACTIVE — banking
+    #    on a benched closer while the active can neither attack nor pay its
+    #    retreat starves the whole board and mills the deck (the measured
+    #    floor-test failure, docs/M7.md 2026-07-09).
     if opponent_active is not None:
         me = observation.current.players[my_index]
-        board = ([me.active[0]] if me.active and me.active[0] is not None else [])
+        my_active = me.active[0] if me.active and me.active[0] is not None else None
+        board = ([my_active] if my_active is not None else [])
         board += [pokemon for pokemon in me.bench if pokemon is not None]
         mine = turns_to_first_ko(target, opponent_active)
         if mine < constants.UNREACHABLE_TURNS and board and \
                 mine <= min(turns_to_first_ko(p, opponent_active) for p in board):
-            return (constants.SCORE_ATTACH_RACE_CLOSER_ACTIVE if is_active
-                    else constants.SCORE_ATTACH_RACE_CLOSER_BENCH) + bonus
+            if is_active:
+                return constants.SCORE_ATTACH_RACE_CLOSER_ACTIVE + bonus
+            if my_active is not None and turns_to_ready(my_active, opponent_active) == 0:
+                return constants.SCORE_ATTACH_RACE_CLOSER_BENCH + bonus
 
     base = (constants.SCORE_ATTACH_ACTIVE_BASE if is_active
             else constants.SCORE_ATTACH_BENCH_BASE)

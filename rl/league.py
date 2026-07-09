@@ -152,6 +152,22 @@ def add_entry(league: League, spec: OpponentSpec, entry_id: str | None = None,
     return e
 
 
+def add_batch(league: League, deck_dir: Path, pilot: str = "generic",
+              origin: str = "template") -> list[Entry]:
+    """Add every deck_*.csv in a directory as a (deck, pilot) entry — the
+    shell-loop-free way to enroll a decks/gen batch (works in PowerShell too).
+    Idempotent: existing entry ids are returned, not duplicated."""
+    added = []
+    for csv in sorted(Path(deck_dir).glob("deck_*.csv")):
+        if pilot in ("generic", "random"):
+            spec: OpponentSpec = (pilot, str(csv))
+        else:                                   # "rule:X" / "model:<ckpt>"
+            kind, ident = pilot.split(":", 1)
+            spec = (kind, ident, str(csv))
+        added.append(add_entry(league, spec, origin=origin))
+    return added
+
+
 def bootstrap_anchors(league: League) -> list[Entry]:
     """Add the plan-§4 anchors (idempotent). A missing bc_v1 checkpoint skips
     that anchor with a warning rather than failing the whole bootstrap."""
@@ -473,6 +489,12 @@ def _main() -> None:
     s.add_argument("--id", dest="entry_id", default=None)
     s.add_argument("--origin", default="template")
 
+    s = sub.add_parser("add-batch", help="add every deck_*.csv in a directory "
+                                         "(shell-loop-free; works in PowerShell)")
+    s.add_argument("--dir", type=Path, required=True)
+    s.add_argument("--pilot", default="generic")
+    s.add_argument("--origin", default="template")
+
     s = sub.add_parser("run", help="play the schedule and update ratings")
     s.add_argument("--games-per-anchor", type=int, default=GAMES_PER_ANCHOR)
     s.add_argument("--workers", type=int, default=4)
@@ -513,6 +535,11 @@ def _main() -> None:
         e = add_entry(league, spec, entry_id=a.entry_id, origin=a.origin)
         save_league(league)
         print(f"added {e.entry_id} (deck {e.deck_hash[:12]})", flush=True)
+    elif a.cmd == "add-batch":
+        league = _load_or_init()
+        added = add_batch(league, a.dir, pilot=a.pilot, origin=a.origin)
+        save_league(league)
+        print(f"added {len(added)} entries from {a.dir}", flush=True)
     elif a.cmd == "run":
         run(_load_or_init(), games_per_anchor=a.games_per_anchor, workers=a.workers)
     elif a.cmd == "standings":

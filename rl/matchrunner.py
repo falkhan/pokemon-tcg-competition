@@ -114,7 +114,9 @@ def _engine_game(fn0, fn1, deck0: list[int], deck1: list[int],
                  stats: dict | None = None) -> int:
     """One battle on the direct engine loop. Returns the winner seat (0/1) or 2
     for a draw. `stats`, if given, accumulates per-seat move counts, wall time,
-    and agent exceptions under stats[0] / stats[1] — the G1/G6 gate inputs. [ENGINE]"""
+    and agent exceptions under stats[0] / stats[1] — the G1/G6 gate inputs —
+    and captures the end state under stats["final"] (the loss-forensics data:
+    per-seat deck counts and prizes remaining). [ENGINE]"""
     from cg.game import battle_start, battle_select, battle_finish
 
     obs_dict, start = battle_start(deck0, deck1)
@@ -138,17 +140,26 @@ def _engine_game(fn0, fn1, deck0: list[int], deck1: list[int],
             else:
                 picks = fn(obs_dict)
             obs_dict = battle_select([int(i) for i in picks])
+        if stats is not None:
+            players = obs_dict["current"]["players"]
+            stats["final"] = {
+                "decks": [p.get("deckCount") for p in players],
+                "prizes": [len(p.get("prize", [])) for p in players],
+            }
         return obs_dict["current"]["result"]
     finally:
         battle_finish()
 
 
 def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
-                seed: int = 0, game_fn=None, stats: dict | None = None) -> list[int]:
+                seed: int = 0, game_fn=None, stats: dict | None = None,
+                on_game=None) -> list[int]:
     """Slot-fair series: a takes seat g%2. Returns 0 = a won, 1 = b won, 2 = draw
     per game. `game_fn(fn0, fn1, deck0, deck1, stats)` is the test seam (defaults
     to the [ENGINE] loop). `stats`, if given, accumulates per-SIDE ("a"/"b")
-    move/time/error totals across the series."""
+    move/time/error totals across the series. `on_game(g, result, seat_stats)`
+    is called after each game with a's result and that game's raw stats — the
+    loss-forensics hook (the CLI's --diag)."""
     game = game_fn or _engine_game
     fn_a, deck_a = make_pilot(spec_a, instance=f"mr{seed}_a")
     fn_b, deck_b = make_pilot(spec_b, instance=f"mr{seed}_b")
@@ -157,16 +168,30 @@ def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
         a_seat = g % 2
         fns = (fn_a, fn_b) if a_seat == 0 else (fn_b, fn_a)
         decks = (deck_a, deck_b) if a_seat == 0 else (deck_b, deck_a)
-        seat_stats: dict | None = {} if stats is not None else None
+        seat_stats: dict | None = {} if (stats is not None or on_game) else None
         res = game(fns[0], fns[1], decks[0], decks[1], seat_stats)
         if stats is not None:
-            for seat, s in seat_stats.items():
+            for seat in (0, 1):
+                if seat not in seat_stats:
+                    continue
                 side = stats.setdefault("a" if seat == a_seat else "b",
                                         {"moves": 0, "time_s": 0.0, "errors": 0})
                 for k in side:
-                    side[k] += s[k]
-        out.append(2 if res == 2 else (0 if res == a_seat else 1))
+                    side[k] += seat_stats[seat][k]
+        result = 2 if res == 2 else (0 if res == a_seat else 1)
+        if on_game is not None:
+            on_game(g, result, _from_a_view(seat_stats, a_seat))
+        out.append(result)
     return out
+
+
+def _from_a_view(seat_stats: dict, a_seat: int) -> dict:
+    """Re-key one game's stats from seat indices to side-a's perspective."""
+    view = {"a": seat_stats.get(a_seat), "b": seat_stats.get(1 - a_seat)}
+    final = seat_stats.get("final")
+    if final:
+        view["final"] = {k: [v[a_seat], v[1 - a_seat]] for k, v in final.items()}
+    return view
 
 
 def series_wr(results: list[int]) -> float:
@@ -233,10 +258,22 @@ def _main() -> None:
     s.add_argument("-n", "--games", type=int, default=60)
     s.add_argument("--workers", type=int, default=1)
     s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--diag", action="store_true",
+                   help="per-game end-state lines (loss forensics; forces workers=1)")
     a = p.parse_args()
 
     spec_a, spec_b = parse_spec(a.a), parse_spec(a.b)
-    if a.workers <= 1:
+    if a.diag:
+        def on_game(g, result, view):
+            f = view.get("final") or {}
+            decks = f.get("decks", ["?", "?"])
+            prizes = f.get("prizes", ["?", "?"])
+            moves = (view.get("a") or {}).get("moves", "?")
+            print(f"game {g:>3}: {'WLD'[result]}  moves={moves:>3}  "
+                  f"deck a/b={decks[0]}/{decks[1]}  prizes-left a/b={prizes[0]}/{prizes[1]}",
+                  flush=True)
+        results = play_series(spec_a, spec_b, a.games, seed=a.seed, on_game=on_game)
+    elif a.workers <= 1:
         results = play_series(spec_a, spec_b, a.games, seed=a.seed)
     else:
         results = run_pairs([(spec_a, spec_b, a.games)], workers=a.workers)[0]

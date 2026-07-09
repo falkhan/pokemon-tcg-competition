@@ -244,18 +244,29 @@ class TestRaceScoring:
             == constants.SCORE_ATTACH_RACE_CLOSER_ACTIVE + 2
         assert score_attach(bench_attach, obs) == constants.SCORE_ATTACH_BENCH_BASE + 1
 
-    def test_attach_prefers_the_race_winning_bench_over_the_active(self):
-        # The benched closer outranks even the active non-closer: keep charging
-        # THE ONE attacker (the attach doesn't end the turn).
+    def test_attach_prefers_the_race_winning_bench_once_the_active_is_ready(self):
+        # With an attack-READY active (card 1 at [F,F]: its best attack is
+        # charged), the benched closer outranks further active investment:
+        # keep charging THE ONE attacker (the attach doesn't end the turn).
+        obs = self._attach_obs(b.pokemon(1, energies=[FIGHTING, FIGHTING]),
+                               [b.pokemon(3)], b.pokemon(5, hp=999))
+        bench_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.BENCH,
+                                in_play_index=0)
+        assert score_attach(bench_attach, obs) \
+            == constants.SCORE_ATTACH_RACE_CLOSER_BENCH + 2
+
+    def test_bench_closer_suppressed_while_the_active_starves(self):
+        # The measured floor-test failure (0.715): an uncharged active can
+        # neither attack nor pay retreat, so the bench tier must wait — the
+        # active gets fed first.
         obs = self._attach_obs(b.pokemon(1), [b.pokemon(3)], b.pokemon(5, hp=999))
         active_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
                                  in_play_index=0)
         bench_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.BENCH,
                                 in_play_index=0)
-        bench_score = score_attach(bench_attach, obs)
-        assert bench_score == constants.SCORE_ATTACH_RACE_CLOSER_BENCH + 2
-        assert bench_score > score_attach(active_attach, obs) \
-            == constants.SCORE_ATTACH_ACTIVE_BASE + 1
+        assert score_attach(bench_attach, obs) == constants.SCORE_ATTACH_BENCH_BASE + 2
+        assert score_attach(active_attach, obs) == constants.SCORE_ATTACH_ACTIVE_BASE + 1
+        assert score_attach(active_attach, obs) > score_attach(bench_attach, obs)
 
     def test_promote_ranks_by_attaches_still_needed(self):
         charged = b.pokemon(3, energies=[FIGHTING, FIGHTING])

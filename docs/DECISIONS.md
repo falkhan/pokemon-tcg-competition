@@ -7,6 +7,18 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-09 · Measured: prioritizing the bench closer above attach-active STARVES the active — race charging must be gated on an attack-ready active
+**Measurement (M7.2b gates, real engine):** vs-expert 0.329 (PASS, up from ~0.25–0.30) but
+floor 0.715 (FAIL, need ≥0.90; 57/200 losses, 0 draws — all self-deck-outs) and vs-random
+0.795. **Root cause:** `SCORE_ATTACH_RACE_CLOSER_BENCH` (2680) > attach-active (2600) sent
+*every* energy to the benched closer; the active (Riolu: attack needs 1 energy, retreat 2)
+could then neither attack nor retreat, so no ATTACK option existed for close mode to boost,
+trainers fired every turn, and the pilot milled itself — the exact M6 failure the change was
+meant to fix, resurrected by the fix. **Lesson:** "keep charging THE ONE attacker" is only
+safe once the active is functional; the bench tier now requires `turns_to_ready(active) == 0`
+(feed the active first, then bank the closer). The vs-expert gain came from the other race
+terms (promote, best-attack loading), which survive unchanged.
+
 ### 2026-07-09 · The expert's AttackPlan is a SINGLE-TURN commitment; race math ports it deck-agnostically, with a conservative close mode
 **Discovery (M7.2b):** sample-agent/main.py's `AttackPlan` — the experts' documented multi-turn
 edge — is actually a per-turn, single-target attack commitment (reset every turn, commits only

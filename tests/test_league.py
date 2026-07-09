@@ -287,3 +287,16 @@ def test_anchor_round_robin_covers_all_pairs(ldirs, fake_pilots):
     n_anchors = 7
     expected_games_total = 2 * (n_anchors * (n_anchors - 1) // 2) * 2  # per-entry sum
     assert sum(e.games for e in league.entries.values()) == expected_games_total
+
+
+def test_add_batch_enrolls_a_directory_idempotently(ldirs, tmp_path):
+    gen = tmp_path / "gen"
+    gen.mkdir()
+    for name, deck in (("deck_aaa.csv", LUCARIO),
+                       ("deck_bbb.csv", [int(x) for x in (DECKS / "iono.csv").read_text().split()])):
+        (gen / name).write_text("\n".join(map(str, deck)))
+    league = _fresh(with_anchors=False)
+    added = lg.add_batch(league, gen)
+    assert len(added) == 2 and len(league.entries) == 2
+    again = lg.add_batch(league, gen)  # idempotent: same entries returned
+    assert len(league.entries) == 2 and {e.entry_id for e in again} == set(league.entries)

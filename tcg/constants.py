@@ -10,7 +10,8 @@ change. The overall priority ladder, highest first:
     2800  evolve                    (free, doesn't end the turn)
     2750  attach to my fastest closer in the active     (race math, M7.2b)
     2680  attach to my fastest closer on the bench      (above the KO tier: the
-          attach doesn't end the turn — the KO fires on the re-prompt after it)
+          attach doesn't end the turn — the KO fires on the re-prompt after it;
+          ONLY while the active is attack-ready, else the active starves)
     2600  attach energy to the active attacker
     2500+ attack for a KO           (take the prize, then end the turn)
     2400  bench a Pokémon / attach energy on the bench
@@ -63,7 +64,10 @@ SCORE_ATTACH_UNBLOCKS_KO_BENCH = 2900
 SCORE_ATTACH_RACE_CLOSER_ACTIVE = 2750  # M7.2b: my fastest closer (min turns-to-first-KO)
 SCORE_ATTACH_RACE_CLOSER_BENCH = 2680   # ... on the bench: above attach-active AND the KO
                                         # tier — keep charging THE ONE attacker (the attach
-                                        # doesn't end the turn; the KO fires on re-prompt)
+                                        # doesn't end the turn; the KO fires on re-prompt).
+                                        # ONLY while the active is attack-ready: otherwise
+                                        # the active starves (can't attack OR retreat) and
+                                        # the pilot mills itself (measured: floor 0.715)
 SCORE_ATTACH_ACTIVE_BASE = 2600         # loading a real attacker that still needs energy
 SCORE_ATTACH_BENCH_BASE = 2400
 SCORE_ATTACH_ALREADY_LOADED = 600       # BEST damaging attack already charged (M7.2b: was
