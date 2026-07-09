@@ -510,6 +510,11 @@ Pokemon/
 │   ├── ppo.py                 <- self-play training loop (stub)
 │   ├── deck_search.py         <- validate_deck + legal mutations (done)
 │   └── eval.py                <- play_games, RecordingAgent, replay dumps (done)
+├── tcg/                       <- readable refactor of rl/ (dataclasses, named
+│                                 constants, public API) + its own pytest suite
+│                                 in tests/; rl/ stays the live training +
+│                                 submission path until the real-engine-gated
+│                                 switchover (docs/M6.md)
 ├── replays/                   <- self-generated replay pages + index.html browser
 ├── reference/                 <- official sample notebooks (see §5.4)
 ├── docs/                      <- milestone diary (M0.md, ...)
