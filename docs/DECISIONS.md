@@ -7,6 +7,19 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-09 · Evolution chains link by NAME, and attackId maps to cards by cumulative n_attacks
+**Two data discoveries while building the deck factory (rl/deck_build.py, M7.1):**
+(a) `evolves_from_id` points at one specific printing, but decks legally play any same-named
+card — the tuned Lucario deck runs Riolu #677 (80 HP) while Mega Lucario ex's id points at
+Riolu #974 (70 HP). Naive id-walking misses real lines; walk by NAME, take the best printing.
+(b) `attacks_features.parquet` has no card_id column, but attack ids are consecutive in
+card_id order — cumulative `n_attacks` assigns all 1,556 attacks with zero max_damage
+mismatches. That unlocks true damage-per-energy (best attack's cost) engine-free;
+`min_attack_cost` alone is the *cheapest* attack and mis-ranks attackers (Mega Lucario:
+min cost 1 = 130 dmg Aura Jab, best = 270 dmg Mega Brave at cost 2). Both facts are pinned
+in tests/test_deck_build.py. **Consequence:** the whole M7.1 factory (lines → scoring →
+templates) runs without the engine; only the fitness gate is [ENGINE].
+
 ### 2026-07-09 · Kaggle ingestion built offline-first; the schema is an assumption until the [NET] spike
 **Built (rl/kaggle_ingest.py, M7.0):** injectable fetch layer (immutable gzip cache, ~1 req/s
 throttle) over `EpisodeService/{ListEpisodes,GetEpisodeReplay}`, a schema-tolerant

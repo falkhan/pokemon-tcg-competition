@@ -462,10 +462,12 @@ honest n everywhere, few precious training runs.
   outcomes. **Go/no-go:** decklists extractable → full plan; only outcomes → keep
   forensics, drop meta-field/BC edges, recalibrate gates to the old anchor field. Also
   settles: are opponent observations present (unlocks BC-on-winners)?
-- **M7.1 — Deck factory (2–3d).** `deck_build.py` + shells v1; 40 candidates
-  league-rated under the generic pilot. **Gate:** ≥1 generated deck ≥50% vs the Lucario
-  deck same-pilot (n=400) — factory reaches parity with the human-tuned seed; ≥3
-  distinct archetypes above the anchor-field median.
+- **M7.1 — Deck factory (2–3d).** *Status 2026-07-09: `deck_build.py` + shells v1 +
+  `field_fitness` landed with 15 tests; 40 candidates generated to `decks/gen/`; the
+  [ENGINE] gate runs via the runbook in [M7.md](M7.md).* `deck_build.py` + shells v1;
+  40 candidates league-rated under the generic pilot. **Gate:** ≥1 generated deck ≥50%
+  vs the Lucario deck same-pilot (n=400) — factory reaches parity with the human-tuned
+  seed; ≥3 distinct archetypes above the anchor-field median.
 - **M7.2 — League + gates (1–2d, overlaps).** `league.py`, `matchrunner.py`, persistent
   standings, gates-as-data. **Gate (self-test):** anchors reproduce the known ordering
   (Lucario expert > tuned > generic+Lucario > bc_v1 > random).
