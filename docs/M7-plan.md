@@ -468,9 +468,13 @@ honest n everywhere, few precious training runs.
   40 candidates league-rated under the generic pilot. **Gate:** ≥1 generated deck ≥50%
   vs the Lucario deck same-pilot (n=400) — factory reaches parity with the human-tuned
   seed; ≥3 distinct archetypes above the anchor-field median.
-- **M7.2 — League + gates (1–2d, overlaps).** `league.py`, `matchrunner.py`, persistent
-  standings, gates-as-data. **Gate (self-test):** anchors reproduce the known ordering
-  (Lucario expert > tuned > generic+Lucario > bc_v1 > random).
+- **M7.2 — League + gates (1–2d, overlaps).** *Status 2026-07-09: `league.py` +
+  `matchrunner.py` landed with 35 tests (suite 277); anchors bootstrapped into
+  `data/league/league.json`; deck_search loops delegate to the matchrunner; the
+  [ENGINE] self-test runs via the runbook in [M7.md](M7.md).* `league.py`,
+  `matchrunner.py`, persistent standings, gates-as-data. **Gate (self-test):** anchors
+  reproduce the known ordering (Lucario expert > tuned > generic+Lucario > bc_v1 >
+  random).
 - **M7.2b — Race-math lookahead L1 (1–2d, parallel).** Prize-race table on
   `rl/combat.py` → generic-pilot scorers + k-turn state features. **Gate:** floor test
   (vs zero-damage deck) ≥90% (currently 75% — the self-deck/setup weakness is a

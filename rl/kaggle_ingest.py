@@ -62,9 +62,8 @@ ARCHETYPE_COS = 0.95  # cosine threshold over pooled Pokémon-core FEAT (eyeball
 # Observation keys that carry no game state; an observation with only these is "blank".
 _TRIVIAL_OBS_KEYS = {"remainingOverageTime", "step", "player"}
 
-# Opponent spec tuple, matching rl/collector.py's picklable convention. The deck slot
-# here is a csv PATH (not a decks/ name) — the M7.2 matchrunner resolves name-or-path.
-# Canonical home moves to rl/matchrunner.py when it lands (docs/M7-plan.md §2.4).
+# Opponent spec tuple; canonical home is rl/matchrunner.py (M7.2), whose
+# resolve_deck accepts the csv PATHs build_meta_field puts in the deck slot.
 OpponentSpec = tuple
 
 

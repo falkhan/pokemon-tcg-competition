@@ -1,0 +1,140 @@
+"""M7.2 match runner: spec parsing, slot-fair series, job math, delegation.
+
+The engine game loop itself is [ENGINE] (import-smoke only, house convention);
+everything here runs through the injected game_fn seam.
+"""
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("numpy")
+
+import rl.deck_search as ds  # noqa: E402
+import rl.matchrunner as mr  # noqa: E402
+
+DECKS = Path(__file__).resolve().parent.parent / "decks"
+LUCARIO = [int(x) for x in (DECKS / "lucario.csv").read_text().split()]
+
+
+@pytest.mark.parametrize("s,expected", [
+    ("generic:lucario", ("generic", "lucario")),
+    ("random:kyogre", ("random", "kyogre")),
+    ("rule:iono", ("rule", "iono", "iono")),
+    ("rule:lucario:kyogre", ("rule", "lucario", "kyogre")),
+    ("model:checkpoints/bc_v1.pt:kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
+])
+def test_parse_spec_kinds(s, expected):
+    assert mr.parse_spec(s) == expected
+
+
+@pytest.mark.parametrize("junk", ["generic", "banana:x", "model:onlyckpt", "rule:a:b:c"])
+def test_parse_spec_rejects_junk(junk):
+    with pytest.raises(ValueError, match="spec"):
+        mr.parse_spec(junk)
+
+
+def test_resolve_and_spec_deck_contract():
+    assert mr.resolve_deck("lucario") == LUCARIO
+    assert mr.resolve_deck(str(DECKS / "lucario.csv")) == LUCARIO
+    assert mr.resolve_deck(LUCARIO) == LUCARIO
+    assert mr.spec_deck(("rule", "lucario", "kyogre")) == "kyogre"
+    assert mr.spec_deck(("generic", "lucario")) == "lucario"
+    # deck_search's historic helpers still delegate here
+    assert ds._resolve_deck("lucario") == LUCARIO
+
+
+def _fake_pilots(monkeypatch, record=None):
+    """make_pilot without the engine: callable is the instance name, deck resolved."""
+    def fake(spec, instance):
+        if record is not None:
+            record.append((spec, instance))
+        return instance, mr.resolve_deck(mr.spec_deck(spec))
+    monkeypatch.setattr(mr, "make_pilot", fake)
+
+
+def test_play_series_is_slot_fair_and_maps_draws(monkeypatch):
+    _fake_pilots(monkeypatch)
+    seats = []
+
+    def game_fn(fn0, fn1, deck0, deck1, stats):
+        seats.append((fn0, fn1))
+        return 0  # seat 0 always wins
+
+    r = mr.play_series(("generic", "lucario"), ("generic", "iono"), 4, game_fn=game_fn)
+    # a sits seat g%2: wins games 0,2 (seat 0) and loses 1,3 (b took seat 0)
+    assert r == [0, 1, 0, 1]
+    assert seats[0][0].endswith("_a") and seats[1][0].endswith("_b")
+    r = mr.play_series(("generic", "lucario"), ("generic", "iono"), 2,
+                       game_fn=lambda *a: 2)
+    assert r == [2, 2]
+
+
+def test_play_series_uses_distinct_pilot_instances(monkeypatch):
+    record = []
+    _fake_pilots(monkeypatch, record)
+    mr.play_series(("rule", "lucario", "lucario"), ("rule", "lucario", "lucario"), 1,
+                   seed=7, game_fn=lambda *a: 0)
+    names = [inst for _, inst in record]
+    assert len(names) == 2 and names[0] != names[1]  # module-state isolation
+
+
+def test_play_series_accumulates_per_side_stats(monkeypatch):
+    _fake_pilots(monkeypatch)
+
+    def game_fn(fn0, fn1, deck0, deck1, stats):
+        stats[0] = {"moves": 10, "time_s": 0.1, "errors": 0}
+        stats[1] = {"moves": 8, "time_s": 0.4, "errors": 1}
+        return 0
+
+    stats: dict = {}
+    mr.play_series(("generic", "lucario"), ("generic", "iono"), 2,
+                   game_fn=game_fn, stats=stats)
+    # a sat seat 0 then seat 1 -> gets 10+8 moves; b the mirror
+    assert stats["a"] == {"moves": 18, "time_s": 0.5, "errors": 1}
+    assert stats["b"] == {"moves": 18, "time_s": 0.5, "errors": 1}
+
+
+def test_series_wr_counts_draws_as_half():
+    assert mr.series_wr([0, 0, 1, 2]) == pytest.approx(0.625)
+    assert mr.series_wr([]) == 0.0
+
+
+def test_make_jobs_even_chunks_cover_all_games():
+    pairs = [(("generic", "a"), ("generic", "b"), 40),
+             (("generic", "a"), ("generic", "c"), 6)]
+    jobs = mr._make_jobs(pairs, workers=4)
+    per_pair = {0: 0, 1: 0}
+    seeds = set()
+    for pair_idx, _a, _b, n, seed in jobs:
+        per_pair[pair_idx] += n
+        seeds.add(seed)
+        assert n % 2 == 0 or n == per_pair[pair_idx]  # even chunks keep slot-fairness
+    assert per_pair == {0: 40, 1: 6}
+    assert len(seeds) == len(jobs)  # distinct seeds
+    assert mr._make_jobs([], 4) == []
+
+
+def test_run_pairs_inprocess_with_game_fn(monkeypatch):
+    _fake_pilots(monkeypatch)
+    pairs = [(("generic", "lucario"), ("generic", "iono"), 4),
+             (("generic", "iono"), ("generic", "kyogre"), 2)]
+    results = mr.run_pairs(pairs, workers=1, game_fn=lambda *a: 0)
+    assert results == [[0, 1, 0, 1], [0, 1]]
+    with pytest.raises(ValueError, match="workers"):
+        mr.run_pairs(pairs, workers=4, game_fn=lambda *a: 0)
+
+
+def test_deck_search_wrappers_delegate(monkeypatch):
+    calls = []
+
+    def fake_series(spec_a, spec_b, n, seed=0, game_fn=None, stats=None):
+        calls.append((spec_a, spec_b, n))
+        return [0] * n
+
+    monkeypatch.setattr(mr, "play_series", fake_series)
+    assert ds.matchup([1] * 60, [2] * 60, 4, agent="iono") == [0] * 4
+    assert calls[-1] == (("rule", "iono", [1] * 60), ("rule", "iono", [2] * 60), 4)
+    assert ds._play_vs_spec([1] * 60, ("random", "kyogre"), 3) == [0] * 3
+    assert calls[-1] == (("generic", [1] * 60), ("random", "kyogre"), 3)
+    assert ds._play_vs_spec([1] * 60, ("random", "kyogre"), 3, pilot="lucario") == [0] * 3
+    assert calls[-1][0] == ("rule", "lucario", [1] * 60)

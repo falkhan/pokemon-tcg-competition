@@ -1,0 +1,250 @@
+"""Shared direct-engine match runner — ONE battle loop for every evaluator (M7.2).
+
+Before this module, three separate battle-loop implementations drifted apart:
+rl/collector.py's worker, rl/deck_search.py's matchup (hardcoded Lucario pilots),
+and rl/eval.py. This is now the canonical home of the OpponentSpec vocabulary and
+the slot-fair game loop; deck_search delegates here, the collector migrates in
+M7.3 when it gains per-game deck sampling (it records training tensors mid-game —
+a recording concern layered on top of match running), and eval.play_games stays
+on kaggle_environments because it exercises the SHIPPED file agents (the deploy
+surface, cross-checked against this fast path in M7-plan verification item 5).
+
+Engine constraint (cg/sim.py holds one live battle per process): a worker runs
+many battles sequentially (battle_start -> loop -> battle_finish per game);
+parallelism is process-level via a spawn Pool, with only picklable str/int job
+tuples crossing the boundary — the rl/collector.py pattern.
+
+Opponent specs (picklable tuples; deck = decks/ name | csv path | list of ids):
+  ("rule",  agent, deck)    rule expert brain ("lucario"/"iono"/"tuned") on a deck
+  ("model", ckpt, deck)     neural pilot (greedy OptionScorer) from a checkpoint
+  ("generic", deck)         the deck-agnostic rule pilot
+  ("random", deck)          uniform-random legal moves
+
+Usage:
+  python -m rl.matchrunner play --a generic:lucario --b random:kyogre -n 60
+"""
+import argparse
+import multiprocessing as mp
+import random
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DECK_DIR = ROOT / "decks"
+
+OpponentSpec = tuple
+
+
+def resolve_deck(deck) -> list[int]:
+    """A decks/ name, a csv path, or an id list -> 60 card ids."""
+    if isinstance(deck, (list, tuple)):
+        return list(deck)
+    path = Path(deck)
+    if not path.suffix:
+        path = DECK_DIR / f"{deck}.csv"
+    return [int(x) for x in path.read_text().split() if x.strip()]
+
+
+def spec_deck(spec: OpponentSpec):
+    """The deck slot of a spec (unresolved)."""
+    return spec[2] if spec[0] in ("rule", "model") else spec[1]
+
+
+def parse_spec(s: str) -> OpponentSpec:
+    """CLI shorthand -> spec tuple: "generic:lucario", "rule:iono[:deck]",
+    "model:checkpoints/bc_v1.pt:kyogre", "random:kyogre"."""
+    parts = s.split(":")
+    kind = parts[0]
+    if kind in ("generic", "random") and len(parts) == 2:
+        return (kind, parts[1])
+    if kind == "rule" and len(parts) in (2, 3):
+        return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
+    if kind == "model" and len(parts) == 3:
+        return ("model", parts[1], parts[2])
+    raise ValueError(f"cannot parse opponent spec {s!r} "
+                     "(want kind:deck or rule:agent[:deck] or model:ckpt:deck)")
+
+
+def make_pilot(spec: OpponentSpec, instance: str):
+    """Build (agent_callable, deck_ids) for a spec. [ENGINE] for rule/model.
+
+    `instance` must be unique per live rule pilot — teacher modules keep
+    module-level mutable state (rl/teacher.py docstring).
+    """
+    kind = spec[0]
+    if kind == "rule":
+        from rl.teacher import load_teacher
+        # deck=spec[1]: load_teacher's deck param only sets module.my_deck (the
+        # kaggle-env deck return, unused in direct loops) and accepts names only;
+        # the battle deck is resolved from the spec's own deck slot below.
+        return load_teacher(instance, agent=spec[1], deck=spec[1]), resolve_deck(spec[2])
+    if kind == "generic":
+        from rl.generic_pilot import make_generic_pilot
+        ids = resolve_deck(spec[1])
+        return make_generic_pilot(ids), ids
+    if kind == "random":
+        rng = random.Random(hash(instance) & 0xFFFF)
+        fn = lambda od: rng.sample(range(len(od["select"]["option"])),  # noqa: E731
+                                   od["select"]["maxCount"])
+        return fn, resolve_deck(spec[1])
+    if kind == "model":
+        import numpy as np
+        import torch
+        from cg.api import to_observation_class
+        from rl.encoders import encode_context, encode_option, encode_state
+        from rl.policy import OptionScorer
+        m = OptionScorer()
+        m.load_state_dict(torch.load(spec[1], map_location="cpu"))
+        m.eval()
+
+        def fn(od):
+            obs = to_observation_class(od)
+            sc = np.concatenate([encode_state(obs.current),
+                                 encode_context(obs.select.context)]).astype(np.float32)
+            opts = np.stack([encode_option(o, obs) for o in obs.select.option]).astype(np.float32)
+            with torch.no_grad():
+                logits, _ = m(torch.from_numpy(sc).unsqueeze(0), torch.from_numpy(opts).unsqueeze(0))
+            order = torch.argsort(logits.squeeze(0), descending=True).tolist()
+            return [int(i) for i in order[: obs.select.maxCount]]
+        return fn, resolve_deck(spec[2])
+    raise ValueError(f"unknown opponent spec kind: {spec!r}")
+
+
+def _engine_game(fn0, fn1, deck0: list[int], deck1: list[int],
+                 stats: dict | None = None) -> int:
+    """One battle on the direct engine loop. Returns the winner seat (0/1) or 2
+    for a draw. `stats`, if given, accumulates per-seat move counts, wall time,
+    and agent exceptions under stats[0] / stats[1] — the G1/G6 gate inputs. [ENGINE]"""
+    from cg.game import battle_start, battle_select, battle_finish
+
+    obs_dict, start = battle_start(deck0, deck1)
+    if start.errorPlayer >= 0:
+        battle_finish()
+        raise ValueError(f"battle_start rejected a deck (errorType={start.errorType})")
+    try:
+        while obs_dict["current"]["result"] < 0:
+            seat = obs_dict["current"]["yourIndex"]
+            fn = fn0 if seat == 0 else fn1
+            if stats is not None:
+                s = stats.setdefault(seat, {"moves": 0, "time_s": 0.0, "errors": 0})
+                t0 = time.perf_counter()
+                try:
+                    picks = fn(obs_dict)
+                except Exception:  # noqa: BLE001 — G1 counts crashes, then re-raises
+                    s["errors"] += 1
+                    raise
+                s["time_s"] += time.perf_counter() - t0
+                s["moves"] += 1
+            else:
+                picks = fn(obs_dict)
+            obs_dict = battle_select([int(i) for i in picks])
+        return obs_dict["current"]["result"]
+    finally:
+        battle_finish()
+
+
+def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
+                seed: int = 0, game_fn=None, stats: dict | None = None) -> list[int]:
+    """Slot-fair series: a takes seat g%2. Returns 0 = a won, 1 = b won, 2 = draw
+    per game. `game_fn(fn0, fn1, deck0, deck1, stats)` is the test seam (defaults
+    to the [ENGINE] loop). `stats`, if given, accumulates per-SIDE ("a"/"b")
+    move/time/error totals across the series."""
+    game = game_fn or _engine_game
+    fn_a, deck_a = make_pilot(spec_a, instance=f"mr{seed}_a")
+    fn_b, deck_b = make_pilot(spec_b, instance=f"mr{seed}_b")
+    out = []
+    for g in range(n_games):
+        a_seat = g % 2
+        fns = (fn_a, fn_b) if a_seat == 0 else (fn_b, fn_a)
+        decks = (deck_a, deck_b) if a_seat == 0 else (deck_b, deck_a)
+        seat_stats: dict | None = {} if stats is not None else None
+        res = game(fns[0], fns[1], decks[0], decks[1], seat_stats)
+        if stats is not None:
+            for seat, s in seat_stats.items():
+                side = stats.setdefault("a" if seat == a_seat else "b",
+                                        {"moves": 0, "time_s": 0.0, "errors": 0})
+                for k in side:
+                    side[k] += s[k]
+        out.append(2 if res == 2 else (0 if res == a_seat else 1))
+    return out
+
+
+def series_wr(results: list[int]) -> float:
+    """Win rate for side a, draws counting half."""
+    if not results:
+        return 0.0
+    return (sum(1 for r in results if r == 0) + 0.5 * sum(1 for r in results if r == 2)) / len(results)
+
+
+# ---------------------------------------------------------------------------
+# Multiprocessing across pairs (the rl/collector.py Pool pattern)
+# ---------------------------------------------------------------------------
+def _make_jobs(pairs: list[tuple], workers: int) -> list[tuple]:
+    """Split (spec_a, spec_b, n) pairs into even game chunks, ~2 jobs per worker.
+    Chunks keep even sizes so each stays slot-fair. Pure — unit-tested offline.
+    Job = (pair_idx, spec_a, spec_b, n_chunk, seed)."""
+    total = sum(n for _, _, n in pairs)
+    if total == 0:
+        return []
+    # target chunk size: fill ~2*workers jobs, rounded to even, min 2
+    target = max(2, (total // max(1, 2 * workers) + 1) // 2 * 2)
+    jobs = []
+    for pair_idx, (a, b, n) in enumerate(pairs):
+        done = 0
+        while done < n:
+            chunk = min(target, n - done)
+            jobs.append((pair_idx, a, b, chunk, 1000 + len(jobs)))
+            done += chunk
+    return jobs
+
+
+def _pair_worker(job: tuple) -> tuple[int, list[int]]:
+    pair_idx, spec_a, spec_b, n, seed = job
+    return pair_idx, play_series(spec_a, spec_b, n, seed=seed)
+
+
+def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None) -> list[list[int]]:
+    """Run [(spec_a, spec_b, n_games), ...]; returns per-pair result lists.
+
+    workers <= 1 runs in-process (required for an injected game_fn — callables
+    don't cross the spawn boundary). Otherwise a spawn Pool over even game
+    chunks; only str/int tuples are pickled. [ENGINE] unless game_fn given."""
+    if workers <= 1 or game_fn is not None:
+        if workers > 1:
+            raise ValueError("game_fn requires workers<=1 (not picklable)")
+        return [play_series(a, b, n, seed=1000 + k, game_fn=game_fn)
+                for k, (a, b, n) in enumerate(pairs)]
+
+    jobs = _make_jobs(pairs, workers)
+    results: list[list[int]] = [[] for _ in pairs]
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(min(workers, len(jobs))) as pool:
+        for pair_idx, chunk in pool.map(_pair_worker, jobs):
+            results[pair_idx].extend(chunk)
+    return results
+
+
+def _main() -> None:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("play", help="one spec-vs-spec series, slot-fair")
+    s.add_argument("--a", required=True, help="e.g. generic:lucario, rule:iono, model:<ckpt>:<deck>")
+    s.add_argument("--b", required=True)
+    s.add_argument("-n", "--games", type=int, default=60)
+    s.add_argument("--workers", type=int, default=1)
+    s.add_argument("--seed", type=int, default=0)
+    a = p.parse_args()
+
+    spec_a, spec_b = parse_spec(a.a), parse_spec(a.b)
+    if a.workers <= 1:
+        results = play_series(spec_a, spec_b, a.games, seed=a.seed)
+    else:
+        results = run_pairs([(spec_a, spec_b, a.games)], workers=a.workers)[0]
+    w = sum(1 for r in results if r == 0)
+    d = sum(1 for r in results if r == 2)
+    print(f"{a.a} vs {a.b}: {w}W {len(results) - w - d}L {d}D over {len(results)} "
+          f"(wr={series_wr(results):.3f})", flush=True)
+
+
+if __name__ == "__main__":
+    _main()

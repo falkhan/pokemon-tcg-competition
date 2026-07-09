@@ -11,7 +11,9 @@ The cg engine holds ONE battle per process (cg/sim.py global) -> multiprocessing
 engine per worker. Everything heavy is imported/loaded inside the worker; only picklable
 config (paths, deck names, spec tuples) crosses the process boundary.
 
-Opponent spec tuples (picklable):
+Opponent spec tuples (picklable; canonical vocabulary now in rl/matchrunner.py —
+this worker's battle loop migrates onto it in M7.3 together with per-game deck
+sampling, since it records training tensors mid-game on top of match running):
   ("model", checkpoint_path, deck_name)   a neural opponent (current or past self)
   ("rule",  agent_name, deck_name)        a rule agent (lucario/iono) on some deck
   ("random", deck_name)                   uniform-random legal moves
