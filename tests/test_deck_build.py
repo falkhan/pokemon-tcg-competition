@@ -175,3 +175,20 @@ def test_resolve_deck_accepts_name_path_and_ids():
     assert ds._resolve_deck("lucario") == LUCARIO
     assert ds._resolve_deck(str(DECKS / "lucario.csv")) == LUCARIO
     assert ds._resolve_deck(LUCARIO) == LUCARIO
+
+
+# --- floor deck (M7.2b gate fixture) -------------------------------------------
+
+def test_build_floor_deck_is_legal_deterministic_and_harmless():
+    deck = db.build_floor_deck()
+    assert len(deck) == 60 and ds.validate_deck(deck)[0]
+    assert deck == db.build_floor_deck()  # deterministic
+    for cid in deck:
+        r = db._ft[cid]
+        if r["is_pokemon"]:
+            assert r["max_damage"] == 0 and not r["has_variable_attack"]
+
+
+def test_committed_floor_deck_matches_the_builder():
+    committed = [int(x) for x in (DECKS / "floor_zero_damage.csv").read_text().split()]
+    assert committed == db.build_floor_deck()  # regeneration tripwire

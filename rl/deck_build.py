@@ -285,6 +285,34 @@ def build_deck(line: Line, shell: list[int], tech: Line | None = None) -> list[i
     return cards
 
 
+def build_floor_deck(top: int = 4, copies: int = 4, out: Path | None = None) -> list[int]:
+    """The M7.2b floor-test punching bag: a legal deck whose Pokémon can never
+    deal damage (no damaging attack, none variable), so it can't take a prize
+    by KO. A competent pilot must beat it ~100%; M6's ad-hoc version measured
+    75% (self-decking) and was never committed — this one is reproducible.
+
+    Deliberately shell-less: the gate measures OUR closing speed, not the
+    punching bag's consistency. Committed at decks/floor_zero_damage.csv.
+    """
+    cards = pl.read_parquet(DATA / "cards_features.parquet")
+    zero = (cards.filter(pl.col("is_pokemon") & pl.col("is_basic")
+                         & (pl.col("max_damage") == 0) & ~pl.col("has_variable_attack"))
+                 .sort(["hp", "card_id"], descending=[True, False])
+                 .head(top))
+    deck: list[int] = []
+    for cid in zero["card_id"]:
+        deck.extend([int(cid)] * copies)
+    etype = int(zero["energy_type_id"][0]) or DEFAULT_ENERGY_TYPE
+    deck.extend([_BASIC_ENERGY.get(etype, _BASIC_ENERGY[DEFAULT_ENERGY_TYPE])]
+                * (DECK_SIZE - len(deck)))    # basic energy: copy-cap exempt filler
+
+    legal, reasons = validate_deck(deck)
+    assert legal, f"floor deck is illegal: {reasons}"
+    if out is not None:
+        _write_deck_csv(out, deck)
+    return deck
+
+
 def pick_tech(lines: list[Line], main: Line, meta_types: dict[int, float]) -> Line | None:
     """Best weakness-coverage tech: a different-type, <=2-stage, low-liability line
     maximizing coverage x damage-per-energy against the meta (§2.1 item 4)."""
@@ -371,6 +399,8 @@ def _main() -> None:
     s.add_argument("--harvest", type=Path, default=None,
                    help="also add meta_staples_v1 from an opp_decks.parquet")
 
+    sub.add_parser("floor", help="write the zero-damage floor-test deck")
+
     s = sub.add_parser("generate", help="emit candidate decks to decks/gen/")
     s.add_argument("--n", type=int, default=40)
     s.add_argument("--meta", type=Path, default=None)
@@ -394,6 +424,10 @@ def _main() -> None:
             SHELLS_JSON.write_text(json.dumps(shells, indent=2))
             print(f"added meta_staples_v1 ({len(shells['meta_staples_v1'])} cards)",
                   flush=True)
+    elif a.cmd == "floor":
+        out = DECK_DIR / "floor_zero_damage.csv"
+        build_floor_deck(out=out)
+        print(f"wrote {out}", flush=True)
     elif a.cmd == "generate":
         generate(n=a.n, meta=a.meta, top_k=a.top_k)
 

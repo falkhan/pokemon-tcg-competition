@@ -57,9 +57,21 @@ class TestScoreAttack:
         assert ko_basic == constants.SCORE_KO_BASE + constants.KO_PRIZE_BONUS
         assert ko_mega == constants.SCORE_KO_BASE + 3 * constants.KO_PRIZE_BONUS
 
-    def test_chip_damage_scores_low(self):
+    def test_chip_vs_harmless_board_enters_close_mode(self):
+        # M7.2b: card 5 has no damaging attack -> the race is won; chip jumps
+        # above trainers so the pilot attacks every turn instead of milling.
         score = score_attack(b.option(attack_id=101), b.pokemon(1), b.pokemon(5, hp=200))
+        assert score == constants.SCORE_CHIP_CLOSE_BASE + 5.0  # 2300 + 50/10
+
+    def test_chip_damage_scores_low_when_opponent_threatens(self):
+        # A real attacker on the opponent's bench keeps close mode OFF.
+        score = score_attack(b.option(attack_id=101), b.pokemon(1),
+                             b.pokemon(5, hp=200), opponent_bench=(b.pokemon(1),))
         assert score == constants.SCORE_CHIP_BASE + 5.0  # 1000 + 50/10
+
+    def test_close_mode_never_touches_the_ko_tier(self):
+        score = score_attack(b.option(attack_id=101), b.pokemon(1), b.pokemon(5, hp=40))
+        assert score == constants.SCORE_KO_BASE + constants.KO_PRIZE_BONUS
 
     def test_resistance_goes_negative_unlike_best_damage(self):
         # The pinned asymmetry: score_attack does NOT floor resisted damage at 0.
@@ -96,9 +108,14 @@ class TestScoreAttach:
         assert score_attach(self._attach_option(), obs) \
             == constants.SCORE_ATTACH_NON_ATTACKER
 
-    def test_already_loaded_attacker(self):
-        obs = self._obs(b.pokemon(1, energies=[FIGHTING]))  # cheapest attack costs 1
-        assert score_attach(self._attach_option(), obs) \
+    def test_already_loaded_means_the_best_attack_charged(self):
+        # M7.2b: card 1's cheapest attack costs 1 but its BEST (120) costs 2 —
+        # one energy is no longer "loaded"; two are.
+        needs_more = self._obs(b.pokemon(1, energies=[FIGHTING]))
+        assert score_attach(self._attach_option(), needs_more) \
+            == constants.SCORE_ATTACH_ACTIVE_BASE + 1
+        loaded = self._obs(b.pokemon(1, energies=[FIGHTING, WATER]))
+        assert score_attach(self._attach_option(), loaded) \
             == constants.SCORE_ATTACH_ALREADY_LOADED
 
     def test_loading_an_attacker_that_needs_energy(self):
@@ -168,7 +185,10 @@ class TestScoreCard:
         obs = b.observation(me=me, opponent=opponent, context=SelectContext.SWITCH)
         on_bench = score_card(b.option(OptionType.CARD, area=AreaType.BENCH, index=0), obs)
         in_hand = score_card(b.option(OptionType.CARD, area=AreaType.HAND, index=0), obs)
-        assert on_bench == in_hand + constants.PROMOTE_READY_BONUS
+        # M7.2b race term: the benched copy holds 1 of the 2 energies its best
+        # attack needs (one attach closer than the hand copy) + can hit now.
+        assert on_bench == in_hand + constants.PROMOTE_READY_BONUS \
+            + constants.PROMOTE_TURN_PENALTY
 
     def test_keep_and_discard_mirror_usefulness(self):
         me = b.player(hand=[b.hand_card(6)])  # energy: usefulness 250
@@ -203,3 +223,58 @@ def test_score_option_dispatches_flat_tiers_and_fallbacks():
     assert score_option(b.option(OptionType.EVOLVE), obs) == constants.SCORE_EVOLVE
     assert score_option(b.option(OptionType.YES), obs) == 40
     assert score_option(b.option(OptionType.TOOL_CARD), obs) == 0  # not in the dict
+
+
+class TestRaceScoring:
+    """M7.2b: charge the attacker that wins the race; attack when the race is won."""
+
+    def _attach_obs(self, active, bench, opponent_active):
+        me = b.player(active=active, bench=list(bench))
+        return b.observation(me=me, opponent=b.player(active=opponent_active))
+
+    def test_attach_prefers_the_race_winning_active(self):
+        # card 3 (270, needs FF) closes vs a 999hp wall in 5 turns; card 1 (120)
+        # needs 10 — the active is the closer, the bench copy is not.
+        obs = self._attach_obs(b.pokemon(3), [b.pokemon(1)], b.pokemon(5, hp=999))
+        active_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                                 in_play_index=0)
+        bench_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.BENCH,
+                                in_play_index=0)
+        assert score_attach(active_attach, obs) \
+            == constants.SCORE_ATTACH_RACE_CLOSER_ACTIVE + 2
+        assert score_attach(bench_attach, obs) == constants.SCORE_ATTACH_BENCH_BASE + 1
+
+    def test_attach_prefers_the_race_winning_bench_over_the_active(self):
+        # The benched closer outranks even the active non-closer: keep charging
+        # THE ONE attacker (the attach doesn't end the turn).
+        obs = self._attach_obs(b.pokemon(1), [b.pokemon(3)], b.pokemon(5, hp=999))
+        active_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                                 in_play_index=0)
+        bench_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.BENCH,
+                                in_play_index=0)
+        bench_score = score_attach(bench_attach, obs)
+        assert bench_score == constants.SCORE_ATTACH_RACE_CLOSER_BENCH + 2
+        assert bench_score > score_attach(active_attach, obs) \
+            == constants.SCORE_ATTACH_ACTIVE_BASE + 1
+
+    def test_promote_ranks_by_attaches_still_needed(self):
+        charged = b.pokemon(3, energies=[FIGHTING, FIGHTING])
+        uncharged = b.pokemon(3)
+        me = b.player(bench=[charged, uncharged])
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=999)),
+                            context=SelectContext.SWITCH)
+        pick = lambda i: score_card(  # noqa: E731
+            b.option(OptionType.CARD, area=AreaType.BENCH, index=i), obs)
+        assert pick(0) == 270 + constants.PROMOTE_READY_BONUS  # q + ready, gap 0
+        assert pick(1) == 270 - 2 * constants.PROMOTE_TURN_PENALTY  # gap 2
+
+    def test_close_mode_attacks_instead_of_milling(self):
+        # Agent-level: vs an all-harmless board, the chip attack outranks the
+        # draw trainer that used to mill the deck (the M6 floor-test loss).
+        me = b.player(active=b.pokemon(1, energies=[FIGHTING]),
+                      hand=[b.hand_card(7)], hand_count=5, deck_count=20)
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=200)))
+        attack = score_option(b.option(OptionType.ATTACK, attack_id=101), obs)
+        trainer = score_option(b.option(OptionType.PLAY, area=AreaType.HAND, index=0), obs)
+        assert attack == constants.SCORE_CHIP_CLOSE_BASE + 5.0
+        assert attack > trainer

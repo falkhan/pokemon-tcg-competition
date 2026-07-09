@@ -1,5 +1,6 @@
 from cg.api import to_observation_class, OptionType, SelectContext, AreaType, CardType, all_card_data
-from rl.combat import _CARD, _ATK, _can_afford, _best_damage  # pure-Python combat core (ships in submission)
+from rl.combat import (_CARD, _ATK, _can_afford, _best_damage,  # pure-Python combat core (ships in submission)
+                       _turns_to_first_ko, _turns_to_ready, UNREACHABLE)
 
 # Rough priority so it develops, attacks, and doesn't just pass
 
@@ -61,7 +62,7 @@ def score_option(o, obs):
     op_active = op.active[0] if op.active else None
 
     t = o.type
-    if t == OptionType.ATTACK: return score_attack(o, my_active, op_active)
+    if t == OptionType.ATTACK: return score_attack(o, my_active, op_active, op.bench)
     if t == OptionType.ATTACH: return score_attach(o, obs, me)
     if t == OptionType.ABILITY: return 3000
     if t == OptionType.EVOLVE: return 2800
@@ -87,7 +88,9 @@ def score_card(o, obs):
         ready = 0                                 # bonus if it can attack right now
         if op_active is not None and hasattr(card, "energies") and _best_damage(card, op_active) > 0:
             ready = 500
-        return q + ready
+        # Race term (M7.2b): -50 per attach still needed (capped) — a charged
+        # attacker beats an equal-damage uncharged one, non-attackers sink.
+        return q + ready - 50 * min(_turns_to_ready(card, op_active), 4)
     if ctx in _KEEP_CTX:                          # fetch/keep the most useful card
         return _card_usefulness(card.id)
     if ctx in _DISCARD_CTX:                       # discard the LEAST useful
@@ -97,7 +100,16 @@ def score_card(o, obs):
     return 50                                     # unknown card context: neutral
 
 
-def score_attack(o, my_active, op_active):
+def _op_board_harmless(op_active, op_bench=()):
+    """CLOSE MODE predicate (M7.2b): every opponent board Pokémon has a KNOWN
+    card id and zero printed attack damage — they can never take a prize by KO.
+    Unknown ids count as threats (conservative: the floor-test case only)."""
+    board = ([op_active] if op_active is not None else [])
+    board += [p for p in op_bench if p is not None]
+    return all(p.id in _CARD and _attacker_quality(p.id) == 0 for p in board)
+
+
+def score_attack(o, my_active, op_active, op_bench=()):
     if op_active is None:
         return 1000
 
@@ -118,6 +130,10 @@ def score_attack(o, my_active, op_active):
         # bench-attach / draw (<=2400) so we take the prize and end the turn instead of
         # over-developing — which draws cards and races us to deck-out (the self-deck bug).
         return 2500 + 50 * prize
+    if _op_board_harmless(op_active, op_bench):
+        ## CLOSE MODE (M7.2b): the race is won — attack every turn instead of milling
+        ## (the M6 floor-test self-deck fix; chip jumps above trainers <=2200).
+        return 2300 + damage / 10
     else:                               ## no KO — chip damage stays low; develop first, attack last
         return 1000 + damage / 10
 
@@ -207,12 +223,26 @@ def score_attach(o, obs, me):
     if not damaging:
         return 400
 
-    best_dmg = max(d for d, _ in damaging)
-    cheapest = min(c for _, c in damaging)
-
-    if len(target_pokemon.energies) >= cheapest:
+    if _turns_to_ready(target_pokemon, opponent_active_card) == 0:
+        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
+        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
         return 600
 
-    return (2600 if is_active else 2400) + min(best_dmg, 300) // 100
+    best_dmg = max(d for d, _ in damaging)
+    bonus = min(best_dmg, 300) // 100
+
+    # 3) Race math (M7.2b): charge THE ONE attacker that closes first. The
+    #    target's own turns-to-first-KO must match the board minimum; ties
+    #    bonus every tied target and self-commit after the first attach
+    #    (the winner's energy gap drops, making it strictly unique).
+    if opponent_active_card is not None:
+        board = ([me.active[0]] if me.active and me.active[0] is not None else [])
+        board += [p for p in me.bench if p is not None]
+        mine = _turns_to_first_ko(target_pokemon, opponent_active_card)
+        if mine < UNREACHABLE and board and \
+                mine <= min(_turns_to_first_ko(p, opponent_active_card) for p in board):
+            return (2750 if is_active else 2680) + bonus
+
+    return (2600 if is_active else 2400) + bonus
 
 

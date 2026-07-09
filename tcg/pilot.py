@@ -13,7 +13,7 @@ from collections.abc import Callable
 from cg.api import AreaType, OptionType, to_observation_class
 
 from tcg import constants
-from tcg.combat import best_damage
+from tcg.combat import best_damage, turns_to_first_ko, turns_to_ready
 from tcg.library import ATTACKS, CARDS, ENERGY_CARD_IDS, POKEMON_CARD_IDS, known_attacks
 from tcg.models import UNKNOWN_ATTACK, UNKNOWN_CARD
 
@@ -42,7 +42,7 @@ def score_option(option, observation) -> float:
 
     option_type = option.type
     if option_type == OptionType.ATTACK:
-        return score_attack(option, my_active, opponent_active)
+        return score_attack(option, my_active, opponent_active, opponent.bench)
     if option_type == OptionType.ATTACH:
         return score_attach(option, observation)
     if option_type == OptionType.ABILITY:
@@ -109,12 +109,17 @@ def score_card(option, observation) -> float:
         return 0
 
     if context in constants.PROMOTE_CONTEXTS:
-        # Start / promote / bench MY best attacker; bonus if it hits right now.
+        # Start / promote / bench MY best attacker; bonus if it hits right now,
+        # minus a race term for each attach it still needs (M7.2b) — a charged
+        # attacker beats an equal-damage uncharged one, non-attackers sink.
         # (hasattr guard: only in-play Pokémon have energies; hand cards don't.)
         quality = attacker_quality(card.id)
         can_hit_now = (opponent_active is not None and hasattr(card, "energies")
                        and best_damage(card, opponent_active) > 0)
-        return quality + (constants.PROMOTE_READY_BONUS if can_hit_now else 0)
+        turns_gap = min(turns_to_ready(card, opponent_active),
+                        constants.PROMOTE_TURNS_CAP)
+        return (quality + (constants.PROMOTE_READY_BONUS if can_hit_now else 0)
+                - constants.PROMOTE_TURN_PENALTY * turns_gap)
     if context in constants.KEEP_CONTEXTS:
         return card_usefulness(card.id)
     if context in constants.DISCARD_CONTEXTS:  # discard the LEAST useful
@@ -125,7 +130,17 @@ def score_card(option, observation) -> float:
     return constants.SCORE_CARD_NEUTRAL
 
 
-def score_attack(option, my_active, opponent_active) -> float:
+def opponent_board_harmless(opponent_active, opponent_bench=()) -> bool:
+    """CLOSE MODE predicate (M7.2b): every opponent board Pokémon has a KNOWN
+    card id and zero printed attack damage — they can never take a prize by KO.
+    Unknown ids count as threats (conservative: the floor-test case only)."""
+    board = ([opponent_active] if opponent_active is not None else [])
+    board += [pokemon for pokemon in opponent_bench if pokemon is not None]
+    return all(pokemon.id in CARDS and attacker_quality(pokemon.id) == 0
+               for pokemon in board)
+
+
+def score_attack(option, my_active, opponent_active, opponent_bench=()) -> float:
     if opponent_active is None:
         return constants.SCORE_ATTACK_NO_TARGET
 
@@ -143,6 +158,10 @@ def score_attack(option, my_active, opponent_active) -> float:
     if damage >= opponent_active.hp:
         # KO takes a prize NOW — see the ladder rationale in tcg.constants.
         return constants.SCORE_KO_BASE + constants.KO_PRIZE_BONUS * defender.prize_count
+    if opponent_board_harmless(opponent_active, opponent_bench):
+        # CLOSE MODE: the race is won — attack every turn instead of milling
+        # (the M6 floor-test self-deck fix; chip jumps above trainers).
+        return constants.SCORE_CHIP_CLOSE_BASE + damage / constants.CHIP_DAMAGE_DIVISOR
     return constants.SCORE_CHIP_BASE + damage / constants.CHIP_DAMAGE_DIVISOR
 
 
@@ -231,12 +250,29 @@ def score_attach(option, observation) -> float:
     if not damaging_attacks:
         return constants.SCORE_ATTACH_NON_ATTACKER
 
-    best_dmg = max(damage for damage, _ in damaging_attacks)
-    cheapest_cost = min(cost_size for _, cost_size in damaging_attacks)
-    if len(target.energies) >= cheapest_cost:
+    if turns_to_ready(target, opponent_active) == 0:
+        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
+        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
         return constants.SCORE_ATTACH_ALREADY_LOADED
+
+    best_dmg = max(damage for damage, _ in damaging_attacks)
+    bonus = (min(best_dmg, constants.ATTACH_DAMAGE_BONUS_CAP)
+             // constants.ATTACH_DAMAGE_BONUS_DIVISOR)
+
+    # 3) Race math (M7.2b): charge THE ONE attacker that closes first. The
+    #    target's own turns-to-first-KO must match the board minimum; ties
+    #    bonus every tied target and self-commit after the first attach
+    #    (the winner's energy gap drops, making it strictly unique).
+    if opponent_active is not None:
+        me = observation.current.players[my_index]
+        board = ([me.active[0]] if me.active and me.active[0] is not None else [])
+        board += [pokemon for pokemon in me.bench if pokemon is not None]
+        mine = turns_to_first_ko(target, opponent_active)
+        if mine < constants.UNREACHABLE_TURNS and board and \
+                mine <= min(turns_to_first_ko(p, opponent_active) for p in board):
+            return (constants.SCORE_ATTACH_RACE_CLOSER_ACTIVE if is_active
+                    else constants.SCORE_ATTACH_RACE_CLOSER_BENCH) + bonus
 
     base = (constants.SCORE_ATTACH_ACTIVE_BASE if is_active
             else constants.SCORE_ATTACH_BENCH_BASE)
-    return base + (min(best_dmg, constants.ATTACH_DAMAGE_BONUS_CAP)
-                   // constants.ATTACH_DAMAGE_BONUS_DIVISOR)
+    return base + bonus

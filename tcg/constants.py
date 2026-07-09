@@ -8,9 +8,14 @@ change. The overall priority ladder, highest first:
     3000  use an ability            (free, doesn't end the turn)
     2900  attach that unblocks a KO by a benched Pokémon / retreat into a lethal attacker
     2800  evolve                    (free, doesn't end the turn)
+    2750  attach to my fastest closer in the active     (race math, M7.2b)
+    2680  attach to my fastest closer on the bench      (above the KO tier: the
+          attach doesn't end the turn — the KO fires on the re-prompt after it)
     2600  attach energy to the active attacker
     2500+ attack for a KO           (take the prize, then end the turn)
     2400  bench a Pokémon / attach energy on the bench
+    2300+ chip attack in CLOSE MODE (opponent board is harmless: attack every
+          turn instead of milling — the M6 floor-test self-deck fix, M7.2b)
     2200- play a trainer            (tapers with hand size — the anti-deck-out fix)
     1500  retreat to escape a KO
     1000+ chip attack               (develop first, attack last)
@@ -31,6 +36,9 @@ COLORLESS = 0
 
 WEAKNESS_MULTIPLIER = 2
 RESISTANCE_REDUCTION = 30
+UNREACHABLE_TURNS = 99
+"""Race-math sentinel: this Pokémon can never KO (large int keeps min()/
+comparisons in the scorers branch-free)."""
 
 # --- free setup (never ends the turn) ---------------------------------------
 
@@ -44,14 +52,22 @@ SCORE_KO_BASE = 2500           # a KO takes a prize NOW — close the game
 KO_PRIZE_BONUS = 50            # ... and multi-prize KOs (ex / mega-ex) even more so
 SCORE_CHIP_BASE = 1000         # no KO: chip damage stays low; develop first, attack last
 CHIP_DAMAGE_DIVISOR = 10
+SCORE_CHIP_CLOSE_BASE = 2300   # CLOSE MODE (M7.2b): opponent board is harmless -> attack
+                               # every turn instead of milling; above trainers (<=2200),
+                               # below play-pokemon/bench-attach 2400 (max chip ~2354)
 
 # --- attaching energy --------------------------------------------------------
 
 SCORE_ATTACH_UNBLOCKS_KO_ACTIVE = 4000  # active can cash the KO this turn: top priority
 SCORE_ATTACH_UNBLOCKS_KO_BENCH = 2900
+SCORE_ATTACH_RACE_CLOSER_ACTIVE = 2750  # M7.2b: my fastest closer (min turns-to-first-KO)
+SCORE_ATTACH_RACE_CLOSER_BENCH = 2680   # ... on the bench: above attach-active AND the KO
+                                        # tier — keep charging THE ONE attacker (the attach
+                                        # doesn't end the turn; the KO fires on re-prompt)
 SCORE_ATTACH_ACTIVE_BASE = 2600         # loading a real attacker that still needs energy
 SCORE_ATTACH_BENCH_BASE = 2400
-SCORE_ATTACH_ALREADY_LOADED = 600       # cheapest damaging attack already affordable
+SCORE_ATTACH_ALREADY_LOADED = 600       # BEST damaging attack already charged (M7.2b: was
+                                        # the cheapest — which stopped charging too early)
 SCORE_ATTACH_NO_TARGET = 500            # couldn't resolve the target Pokémon
 SCORE_ATTACH_NON_ATTACKER = 400         # don't waste energy on benchwarmers
 ATTACH_DAMAGE_BONUS_CAP = 300           # tiny tiebreaker: prefer the harder hitter
@@ -88,6 +104,8 @@ ATTACKER_QUALITY_CAP = 300
 USEFULNESS_ENERGY = 250
 USEFULNESS_OTHER = 120
 PROMOTE_READY_BONUS = 500      # promote a Pokémon that can damage the opponent NOW
+PROMOTE_TURN_PENALTY = 50      # M7.2b race term: -50 per attach still needed ...
+PROMOTE_TURNS_CAP = 4          # ... capped, so UNREACHABLE costs -200, not -4950
 TARGET_PRIZE_WEIGHT = 100      # damage the highest-prize opponent Pokémon
 SCORE_CARD_NEUTRAL = 50        # unknown card context: neutral
 

@@ -7,6 +7,20 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-09 · The expert's AttackPlan is a SINGLE-TURN commitment; race math ports it deck-agnostically, with a conservative close mode
+**Discovery (M7.2b):** sample-agent/main.py's `AttackPlan` — the experts' documented multi-turn
+edge — is actually a per-turn, single-target attack commitment (reset every turn, commits only
+when ≤1 attach from firing). The *multi-turn* behavior emerges from re-committing each turn plus
+`energy_score` banking energy on under-charged attackers. So L1 (rl/combat.py + both pilots)
+ports a **race table** (`charged_best` / `turns_to_ready` / `hits_to_ko` / `turns_to_first_ko =
+max(gap,1)+hits−1`), not a plan object: attach bonuses my fastest closer (bench closer outranks
+even the KO tier — attaching doesn't end the turn), "loaded" now means the BEST attack charged
+(the old cheapest-attack check stopped charging Mega Lucario after 1 of 2 energies), promote
+subtracts attaches-still-needed. **Decision:** close mode v1 (chip attacks jump above trainers,
+the floor-test self-deck fix) triggers only when the opponent board is *harmless* (all known ids,
+zero printed damage) — deliberately conservative so the >30% vs-expert gate can't regress through
+it; the full prize-race comparison is deferred until the [ENGINE] gates are measured.
+
 ### 2026-07-09 · Evolution chains link by NAME, and attackId maps to cards by cumulative n_attacks
 **Two data discoveries while building the deck factory (rl/deck_build.py, M7.1):**
 (a) `evolves_from_id` points at one specific printing, but decks legally play any same-named

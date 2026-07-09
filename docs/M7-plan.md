@@ -475,10 +475,14 @@ honest n everywhere, few precious training runs.
   `matchrunner.py`, persistent standings, gates-as-data. **Gate (self-test):** anchors
   reproduce the known ordering (Lucario expert > tuned > generic+Lucario > bc_v1 >
   random).
-- **M7.2b — Race-math lookahead L1 (1–2d, parallel).** Prize-race table on
-  `rl/combat.py` → generic-pilot scorers + k-turn state features. **Gate:** floor test
-  (vs zero-damage deck) ≥90% (currently 75% — the self-deck/setup weakness is a
-  lookahead failure) and vs-Lucario-expert above 30%.
+- **M7.2b — Race-math lookahead L1 (1–2d, parallel).** *Status 2026-07-09: race
+  primitives + scorer rewiring landed in both rl/ and tcg/ (parity-pinned, 294 tests);
+  `decks/floor_zero_damage.csv` committed; the [ENGINE] gates run via the runbook in
+  [M7.md](M7.md); the k-turn `encode_state` features are deferred to M7.3 encoders-v2
+  per risk 4 (v1 must stay byte-identical).* Prize-race table on `rl/combat.py` →
+  generic-pilot scorers + k-turn state features. **Gate:** floor test (vs zero-damage
+  deck) ≥90% (currently 75% — the self-deck/setup weakness is a lookahead failure) and
+  vs-Lucario-expert above 30%.
 - **M7.3 — Deck-conditioned pilot v1 (3–5d).** Encoders v2 (+embeddings, +deck pools),
   `OptionScorerV2`, BC from the L1-improved generic pilot across the M7.1 population.
   **Gate:** G5 pass and G3 ≥50% (parity with teacher — BC alone should *match*, not beat).
