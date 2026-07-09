@@ -539,4 +539,11 @@ Pokemon/
    states (determinized MCTS) at low visit counts, policy/value as priors — budget
    permitting under the 600 s overage cap. The official sample (§5.4) implements
    exactly this loop; adapt it rather than writing from scratch.
-6. **M∞ — winning BIGLY** 🏆
+6. **M7 — the deck factory loop** (plan: `docs/M7-plan.md`): archetype-template deck
+   builder over the full 1,267-card pool, a league of (deck, pilot) entries with
+   promotion gates, a deck-conditioned neural pilot (BC from the generic pilot, then
+   PPO/AlphaZero-lite), strategic-lookahead work (race-math features, within-turn combo
+   solver, archetype determinization), and post-submission Kaggle episode ingestion
+   feeding a real-meta opponent field back into all of the above. (M5/M6 diaries cover
+   the heuristic-tuning and generic-pilot milestones that led here.)
+7. **M∞ — winning BIGLY** 🏆

@@ -31,9 +31,12 @@ in [`docs/`](docs/):
 |---|---|---|
 | **M0 — watch it fight itself** | Submit a random-weights skeleton with a fixed deck; full legal games end-to-end, zero illegal actions/timeouts, one-command packaging | ✅ done ([docs/M0.md](docs/M0.md)) |
 | **M1 — beat random** | Behavior-clone the rule-based sample agent; >95% vs `random` | ✅ done — BC agent reaches ~90% vs random and ~70% vs its own teacher ([docs/M1.md](docs/M1.md)) |
-| **M2 — beat the teacher** | Self-play PPO with prize-based reward shaping; >50% vs the rule-based Mega Lucario agent | 🔜 next |
-| **M3 — deck loop** | Deck mutation bandit with per-card impact statistics feeding back | planned |
-| **M4 — search (optional)** | Determinized MCTS via the engine's forward model (`search_begin`/`search_step`), policy/value as priors, within the 600 s overage budget | planned |
+| **M2 — beat the teacher** | Self-play PPO with prize-based reward shaping; >50% vs the rule-based Mega Lucario agent | ❌ PPO stalled; supervised value head works; pivoted to search ([docs/M2.md](docs/M2.md)) |
+| **M3 — combat features** | Combat-lookahead features to rescue Lucario BC | ❌ refuted — fidelity flat, BC ceiling is structural ([docs/M3.md](docs/M3.md)) |
+| **M4 — deck search** | Self-play deck evolution (hill-climb, openskill) | ✅ built, honest — but 0/30 improving mutations vs the small offline field ([docs/M4.md](docs/M4.md)) |
+| **M5 — tune the rule agent** | Heuristic parameter optimization + value-head hybrid | ❌ 0/20 tunings beat defaults; hybrid loses — strategic wall confirmed ([docs/M5.md](docs/M5.md)) |
+| **M6 — deck-agnostic pilot** | Generic rule pilot that plays any deck + rule-based submission | ✅ pilot at expert-parity deck ranking; probe submitted ([docs/M6.md](docs/M6.md)) |
+| **M7 — the deck factory loop** | Deck builder from the full pool + pilot training loop + Kaggle replay ingestion (real-meta field, lookahead search) | 📋 planned ([docs/M7-plan.md](docs/M7-plan.md)) |
 | **M∞ — winning BIGLY** 🏆 | | |
 
 ## How to run
