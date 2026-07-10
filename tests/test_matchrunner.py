@@ -170,3 +170,15 @@ def test_model_pilot_loads_pre_m3_checkpoints(tmp_path):
     torch.save(OptionScorer(state_ctx_dim=old_dim - 5).state_dict(), weird)
     with pytest.raises(ValueError, match="matches neither"):
         mr.make_pilot(("model", str(weird), "kyogre"), "t2")
+
+
+def test_model_pilot_loads_v2_checkpoints(tmp_path):
+    # M7.3: OptionScorerV2 checkpoints (embedding.weight present) get the
+    # encoders-v2 path with the deck closed over for deck-context features.
+    torch = pytest.importorskip("torch")
+    from rl.policy import OptionScorerV2
+
+    ckpt = tmp_path / "osv2.pt"
+    torch.save(OptionScorerV2().state_dict(), ckpt)
+    fn, deck = mr.make_pilot(("model", str(ckpt), "kyogre"), "v2")
+    assert callable(fn) and len(deck) == 60

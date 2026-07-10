@@ -102,11 +102,32 @@ def make_pilot(spec: OpponentSpec, instance: str):
         ckpt = Path(spec[1])
         if not ckpt.is_absolute() and not ckpt.exists():
             ckpt = ROOT / ckpt          # league specs store ROOT-relative paths
-        # Dimension-aware load: bc_v1 predates the M3 combat features. Its
+        sd = torch.load(ckpt, map_location="cpu")
+
+        if "embedding.weight" in sd:
+            # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
+            # deck-context pools — the pilot closes over its own deck list.
+            from rl.encoders import encode_option_v2, encode_state_v2
+            from rl.policy import OptionScorerV2
+            m2 = OptionScorerV2()
+            m2.load_state_dict(sd)
+            m2.eval()
+            deck_ids = resolve_deck(spec[2])
+
+            def fn2(od):
+                obs = to_observation_class(od)
+                num, sids = encode_state_v2(obs.current, deck_ids)
+                sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
+                pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+                opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+                oids = np.stack([i for _, i in pairs])
+                return m2.act(sc, sids, opts, oids, obs.select.maxCount, greedy=True)
+            return fn2, deck_ids
+
+        # Dimension-aware v1 load: bc_v1 predates the M3 combat features. Its
         # state input is exactly N_COMBAT narrower, and the combat block is a
         # contiguous slice of the current encoding — slicing it out
         # reconstructs the encoder the checkpoint was trained on.
-        sd = torch.load(ckpt, map_location="cpu")
         in_dim = sd["state_enc.0.weight"].shape[1]
         expected = STATE_DIM + N_CONTEXTS
         if in_dim == expected:

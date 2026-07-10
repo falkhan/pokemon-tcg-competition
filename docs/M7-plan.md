@@ -486,9 +486,15 @@ honest n everywhere, few precious training runs.
   generic-pilot scorers + k-turn state features. **Gate:** floor test (vs zero-damage
   deck) ≥90% (currently 75% — the self-deck/setup weakness is a lookahead failure) and
   vs-Lucario-expert above 30%.
-- **M7.3 — Deck-conditioned pilot v1 (3–5d).** Encoders v2 (+embeddings, +deck pools),
-  `OptionScorerV2`, BC from the L1-improved generic pilot across the M7.1 population.
-  **Gate:** G5 pass and G3 ≥50% (parity with teacher — BC alone should *match*, not beat).
+- **M7.3 — Deck-conditioned pilot v1 (3–5d).** *Status 2026-07-10: infrastructure
+  landed — encoders v2 (side-by-side, v1 byte-identical) with id-embedding sites +
+  deck-context pools + the k-turn race block, `OptionScorerV2`, `bc collect --teacher
+  generic --decks` + `train --arch v2` with per-deck fidelity, `league population`
+  export, v2-aware model loading; the [ENGINE] collect/train/gate loop runs via the
+  runbook in [M7.md](M7.md). Collector/PPO deck sampling deferred to M7.4b.* Encoders
+  v2 (+embeddings, +deck pools), `OptionScorerV2`, BC from the L1-improved generic
+  pilot across the M7.1 population. **Gate:** G5 pass and G3 ≥50% (parity with
+  teacher — BC alone should *match*, not beat).
 - **M7.4a — Within-turn combo solver L2 (3–4d incl. research).** Forward-model turn
   search, lethal-first. **Gate:** on the curated combo-position suite (from forensics),
   finds the multi-prize lethal the greedy pilot misses; end-to-end ≥55% vs the same

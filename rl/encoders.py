@@ -207,3 +207,111 @@ def encode_context(context) -> np.ndarray:
     v = np.zeros(N_CONTEXTS, dtype=np.float32)
     v[int(context)] = 1.0
     return v
+
+
+# --- Encoders v2 (M7.3) — side-by-side with v1; v1 stays byte-identical -----
+# v2 returns (numeric, ids): the numeric vector extends v1 with the k-turn race
+# block (deferred from M7.2b) and two deck-context pools, while the id vector
+# carries card ids at fixed sites for LEARNABLE embeddings — the 36 features
+# are nearly blind for trainers, embeddings let a multi-deck pilot learn
+# per-card behavior from data (M7-plan §3.1b). Id 0 = "no card" padding,
+# aligned with FEAT row 0.
+EMBED_DIM = 16
+N_CARD_IDS = FEAT.shape[0]          # 1268: ids 1..1267 + padding row 0
+N_STATE_IDS = 2 * (1 + N_BENCH)     # my/opp active + bench card ids
+N_OPTION_IDS = 2                    # acted card + target card
+N_RACE = 8                          # see _race_features
+RACE_TURN_CAP = 10.0                # race turns normalized /10, capped
+STATE_V2_DIM = STATE_DIM + N_RACE + 2 * FEAT_DIM
+OPTION_V2_DIM = OPTION_DIM
+
+
+def _race_features(state) -> np.ndarray:
+    """k-turn prize-race block on the M7.2b combat primitives — the M3 combat
+    features are 1-turn only; these are turns-to-ready / turns-to-first-KO for
+    both boards plus the race delta (M7-plan §3b L1)."""
+    from rl.combat import _turns_to_first_ko, _turns_to_ready
+
+    me = state.players[state.yourIndex]
+    op = state.players[1 - state.yourIndex]
+
+    def board(ps):
+        active = ps.active[0] if ps.active else None
+        return [p for p in [active] + list(ps.bench) if p is not None], active
+
+    my_board, my_active = board(me)
+    op_board, op_active = board(op)
+
+    def norm(turns) -> float:
+        return min(float(turns), RACE_TURN_CAP) / RACE_TURN_CAP
+
+    my_ttfk = min((_turns_to_first_ko(p, op_active) for p in my_board),
+                  default=RACE_TURN_CAP) if op_active is not None else RACE_TURN_CAP
+    op_ttfk = min((_turns_to_first_ko(p, my_active) for p in op_board),
+                  default=RACE_TURN_CAP) if my_active is not None else RACE_TURN_CAP
+    return np.array([
+        norm(_turns_to_ready(my_active, op_active)) if my_active else 1.0,
+        norm(_turns_to_first_ko(my_active, op_active)) if my_active and op_active else 1.0,
+        norm(my_ttfk),
+        sum(1 for p in my_board if _turns_to_ready(p, op_active) == 0) / 6.0,
+        norm(_turns_to_ready(op_active, my_active)) if op_active else 1.0,
+        norm(_turns_to_first_ko(op_active, my_active)) if op_active and my_active else 1.0,
+        norm(op_ttfk),
+        (min(float(op_ttfk), RACE_TURN_CAP) - min(float(my_ttfk), RACE_TURN_CAP))
+        / RACE_TURN_CAP,                                    # >0: I win the race
+    ], dtype=np.float32)
+
+
+def _deck_pools(state, my_deck: list[int]) -> np.ndarray:
+    """Deck-context pools (M7-plan §3.1b): FEAT sums of my FULL 60-card list and
+    of my REMAINING deck (list minus hand/board/discard — all observable; the 6
+    prized cards stay in "remaining" since which ones is hidden). Pooled, NOT a
+    per-id count vector — the reverted-feature lesson. Discard-pool 0.1 scale."""
+    from collections import Counter
+    me = state.players[state.yourIndex]
+    remaining = Counter(my_deck)
+    seen = [c.id for c in list(me.hand) + list(me.discard) if c is not None]
+    for p in [me.active[0] if me.active else None] + list(me.bench):
+        if p is not None:
+            seen.append(p.id)
+            seen.extend(t.id for t in p.tools if t is not None)
+    for cid in seen:
+        if remaining[cid] > 0:
+            remaining[cid] -= 1
+    full = FEAT[list(my_deck)].sum(axis=0) * 0.1
+    rest = (sum((FEAT[cid] * n for cid, n in remaining.items() if n > 0),
+                np.zeros(FEAT_DIM)) * 0.1)
+    return np.concatenate([full, rest]).astype(np.float32)
+
+
+def _board_ids(state) -> np.ndarray:
+    """Card ids of the 12 board slots (my/opp active + bench), 0-padded."""
+    ids = []
+    for ps in (state.players[state.yourIndex], state.players[1 - state.yourIndex]):
+        active = ps.active[0] if ps.active else None
+        bench = list(ps.bench)[:N_BENCH]
+        bench += [None] * (N_BENCH - len(bench))
+        ids += [p.id if p is not None else 0 for p in [active] + bench]
+    return np.array(ids, dtype=np.int32)
+
+
+def encode_state_v2(state, my_deck: list[int]) -> tuple[np.ndarray, np.ndarray]:
+    """(numeric STATE_V2_DIM f32, board ids N_STATE_IDS i32). Needs my 60-card
+    list — observations don't carry it; the pilot closes over its own deck."""
+    numeric = np.concatenate([encode_state(state), _race_features(state),
+                              _deck_pools(state, my_deck)])
+    return numeric.astype(np.float32), _board_ids(state)
+
+
+def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
+    """(numeric OPTION_V2_DIM f32, [acted_id, target_id] i32, 0 = none)."""
+    your_index = obs.current.yourIndex
+    card_id = opt.cardId
+    if card_id is None and opt.index is not None and opt.area is not None:
+        player = opt.playerIndex if opt.playerIndex is not None else your_index
+        card_id = _card_id_at(obs, opt.area, opt.index, player)
+    target_id = None
+    if opt.inPlayArea is not None and opt.inPlayIndex is not None:
+        target_id = _card_id_at(obs, opt.inPlayArea, opt.inPlayIndex, your_index)
+    ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
+    return encode_option(opt, obs), ids

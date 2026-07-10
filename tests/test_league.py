@@ -311,3 +311,24 @@ def test_normalize_spec_stores_root_relative_posix_paths(ldirs, tmp_path, monkey
     e = lg.add_entry(league, ("generic", "lucario"))
     assert e.pilot == ("generic", f"league_decks/{e.deck_hash}.csv")
     assert "\\" not in e.pilot[1] and not Path(e.pilot[1]).is_absolute()
+
+
+def test_export_population_prefers_rated_candidates(ldirs):
+    league = _fresh()
+    strong = lg.add_entry(league, ("generic", "lucario"), entry_id="c_strong")
+    weak = lg.add_entry(league, ("generic", str(DECKS / "iono.csv")), entry_id="c_weak")
+    strong.mu, weak.mu = 40.0, 10.0
+    out = lg.export_population(league, top=1)
+    payload = json.loads(out.read_text())
+    assert payload["decks"][:3] == ["lucario", "iono", "kyogre"]  # known decks first
+    assert payload["decks"][3] == strong.pilot[1]                 # top candidate only
+    assert len(payload["decks"]) == 4
+
+
+def test_export_population_falls_back_to_gen_manifest(ldirs):
+    league = _fresh()  # anchors only, no candidates
+    out = lg.export_population(league, top=5)
+    payload = json.loads(out.read_text())
+    assert len(payload["decks"]) == 8  # 3 known + 5 from decks/gen
+    assert all(d.startswith("decks/gen/") for d in payload["decks"][3:])
+    assert "manifest" in payload["source"]

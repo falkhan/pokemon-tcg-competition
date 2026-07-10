@@ -79,3 +79,68 @@ def test_save_npz_parity(tmp_path):
         assert sorted(old_npz.files) == sorted(new_npz.files)
         for key in old_npz.files:
             assert np.array_equal(old_npz[key], new_npz[key]), key
+
+
+# --- OptionScorerV2 (M7.3) -----------------------------------------------------
+
+def _v2_pair(seed=0):
+    torch.manual_seed(seed)
+    a = old.OptionScorerV2(hidden=32, embed=4)
+    torch.manual_seed(seed)
+    b = new.OptionScorerV2(hidden=32, embed=4)
+    return a, b
+
+
+def _v2_batch(batch=3, n_opt=5, seed=1):
+    from rl import encoders as enc
+    rng = np.random.default_rng(seed)
+    return (rng.random((batch, enc.STATE_V2_DIM + enc.N_CONTEXTS), dtype=np.float32),
+            rng.integers(0, enc.N_CARD_IDS, (batch, enc.N_STATE_IDS)),
+            rng.random((batch, n_opt, enc.OPTION_V2_DIM), dtype=np.float32),
+            rng.integers(0, enc.N_CARD_IDS, (batch, n_opt, enc.N_OPTION_IDS)))
+
+
+def test_v2_state_dict_and_forward_parity():
+    a, b = _v2_pair()
+    assert list(a.state_dict()) == list(b.state_dict())
+    assert "embedding.weight" in a.state_dict()
+    sc, sid, op, oid = _v2_batch()
+    la, va = a(torch.from_numpy(sc), torch.from_numpy(sid).long(),
+               torch.from_numpy(op), torch.from_numpy(oid).long())
+    lb, vb = b(torch.from_numpy(sc), torch.from_numpy(sid).long(),
+               torch.from_numpy(op), torch.from_numpy(oid).long())
+    assert la.shape == (3, 5) and va.shape == (3,)
+    assert torch.equal(la, lb) and torch.equal(va, vb)
+
+
+def test_v2_padding_id_is_frozen_zero():
+    a, _ = _v2_pair()
+    assert torch.equal(a.embedding.weight[0], torch.zeros(4))  # padding_idx row
+
+
+def test_v2_save_npz_round_trips():
+    a, _ = _v2_pair()
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as d:
+        p = pathlib.Path(d) / "v2.npz"
+        old.save_npz(a, str(p))
+        arrays = np.load(p)
+        assert "embedding.weight" in arrays
+        assert arrays["embedding.weight"].shape == a.embedding.weight.shape
+
+
+def test_v2_overfits_a_tiny_batch():
+    # Verification item 7: the wider inputs + embeddings can actually learn.
+    torch.manual_seed(0)
+    model = old.OptionScorerV2(hidden=32, embed=4)
+    sc, sid, op, oid = _v2_batch(batch=8, n_opt=4, seed=2)
+    labels = torch.arange(8) % 4
+    optim = torch.optim.AdamW(model.parameters(), lr=3e-3)
+    for _ in range(200):
+        logits, _ = model(torch.from_numpy(sc), torch.from_numpy(sid).long(),
+                          torch.from_numpy(op), torch.from_numpy(oid).long())
+        loss = torch.nn.functional.cross_entropy(logits, labels)
+        optim.zero_grad(); loss.backward(); optim.step()
+    logits, _ = model(torch.from_numpy(sc), torch.from_numpy(sid).long(),
+                      torch.from_numpy(op), torch.from_numpy(oid).long())
+    assert (logits.argmax(dim=1) == labels).float().mean() == 1.0

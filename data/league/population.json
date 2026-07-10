@@ -1,0 +1,19 @@
+{
+  "decks": [
+    "lucario",
+    "iono",
+    "kyogre",
+    "decks/gen/deck_95c991fe1b62.csv",
+    "decks/gen/deck_e5a151f3b078.csv",
+    "decks/gen/deck_9f2070745fa9.csv",
+    "decks/gen/deck_c47ee692f7cf.csv",
+    "decks/gen/deck_3447c82b1fc5.csv",
+    "decks/gen/deck_0f68f2eb26d8.csv",
+    "decks/gen/deck_12eeba25c74a.csv",
+    "decks/gen/deck_8f7736998dd5.csv",
+    "decks/gen/deck_cc1cce15c5f4.csv",
+    "decks/gen/deck_e5d6d35a07a5.csv"
+  ],
+  "source": "decks/gen manifest (league has no rated candidates)",
+  "created_at": "2026-07-10T08:17:33Z"
+}

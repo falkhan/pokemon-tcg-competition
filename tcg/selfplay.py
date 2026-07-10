@@ -45,15 +45,16 @@ def write_shard(path: Path, columns: dict[str, list],
                 int32_columns: frozenset[str], float32_columns: frozenset[str]) -> None:
     """np.savez_compressed with the repo's decision-shard conventions.
 
-    ``states`` rows are stacked; ``options`` menus are concatenated flat (ragged
-    storage — per-decision lengths ride along in an ``n_options`` column);
+    Per-decision fixed-width rows (``states``, and encoders-v2's ``state_ids``)
+    are stacked; per-option ragged menus (``options``, v2's ``option_ids``) are
+    concatenated flat with per-decision lengths riding along in ``n_options``;
     every other column becomes a typed 1-D array.
     """
     arrays = {}
     for name, values in columns.items():
-        if name == "states":
+        if name in ("states", "state_ids"):
             arrays[name] = np.stack(values)
-        elif name == "options":
+        elif name in ("options", "option_ids"):
             arrays[name] = np.concatenate(values)
         elif name in int32_columns:
             arrays[name] = np.array(values, dtype=np.int32)

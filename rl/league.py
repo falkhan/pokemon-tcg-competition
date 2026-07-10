@@ -430,6 +430,33 @@ def log_submission(submission_id: int, entry_id: str, league: League, note: str 
     SUBMISSIONS_JSON.write_text(json.dumps(rows, indent=2))
 
 
+def export_population(league: League, out: Path | None = None, top: int = 10,
+                      include: tuple[str, ...] = ("lucario", "iono", "kyogre")
+                      ) -> Path:
+    """Write data/league/population.json — the deck population the M7.3 BC
+    teacher plays across (`python -m rl.bc collect --teacher generic --decks
+    ...`). Known decks + the top-rated candidates by league ordinal; when no
+    candidates are rated yet, falls back to the decks/gen manifest order."""
+    decks: list[str] = list(include)
+    candidates = sorted((e for e in league.entries.values() if not e.frozen),
+                        key=lambda e: e.ordinal(), reverse=True)
+    if candidates:
+        decks += [spec_deck(e.pilot) for e in candidates[:top]]
+        source = f"league top {min(top, len(candidates))} candidates"
+    else:
+        manifest = ROOT / "decks" / "gen" / "manifest.json"
+        if manifest.exists():
+            gen = json.loads(manifest.read_text())["decks"][:top]
+            decks += [f"decks/gen/{d['csv']}" for d in gen]
+        source = "decks/gen manifest (league has no rated candidates)"
+    path = out or (LEAGUE_DIR / "population.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"decks": decks, "source": source,
+                                "created_at": _now()}, indent=2))
+    print(f"{path}: {len(decks)} decks ({source})", flush=True)
+    return path
+
+
 # ---------------------------------------------------------------------------
 # Self-test: anchors must reproduce the M6 ordering (M7-plan §7 M7.2 gate)
 # ---------------------------------------------------------------------------
@@ -518,6 +545,10 @@ def _main() -> None:
     s.add_argument("--games", type=int, default=40)
     s.add_argument("--workers", type=int, default=4)
 
+    s = sub.add_parser("population", help="export the BC deck population (M7.3)")
+    s.add_argument("--top", type=int, default=10)
+    s.add_argument("--out", type=Path, default=None)
+
     s = sub.add_parser("log-submission", help="record a Kaggle submission id")
     s.add_argument("--sub", type=int, required=True)
     s.add_argument("--entry", required=True)
@@ -558,6 +589,8 @@ def _main() -> None:
         promote_deck(league, a.deck)
     elif a.cmd == "selftest":
         raise SystemExit(0 if selftest(games=a.games, workers=a.workers) else 1)
+    elif a.cmd == "population":
+        export_population(_load_or_init(), out=a.out, top=a.top)
     elif a.cmd == "log-submission":
         league = _load_or_init()
         log_submission(a.sub, a.entry, league, note=a.note)
