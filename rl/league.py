@@ -54,13 +54,14 @@ GAMES_PER_ANCHOR = 40
 TOP_PEERS = 3
 
 # The plan-§4 anchor seven. tuned pilots the Lucario deck (no decks/tuned.csv).
+# All paths ROOT-relative so league.json stays portable across machines.
 ANCHORS: list[tuple[str, OpponentSpec]] = [
     ("lucario_expert", ("rule", "lucario", "lucario")),
     ("iono_expert", ("rule", "iono", "iono")),
     ("tuned_lucario", ("rule", "tuned", "lucario")),
     ("generic+lucario", ("generic", "lucario")),
     ("generic+iono", ("generic", "iono")),
-    ("bc_v1+kyogre", ("model", str(ROOT / "checkpoints" / "bc_v1.pt"), "kyogre")),
+    ("bc_v1+kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
     ("random+kyogre", ("random", "kyogre")),
 ]
 
@@ -130,11 +131,15 @@ def register_deck(deck) -> tuple[str, Path]:
 
 
 def _normalize_spec(spec: OpponentSpec, csv: Path) -> OpponentSpec:
-    """Rewrite the spec's deck slot to the registered csv path (a plain string),
-    so league.json round-trips cleanly and specs stay hashable tuples."""
+    """Rewrite the spec's deck slot to the registered csv path — ROOT-relative
+    POSIX form, so league.json is portable across machines and OSes (an
+    absolute sandbox path broke the first Windows run; matchrunner's
+    resolve_deck resolves relative paths against ROOT). Specs stay hashable
+    tuples of plain strings."""
+    deck = csv.relative_to(ROOT).as_posix() if csv.is_relative_to(ROOT) else str(csv)
     if spec[0] in ("rule", "model"):
-        return (spec[0], spec[1], str(csv))
-    return (spec[0], str(csv))
+        return (spec[0], spec[1], deck)
+    return (spec[0], deck)
 
 
 def add_entry(league: League, spec: OpponentSpec, entry_id: str | None = None,
@@ -173,7 +178,8 @@ def bootstrap_anchors(league: League) -> list[Entry]:
     that anchor with a warning rather than failing the whole bootstrap."""
     added = []
     for entry_id, spec in ANCHORS:
-        if spec[0] == "model" and not Path(spec[1]).exists():
+        if spec[0] == "model" and not (Path(spec[1]).exists()
+                                       or (ROOT / spec[1]).exists()):
             print(f"WARNING: {entry_id}: checkpoint {spec[1]} missing — anchor skipped",
                   flush=True)
             continue

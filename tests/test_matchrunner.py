@@ -138,3 +138,35 @@ def test_deck_search_wrappers_delegate(monkeypatch):
     assert calls[-1] == (("generic", [1] * 60), ("random", "kyogre"), 3)
     assert ds._play_vs_spec([1] * 60, ("random", "kyogre"), 3, pilot="lucario") == [0] * 3
     assert calls[-1][0] == ("rule", "lucario", [1] * 60)
+
+
+def test_resolve_deck_falls_back_to_repo_root(monkeypatch, tmp_path):
+    # League specs store ROOT-relative paths; they must resolve from any cwd
+    # (the committed league.json broke on Windows with absolute sandbox paths).
+    monkeypatch.chdir(tmp_path)
+    assert mr.resolve_deck("decks/lucario.csv") == LUCARIO
+
+
+def test_model_pilot_loads_pre_m3_checkpoints(tmp_path):
+    # bc_v1 predates the M3 combat features: its state input is N_COMBAT
+    # narrower and make_pilot must adapt (slice the combat block out) instead
+    # of crashing with a shape mismatch (the measured selftest failure).
+    torch = pytest.importorskip("torch")
+    from rl.encoders import N_COMBAT, N_CONTEXTS, STATE_DIM
+    from rl.policy import OptionScorer
+
+    old_dim = STATE_DIM + N_CONTEXTS - N_COMBAT
+    ckpt = tmp_path / "old.pt"
+    torch.save(OptionScorer(state_ctx_dim=old_dim).state_dict(), ckpt)
+    fn, deck = mr.make_pilot(("model", str(ckpt), "kyogre"), "t0")
+    assert callable(fn) and len(deck) == 60
+
+    current = tmp_path / "new.pt"
+    torch.save(OptionScorer().state_dict(), current)
+    fn, _ = mr.make_pilot(("model", str(current), "kyogre"), "t1")
+    assert callable(fn)
+
+    weird = tmp_path / "weird.pt"
+    torch.save(OptionScorer(state_ctx_dim=old_dim - 5).state_dict(), weird)
+    with pytest.raises(ValueError, match="matches neither"):
+        mr.make_pilot(("model", str(weird), "kyogre"), "t2")

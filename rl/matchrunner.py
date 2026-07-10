@@ -36,12 +36,16 @@ OpponentSpec = tuple
 
 
 def resolve_deck(deck) -> list[int]:
-    """A decks/ name, a csv path, or an id list -> 60 card ids."""
+    """A decks/ name, a csv path (absolute or repo-ROOT-relative), or an id
+    list -> 60 card ids. League specs store ROOT-relative POSIX paths so
+    data/league/league.json is portable across machines/OSes."""
     if isinstance(deck, (list, tuple)):
         return list(deck)
     path = Path(deck)
     if not path.suffix:
         path = DECK_DIR / f"{deck}.csv"
+    elif not path.is_absolute() and not path.exists():
+        path = ROOT / path
     return [int(x) for x in path.read_text().split() if x.strip()]
 
 
@@ -91,16 +95,38 @@ def make_pilot(spec: OpponentSpec, instance: str):
         import numpy as np
         import torch
         from cg.api import to_observation_class
-        from rl.encoders import encode_context, encode_option, encode_state
+        from rl.encoders import (COMBAT_SLICE, N_COMBAT, N_CONTEXTS, STATE_DIM,
+                                 encode_context, encode_option, encode_state)
         from rl.policy import OptionScorer
-        m = OptionScorer()
-        m.load_state_dict(torch.load(spec[1], map_location="cpu"))
+
+        ckpt = Path(spec[1])
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt          # league specs store ROOT-relative paths
+        # Dimension-aware load: bc_v1 predates the M3 combat features. Its
+        # state input is exactly N_COMBAT narrower, and the combat block is a
+        # contiguous slice of the current encoding — slicing it out
+        # reconstructs the encoder the checkpoint was trained on.
+        sd = torch.load(ckpt, map_location="cpu")
+        in_dim = sd["state_enc.0.weight"].shape[1]
+        expected = STATE_DIM + N_CONTEXTS
+        if in_dim == expected:
+            cut = None
+        elif in_dim == expected - N_COMBAT:
+            cut = COMBAT_SLICE
+        else:
+            raise ValueError(
+                f"{spec[1]}: state input dim {in_dim} matches neither the current "
+                f"encoder ({expected}) nor the pre-M3 one ({expected - N_COMBAT})")
+        m = OptionScorer(state_ctx_dim=in_dim)
+        m.load_state_dict(sd)
         m.eval()
 
         def fn(od):
             obs = to_observation_class(od)
             sc = np.concatenate([encode_state(obs.current),
                                  encode_context(obs.select.context)]).astype(np.float32)
+            if cut is not None:
+                sc = np.delete(sc, np.s_[cut[0]:cut[1]])
             opts = np.stack([encode_option(o, obs) for o in obs.select.option]).astype(np.float32)
             with torch.no_grad():
                 logits, _ = m(torch.from_numpy(sc).unsqueeze(0), torch.from_numpy(opts).unsqueeze(0))

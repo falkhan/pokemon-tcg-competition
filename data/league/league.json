@@ -5,7 +5,7 @@
       "pilot": [
         "rule",
         "lucario",
-        "/home/user/pokemon-tcg-competition/data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
       ],
       "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
       "mu": 25.0,
@@ -19,7 +19,7 @@
       "pilot": [
         "rule",
         "iono",
-        "/home/user/pokemon-tcg-competition/data/league/decks/0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b.csv"
+        "data/league/decks/0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b.csv"
       ],
       "deck_hash": "0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b",
       "mu": 25.0,
@@ -33,7 +33,7 @@
       "pilot": [
         "rule",
         "tuned",
-        "/home/user/pokemon-tcg-competition/data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
       ],
       "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
       "mu": 25.0,
@@ -46,7 +46,7 @@
       "entry_id": "generic+lucario",
       "pilot": [
         "generic",
-        "/home/user/pokemon-tcg-competition/data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
       ],
       "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
       "mu": 25.0,
@@ -59,7 +59,7 @@
       "entry_id": "generic+iono",
       "pilot": [
         "generic",
-        "/home/user/pokemon-tcg-competition/data/league/decks/0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b.csv"
+        "data/league/decks/0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b.csv"
       ],
       "deck_hash": "0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b",
       "mu": 25.0,
@@ -72,8 +72,8 @@
       "entry_id": "bc_v1+kyogre",
       "pilot": [
         "model",
-        "/home/user/pokemon-tcg-competition/checkpoints/bc_v1.pt",
-        "/home/user/pokemon-tcg-competition/data/league/decks/8c326ebadcf97c33dd4a723b9a474962234b674c.csv"
+        "checkpoints/bc_v1.pt",
+        "data/league/decks/8c326ebadcf97c33dd4a723b9a474962234b674c.csv"
       ],
       "deck_hash": "8c326ebadcf97c33dd4a723b9a474962234b674c",
       "mu": 25.0,
@@ -86,7 +86,7 @@
       "entry_id": "random+kyogre",
       "pilot": [
         "random",
-        "/home/user/pokemon-tcg-competition/data/league/decks/8c326ebadcf97c33dd4a723b9a474962234b674c.csv"
+        "data/league/decks/8c326ebadcf97c33dd4a723b9a474962234b674c.csv"
       ],
       "deck_hash": "8c326ebadcf97c33dd4a723b9a474962234b674c",
       "mu": 25.0,
@@ -100,6 +100,6 @@
     "field_version": "base_v1",
     "champion_deck": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
     "shipped_entry": null,
-    "updated_at": "2026-07-09T20:38:14Z"
+    "updated_at": "2026-07-10T00:08:24Z"
   }
 }

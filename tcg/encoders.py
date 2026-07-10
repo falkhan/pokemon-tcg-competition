@@ -73,6 +73,11 @@ SLOT_DIM = FEAT_DIM + 3 + N_ENERGY + FEAT_DIM
 # + status x2 + stadium + combat features + 6 of my slots + 6 opponent slots
 STATE_DIM = (7 + FEAT_DIM + 2 * FEAT_DIM + 1 + 2 * N_STATUS + FEAT_DIM + N_COMBAT
              + 2 * (1 + N_BENCH) * SLOT_DIM)
+# Where the M3 combat block sits inside encode_state's output — pre-M3
+# checkpoints (bc_v1) were trained without it, and slicing this range out
+# reconstructs their input encoding (see matchrunner's model loader).
+COMBAT_START = 7 + 4 * FEAT_DIM + 1 + 2 * N_STATUS
+COMBAT_SLICE = (COMBAT_START, COMBAT_START + N_COMBAT)
 # option-type one-hot + acted card features + TARGET card features + target-is-active flag
 OPTION_DIM = N_OPTION_TYPES + FEAT_DIM + FEAT_DIM + 1
 

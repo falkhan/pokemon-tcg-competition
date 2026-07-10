@@ -300,3 +300,14 @@ def test_add_batch_enrolls_a_directory_idempotently(ldirs, tmp_path):
     assert len(added) == 2 and len(league.entries) == 2
     again = lg.add_batch(league, gen)  # idempotent: same entries returned
     assert len(league.entries) == 2 and {e.entry_id for e in again} == set(league.entries)
+
+
+def test_normalize_spec_stores_root_relative_posix_paths(ldirs, tmp_path, monkeypatch):
+    # league.json must be portable across machines/OSes: deck slots are stored
+    # ROOT-relative in POSIX form (absolute sandbox paths broke Windows).
+    monkeypatch.setattr(lg, "ROOT", tmp_path)
+    monkeypatch.setattr(lg, "LEAGUE_DECKS", tmp_path / "league_decks")
+    league = lg.new_league()
+    e = lg.add_entry(league, ("generic", "lucario"))
+    assert e.pilot == ("generic", f"league_decks/{e.deck_hash}.csv")
+    assert "\\" not in e.pilot[1] and not Path(e.pilot[1]).is_absolute()

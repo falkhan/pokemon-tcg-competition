@@ -24,10 +24,12 @@ MASKED_LOGIT = -1e9
 class OptionScorer(nn.Module):
     """score(state, context, option_i) for each option i; plus V(state)."""
 
-    def __init__(self, hidden: int = 256):
+    def __init__(self, hidden: int = 256, state_ctx_dim: int | None = None):
+        # state_ctx_dim: override for checkpoints trained on an older encoder
+        # (bc_v1 predates the M3 combat features); defaults to the current one.
         super().__init__()
         self.state_enc = nn.Sequential(
-            nn.Linear(STATE_DIM + N_CONTEXTS, hidden), nn.ReLU(),
+            nn.Linear(state_ctx_dim or (STATE_DIM + N_CONTEXTS), hidden), nn.ReLU(),
             nn.Linear(hidden, hidden), nn.ReLU(),
         )
         self.option_enc = nn.Sequential(

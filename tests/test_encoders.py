@@ -177,3 +177,19 @@ def test_card_id_at_parity_over_all_areas():
 @pytest.mark.parametrize("context", list(SelectContext))
 def test_encode_context_parity(context):
     assert np.array_equal(old.encode_context(context), new.encode_context(context))
+
+
+def test_combat_slice_locates_the_m3_block():
+    """COMBAT_SLICE must point exactly at the combat features inside
+    encode_state's output — the pre-M3 checkpoint compat loader (bc_v1)
+    slices this range out to reconstruct the old encoding."""
+    assert old.COMBAT_SLICE == new.COMBAT_SLICE
+    start, end = old.COMBAT_SLICE
+    assert end - start == old.N_COMBAT
+    assert end + 2 * (1 + old.N_BENCH) * old.SLOT_DIM == old.STATE_DIM
+
+    me = player(active=pokemon(1, energies=[FIGHTING]), bench=[pokemon(3)])
+    opponent = player(active=pokemon(5, hp=80))
+    obs = observation(me=me, opponent=opponent)
+    state = old.encode_state(obs.current)
+    assert np.array_equal(state[start:end], old._combat_features(obs.current))
