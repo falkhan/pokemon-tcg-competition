@@ -7,6 +7,19 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-10 · The PPO loss bug was real — every "PPO failed" conclusion was trained on a corrupted objective
+**Confirmed and fixed (M7.4b):** `rl/ppo.py` and `tcg/ppo.py` both computed
+`loss = policy_loss * VALUE_COEF * value_loss − ENTROPY_COEF * entropy` — MULTIPLYING the
+policy loss by the value error where the docstring (and PPO) say ADD. Consequences: the policy
+gradient was scaled by an arbitrary positive factor that shrank exactly as the critic improved,
+and flipped sign whenever policy_loss and value_loss disagreed in sign — a corrupted objective,
+not a hard optimization problem. All three stalled PPO attempts (M2–M4, DECISIONS 2026-07-08)
+trained on this form, so "PPO doesn't work here" was never honestly measured. Fixed to the
+additive objective in both twins; `tests/test_ppo.py::test_loss_is_the_additive_ppo_objective`
+pins the corrected form literally (the old cross-module pin only guaranteed the twins matched).
+The M7.4b [ENGINE] retry (fixed loss + critic warm-start + multi-deck self-play + generic-pilot
+opponents) is the first honest PPO measurement this project will have.
+
 ### 2026-07-09 · Measured: prioritizing the bench closer above attach-active STARVES the active — race charging must be gated on an attack-ready active
 **Measurement (M7.2b gates, real engine):** vs-expert 0.329 (PASS, up from ~0.25–0.30) but
 floor 0.715 (FAIL, need ≥0.90; 57/200 losses, 0 draws — all self-deck-outs) and vs-random

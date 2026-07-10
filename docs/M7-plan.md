@@ -499,7 +499,12 @@ honest n everywhere, few precious training runs.
   search, lethal-first. **Gate:** on the curated combo-position suite (from forensics),
   finds the multi-prize lethal the greedy pilot misses; end-to-end ≥55% vs the same
   pilot without L2; p99 time within budget.
-- **M7.4b — Improvement pass (1wk, decision-gated).** Fix the PPO loss in `rl/ppo.py` +
+- **M7.4b — Improvement pass (1wk, decision-gated).** *Status 2026-07-10: offline half
+  landed — loss bug CONFIRMED and fixed in both twins (+ a literal corrected-form test),
+  critic warm-start (`--value-ckpt`), collector on matchrunner with per-game deck
+  sampling + generic pool + optional race shaping, PPO v2-aware; the [ENGINE] smoke and
+  run are [M7-manual-tests.md](M7-manual-tests.md) §6. L3 determinization waits on
+  M7.0's harvest.* Fix the PPO loss in `rl/ppo.py` +
   `tcg/ppo.py` (+ flip the pin test); critic warm-start via `rl/value_train.py`; PPO vs
   the meta_v1 field with multi-deck self-play + setup shaping. In parallel: L3
   archetype determinization. **Gate:** G3 ≥55%, G4 ≥35%. Two failed honest PPO attempts
