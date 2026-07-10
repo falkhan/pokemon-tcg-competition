@@ -192,3 +192,22 @@ def test_build_floor_deck_is_legal_deterministic_and_harmless():
 def test_committed_floor_deck_matches_the_builder():
     committed = [int(x) for x in (DECKS / "floor_zero_damage.csv").read_text().split()]
     assert committed == db.build_floor_deck()  # regeneration tripwire
+
+
+def test_field_hill_climb_accepts_only_clear_field_gains():
+    fitness = {"seed": 0.50, "better": 0.55, "worse": 0.48, "marginal": 0.51}
+    decks = {"seed": [1] * 60, "better": [2] * 60, "worse": [3] * 60, "marginal": [4] * 60}
+    names = {tuple(v): k for k, v in decks.items()}
+    proposals = iter([decks["worse"], decks["marginal"], decks["better"], decks["worse"]])
+
+    def fitness_fn(deck, field, games_per_opp, pilot):
+        return fitness[names[tuple(deck)]], {}
+
+    import unittest.mock as mock
+    with mock.patch.object(ds, "mutate_flex", side_effect=lambda d, n_swaps: next(proposals)):
+        champ, best, history = ds.field_hill_climb(
+            decks["seed"], [("random", "kyogre")], proposals=4, min_gain=0.02,
+            fitness_fn=fitness_fn)
+    assert champ == decks["better"] and best == 0.55
+    tags = [t for _, _, t in history]
+    assert tags == ["SEED", "reject", "reject", "ACCEPT", "reject"]  # +0.01 < min_gain

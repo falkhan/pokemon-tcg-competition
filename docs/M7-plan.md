@@ -462,19 +462,22 @@ honest n everywhere, few precious training runs.
   outcomes. **Go/no-go:** decklists extractable → full plan; only outcomes → keep
   forensics, drop meta-field/BC edges, recalibrate gates to the old anchor field. Also
   settles: are opponent observations present (unlocks BC-on-winners)?
-- **M7.1 — Deck factory (2–3d).** *Status 2026-07-09: `deck_build.py` + shells v1 +
-  `field_fitness` landed with 15 tests; 40 candidates generated to `decks/gen/`; the
-  [ENGINE] gate runs via the runbook in [M7.md](M7.md).* `deck_build.py` + shells v1;
+- **M7.1 — Deck factory (2–3d).** *Status 2026-07-10: infrastructure landed; first
+  league rating (n=280/deck) says template-only decks do NOT reach the gate — best
+  (Diggersby+iono_engine) rates at bc_v1's level, ~9 mu below generic+lucario, 0 of 40
+  above the anchor-field median. Refinement lever added: `python -m rl.deck_search
+  climb` (field-fitness hill-climb on the anchor field); harvested-meta targeting
+  waits on M7.0 [NET].* `deck_build.py` + shells v1;
   40 candidates league-rated under the generic pilot. **Gate:** ≥1 generated deck ≥50%
   vs the Lucario deck same-pilot (n=400) — factory reaches parity with the human-tuned
   seed; ≥3 distinct archetypes above the anchor-field median.
-- **M7.2 — League + gates (1–2d, overlaps).** *Status 2026-07-09: `league.py` +
-  `matchrunner.py` landed with 35 tests (suite 277); anchors bootstrapped into
-  `data/league/league.json`; deck_search loops delegate to the matchrunner; the
-  [ENGINE] self-test runs via the runbook in [M7.md](M7.md).* `league.py`,
-  `matchrunner.py`, persistent standings, gates-as-data. **Gate (self-test):** anchors
-  reproduce the known ordering (Lucario expert > tuned > generic+Lucario > bc_v1 >
-  random).
+- **M7.2 — League + gates (1–2d, overlaps).** *Status 2026-07-10: ✅ COMPLETE —
+  self-test gate PASSED on the real engine (n=1600/anchor): lucario_expert 48.61 ≈
+  iono 48.42 > tuned 45.82 > generic+lucario 35.23 > bc_v1 26.97 > random 22.55;
+  every M6 relationship replicates under the shared runner (see M7.md results log).*
+  `league.py`, `matchrunner.py`, persistent standings, gates-as-data. **Gate
+  (self-test):** anchors reproduce the known ordering (Lucario expert > tuned >
+  generic+Lucario > bc_v1 > random).
 - **M7.2b — Race-math lookahead L1 (1–2d, parallel).** *Status 2026-07-09: race
   primitives + scorer rewiring landed in both rl/ and tcg/ (parity-pinned, 294 tests);
   `decks/floor_zero_damage.csv` committed; the [ENGINE] gates run via the runbook in
