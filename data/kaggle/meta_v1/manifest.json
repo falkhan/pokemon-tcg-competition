@@ -1,0 +1,46 @@
+{
+  "version": "meta_v1",
+  "created_at": "2026-07-11T19:34:53Z",
+  "params": {
+    "top_k": 8,
+    "dedupe_by": "archetype",
+    "cos_threshold": 0.95
+  },
+  "decks": [
+    {
+      "hash": "8c326ebadcf97c33dd4a723b9a474962234b674c",
+      "archetype": "mega_lucario_ex+solrock",
+      "n_games": 61,
+      "weight": 32910.30591906582,
+      "csv": "deck_8c326ebadcf9.csv"
+    },
+    {
+      "hash": "dedf515dc8a4e193f29d39e0277384d1ed05ddd1",
+      "archetype": "drakloak+dreepy",
+      "n_games": 13,
+      "weight": 6725.444088751496,
+      "csv": "deck_dedf515dc8a4.csv"
+    },
+    {
+      "hash": "b9bcfb3e1063d48b513fe1a50c02196af2b1a5dd",
+      "archetype": "alakazam+kadabra",
+      "n_games": 2,
+      "weight": 1011.3641740565957,
+      "csv": "deck_b9bcfb3e1063.csv"
+    },
+    {
+      "hash": "6f9479267b348ff060ec492c130f5ec3f9c470b8",
+      "archetype": "mega_kangaskhan_ex+crustle",
+      "n_games": 2,
+      "weight": 980.927429510491,
+      "csv": "deck_6f9479267b34.csv"
+    },
+    {
+      "hash": "1b0760468f6e2438c03c6ced5c85287b93c4f720",
+      "archetype": "mega_kangaskhan_ex+lillie_s_clefairy_ex",
+      "n_games": 1,
+      "weight": 404.9023669890234,
+      "csv": "deck_1b0760468f6e.csv"
+    }
+  ]
+}
