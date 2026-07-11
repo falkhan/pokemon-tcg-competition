@@ -285,18 +285,33 @@ def build_deck(line: Line, shell: list[int], tech: Line | None = None) -> list[i
     return cards
 
 
+# Card ids vetted TRULY harmless against the raw effect text (2026-07-11): the
+# parquet's max_damage==0 only sees PRINTED damage, and the original floor picks
+# (Iron Crown ex / Fezandipiti ex / Kyurem / Mega Skarmory ex) all carry "this
+# attack does N damage to ..." effect attacks (100/110x3/220!) the engine fully
+# implements — every historical floor number was measured against a deck that
+# hits. Vetted by excluding any card whose Effect Explanation matches
+# r'damage|poison|burn|paralyz|confus|knock|defending|opponent|discard' (case-
+# insensitive) in pokemon-tcg-ai-battle/EN_Card_Data.csv (gitignored competition
+# data, hence frozen here), HP-descending order. Re-derive with the snippet in
+# docs/M7.md if the card pool ever changes.
+_FLOOR_HARMLESS_IDS = (1009, 344, 548, 608, 653, 814, 875, 199, 160, 177, 183, 206)
+
+
 def build_floor_deck(top: int = 4, copies: int = 4, out: Path | None = None) -> list[int]:
     """The M7.2b floor-test punching bag: a legal deck whose Pokémon can never
-    deal damage (no damaging attack, none variable), so it can't take a prize
-    by KO. A competent pilot must beat it ~100%; M6's ad-hoc version measured
-    75% (self-decking) and was never committed — this one is reproducible.
+    deal damage — zero printed damage AND no damaging/removal attack effects
+    (see _FLOOR_HARMLESS_IDS) — so it can't take a prize by KO. A competent
+    pilot must beat it ~100%; M6's ad-hoc version measured 75% (self-decking)
+    and was never committed — this one is reproducible.
 
     Deliberately shell-less: the gate measures OUR closing speed, not the
     punching bag's consistency. Committed at decks/floor_zero_damage.csv.
     """
     cards = pl.read_parquet(DATA / "cards_features.parquet")
     zero = (cards.filter(pl.col("is_pokemon") & pl.col("is_basic")
-                         & (pl.col("max_damage") == 0) & ~pl.col("has_variable_attack"))
+                         & (pl.col("max_damage") == 0) & ~pl.col("has_variable_attack")
+                         & pl.col("card_id").is_in(list(_FLOOR_HARMLESS_IDS)))
                  .sort(["hp", "card_id"], descending=[True, False])
                  .head(top))
     deck: list[int] = []
