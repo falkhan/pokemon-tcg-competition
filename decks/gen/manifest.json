@@ -2,34 +2,34 @@
   "params": {
     "n": 40,
     "top_k": 10,
-    "meta": "pool"
+    "meta": "data/kaggle/opp_decks.parquet"
   },
   "decks": [
     {
-      "hash": "95c991fe1b6252947dd2ec56dd7d2219340b99ff",
-      "line": "Ceruledge",
-      "line_rank": 0,
-      "score": 251.4,
-      "energy_type": 2,
-      "shell": "iono_engine",
-      "tech": null,
-      "csv": "deck_95c991fe1b62.csv"
-    },
-    {
       "hash": "e5a151f3b07886e917441cd88282468c68913310",
       "line": "Palafin ex",
-      "line_rank": 1,
-      "score": 248.24,
+      "line_rank": 0,
+      "score": 229.71,
       "energy_type": 3,
       "shell": "iono_engine",
       "tech": null,
       "csv": "deck_e5a151f3b078.csv"
     },
     {
+      "hash": "95c991fe1b6252947dd2ec56dd7d2219340b99ff",
+      "line": "Ceruledge",
+      "line_rank": 1,
+      "score": 223.28,
+      "energy_type": 2,
+      "shell": "iono_engine",
+      "tech": null,
+      "csv": "deck_95c991fe1b62.csv"
+    },
+    {
       "hash": "9f2070745fa9e161c004c0e380d75a7f10af9450",
       "line": "Decidueye",
       "line_rank": 2,
-      "score": 169.48,
+      "score": 187.58,
       "energy_type": 1,
       "shell": "iono_engine",
       "tech": null,
@@ -39,17 +39,27 @@
       "hash": "c47ee692f7cf00d1a7d6ce0dad74994f46e8fbab",
       "line": "Greninja ex",
       "line_rank": 3,
-      "score": 167.3,
+      "score": 148.21,
       "energy_type": 6,
       "shell": "iono_engine",
       "tech": null,
       "csv": "deck_c47ee692f7cf.csv"
     },
     {
+      "hash": "12eeba25c74acf1263b1585828f80d87a873831f",
+      "line": "Lurantis",
+      "line_rank": 4,
+      "score": 145.8,
+      "energy_type": 1,
+      "shell": "iono_engine",
+      "tech": null,
+      "csv": "deck_12eeba25c74a.csv"
+    },
+    {
       "hash": "3447c82b1fc5e167aafba1048ae23b6179f931a8",
       "line": "Medicham",
-      "line_rank": 4,
-      "score": 161.62,
+      "line_rank": 5,
+      "score": 144.78,
       "energy_type": 6,
       "shell": "iono_engine",
       "tech": null,
@@ -58,37 +68,17 @@
     {
       "hash": "0f68f2eb26d86e837b002fa1c0141eb5b5ce80e7",
       "line": "Centiskorch",
-      "line_rank": 5,
-      "score": 142.01,
+      "line_rank": 6,
+      "score": 125.39,
       "energy_type": 2,
       "shell": "iono_engine",
       "tech": null,
       "csv": "deck_0f68f2eb26d8.csv"
     },
     {
-      "hash": "12eeba25c74acf1263b1585828f80d87a873831f",
-      "line": "Lurantis",
-      "line_rank": 6,
-      "score": 131.95,
-      "energy_type": 1,
-      "shell": "iono_engine",
-      "tech": null,
-      "csv": "deck_12eeba25c74a.csv"
-    },
-    {
-      "hash": "8f7736998dd54c1094eea0201f07e4ed55566d26",
-      "line": "Annihilape",
-      "line_rank": 7,
-      "score": 129.94,
-      "energy_type": 6,
-      "shell": "iono_engine",
-      "tech": null,
-      "csv": "deck_8f7736998dd5.csv"
-    },
-    {
       "hash": "cc1cce15c5f4039897f6617aecf21b35732651ce",
       "line": "Diggersby",
-      "line_rank": 8,
+      "line_rank": 7,
       "score": 124.0,
       "energy_type": 0,
       "shell": "iono_engine",
@@ -96,140 +86,150 @@
       "csv": "deck_cc1cce15c5f4.csv"
     },
     {
-      "hash": "e5d6d35a07a5e27a81ad15b94cfd83629eaec916",
-      "line": "Flygon ex",
-      "line_rank": 9,
-      "score": 119.94,
+      "hash": "8f7736998dd54c1094eea0201f07e4ed55566d26",
+      "line": "Annihilape",
+      "line_rank": 8,
+      "score": 115.34,
       "energy_type": 6,
       "shell": "iono_engine",
       "tech": null,
-      "csv": "deck_e5d6d35a07a5.csv"
+      "csv": "deck_8f7736998dd5.csv"
     },
     {
-      "hash": "5d7daf7956e45e027f2b66cfcb083f02a4e16b1d",
-      "line": "Ceruledge",
-      "line_rank": 0,
-      "score": 251.4,
-      "energy_type": 2,
+      "hash": "507d16d4aa6a0f6c7e954190424935d79d942e69",
+      "line": "Hop\u2019s Cramorant",
+      "line_rank": 9,
+      "score": 112.0,
+      "energy_type": 0,
       "shell": "iono_engine",
-      "tech": "Medicham",
-      "csv": "deck_5d7daf7956e4.csv"
+      "tech": null,
+      "csv": "deck_507d16d4aa6a.csv"
     },
     {
-      "hash": "327734c66911271677afed3c84d030541df16cce",
+      "hash": "f24525988a34932790ecf196ef3ef834cd0f677d",
       "line": "Palafin ex",
-      "line_rank": 1,
-      "score": 248.24,
+      "line_rank": 0,
+      "score": 229.71,
       "energy_type": 3,
       "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_327734c66911.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_f24525988a34.csv"
     },
     {
-      "hash": "29cab3384fb1552f7f58619e3190e5329713b118",
-      "line": "Decidueye",
-      "line_rank": 2,
-      "score": 169.48,
-      "energy_type": 1,
-      "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_29cab3384fb1.csv"
-    },
-    {
-      "hash": "6f9622cdaa0f5e523cb257469a8383130b30a57f",
-      "line": "Greninja ex",
-      "line_rank": 3,
-      "score": 167.3,
-      "energy_type": 6,
-      "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_6f9622cdaa0f.csv"
-    },
-    {
-      "hash": "61deac8ac7668b9b8376619053b49822efe9d2c4",
-      "line": "Medicham",
-      "line_rank": 4,
-      "score": 161.62,
-      "energy_type": 6,
-      "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_61deac8ac766.csv"
-    },
-    {
-      "hash": "68406572e852f2dec8dcd4ce82e9e545711f9487",
-      "line": "Centiskorch",
-      "line_rank": 5,
-      "score": 142.01,
+      "hash": "7d87422747f7d0ad534ed9b13c039dcf640bbc9f",
+      "line": "Ceruledge",
+      "line_rank": 1,
+      "score": 223.28,
       "energy_type": 2,
       "shell": "iono_engine",
-      "tech": "Medicham",
-      "csv": "deck_68406572e852.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_7d87422747f7.csv"
     },
     {
-      "hash": "4ee272c974cf2e3f4dd81655dbbefdc2d3df3509",
-      "line": "Lurantis",
-      "line_rank": 6,
-      "score": 131.95,
+      "hash": "6d3e5f9767a87755ecae7f69aebd465ad5027cf8",
+      "line": "Decidueye",
+      "line_rank": 2,
+      "score": 187.58,
       "energy_type": 1,
       "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_4ee272c974cf.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_6d3e5f9767a8.csv"
     },
     {
-      "hash": "524761388684801e9c2c71c203edec604530b6d1",
-      "line": "Annihilape",
-      "line_rank": 7,
-      "score": 129.94,
+      "hash": "33cd35f957735f8e16b9c6e98f0a0806aaebf041",
+      "line": "Greninja ex",
+      "line_rank": 3,
+      "score": 148.21,
       "energy_type": 6,
       "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_524761388684.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_33cd35f95773.csv"
     },
     {
-      "hash": "5df6773b8be46f455df783e89bbac4a65e0b8d8d",
+      "hash": "270aae0b57d972a352cb37c7e105627363f1ea3d",
+      "line": "Lurantis",
+      "line_rank": 4,
+      "score": 145.8,
+      "energy_type": 1,
+      "shell": "iono_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_270aae0b57d9.csv"
+    },
+    {
+      "hash": "80391ae96af14cefdf15983157beeb567d1b33a0",
+      "line": "Medicham",
+      "line_rank": 5,
+      "score": 144.78,
+      "energy_type": 6,
+      "shell": "iono_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_80391ae96af1.csv"
+    },
+    {
+      "hash": "6c92802d0bf20b9d7b7790a6e2573b9f597744d3",
+      "line": "Centiskorch",
+      "line_rank": 6,
+      "score": 125.39,
+      "energy_type": 2,
+      "shell": "iono_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_6c92802d0bf2.csv"
+    },
+    {
+      "hash": "a4d6938c1d4afa2e56bd241dbba6ca8db82bbc5d",
       "line": "Diggersby",
-      "line_rank": 8,
+      "line_rank": 7,
       "score": 124.0,
       "energy_type": 0,
       "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_5df6773b8be4.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_a4d6938c1d4a.csv"
     },
     {
-      "hash": "10826e3f7c037365c7e7932c77bb0fe19d6b3d7c",
-      "line": "Flygon ex",
-      "line_rank": 9,
-      "score": 119.94,
+      "hash": "61c426539d7a866623a73178a354407665525ad7",
+      "line": "Annihilape",
+      "line_rank": 8,
+      "score": 115.34,
       "energy_type": 6,
       "shell": "iono_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_10826e3f7c03.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_61c426539d7a.csv"
     },
     {
-      "hash": "a012c468adde0bdaef6ffb6c5e75522abb5777aa",
-      "line": "Ceruledge",
-      "line_rank": 0,
-      "score": 251.4,
-      "energy_type": 2,
-      "shell": "kyogre_engine",
-      "tech": null,
-      "csv": "deck_a012c468adde.csv"
+      "hash": "89f0c0aeeb8df425eae088657e1c5e3aa5609fc5",
+      "line": "Hop\u2019s Cramorant",
+      "line_rank": 9,
+      "score": 112.0,
+      "energy_type": 0,
+      "shell": "iono_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_89f0c0aeeb8d.csv"
     },
     {
       "hash": "91ee87e7641bdb746f8ac84c555cc2e3ad02f09d",
       "line": "Palafin ex",
-      "line_rank": 1,
-      "score": 248.24,
+      "line_rank": 0,
+      "score": 229.71,
       "energy_type": 3,
       "shell": "kyogre_engine",
       "tech": null,
       "csv": "deck_91ee87e7641b.csv"
     },
     {
+      "hash": "a012c468adde0bdaef6ffb6c5e75522abb5777aa",
+      "line": "Ceruledge",
+      "line_rank": 1,
+      "score": 223.28,
+      "energy_type": 2,
+      "shell": "kyogre_engine",
+      "tech": null,
+      "csv": "deck_a012c468adde.csv"
+    },
+    {
       "hash": "9a9cc75f12036b20f002e9fbcc3358dd57c1f5e2",
       "line": "Decidueye",
       "line_rank": 2,
-      "score": 169.48,
+      "score": 187.58,
       "energy_type": 1,
       "shell": "kyogre_engine",
       "tech": null,
@@ -239,17 +239,27 @@
       "hash": "9f9d09dcc27e2eda40841fc11a4f5dd26bb95280",
       "line": "Greninja ex",
       "line_rank": 3,
-      "score": 167.3,
+      "score": 148.21,
       "energy_type": 6,
       "shell": "kyogre_engine",
       "tech": null,
       "csv": "deck_9f9d09dcc27e.csv"
     },
     {
+      "hash": "594dab5d27ceb900012d16d6a89c3437e698eaee",
+      "line": "Lurantis",
+      "line_rank": 4,
+      "score": 145.8,
+      "energy_type": 1,
+      "shell": "kyogre_engine",
+      "tech": null,
+      "csv": "deck_594dab5d27ce.csv"
+    },
+    {
       "hash": "5afa511702cfbd07851edda6d29fb872ee9c75fd",
       "line": "Medicham",
-      "line_rank": 4,
-      "score": 161.62,
+      "line_rank": 5,
+      "score": 144.78,
       "energy_type": 6,
       "shell": "kyogre_engine",
       "tech": null,
@@ -258,37 +268,17 @@
     {
       "hash": "57aa340c7e9b2fe9aba091687beb8c564a16c3b3",
       "line": "Centiskorch",
-      "line_rank": 5,
-      "score": 142.01,
+      "line_rank": 6,
+      "score": 125.39,
       "energy_type": 2,
       "shell": "kyogre_engine",
       "tech": null,
       "csv": "deck_57aa340c7e9b.csv"
     },
     {
-      "hash": "594dab5d27ceb900012d16d6a89c3437e698eaee",
-      "line": "Lurantis",
-      "line_rank": 6,
-      "score": 131.95,
-      "energy_type": 1,
-      "shell": "kyogre_engine",
-      "tech": null,
-      "csv": "deck_594dab5d27ce.csv"
-    },
-    {
-      "hash": "8b308f48a15d88acabf728ef95bd0c62b13f2d24",
-      "line": "Annihilape",
-      "line_rank": 7,
-      "score": 129.94,
-      "energy_type": 6,
-      "shell": "kyogre_engine",
-      "tech": null,
-      "csv": "deck_8b308f48a15d.csv"
-    },
-    {
       "hash": "77fbceb7d99d0167cf39fe50560e156c81a59190",
       "line": "Diggersby",
-      "line_rank": 8,
+      "line_rank": 7,
       "score": 124.0,
       "energy_type": 0,
       "shell": "kyogre_engine",
@@ -296,114 +286,124 @@
       "csv": "deck_77fbceb7d99d.csv"
     },
     {
-      "hash": "61a166873d71947e48a8e74bb7ff78ca7443fe85",
-      "line": "Flygon ex",
-      "line_rank": 9,
-      "score": 119.94,
+      "hash": "8b308f48a15d88acabf728ef95bd0c62b13f2d24",
+      "line": "Annihilape",
+      "line_rank": 8,
+      "score": 115.34,
       "energy_type": 6,
       "shell": "kyogre_engine",
       "tech": null,
-      "csv": "deck_61a166873d71.csv"
+      "csv": "deck_8b308f48a15d.csv"
     },
     {
-      "hash": "a8e1b64366e6311f1b35c093ea31ad8212137c93",
-      "line": "Ceruledge",
-      "line_rank": 0,
-      "score": 251.4,
-      "energy_type": 2,
+      "hash": "5667a46fce4f942423c8a9a683776b7c12032e65",
+      "line": "Hop\u2019s Cramorant",
+      "line_rank": 9,
+      "score": 112.0,
+      "energy_type": 0,
       "shell": "kyogre_engine",
-      "tech": "Medicham",
-      "csv": "deck_a8e1b64366e6.csv"
+      "tech": null,
+      "csv": "deck_5667a46fce4f.csv"
     },
     {
-      "hash": "40d8aca6c11301eed0f8bdb6957ae08c03e384bd",
+      "hash": "706b9822ee91b785dd118d44be7616c6041d6d0c",
       "line": "Palafin ex",
-      "line_rank": 1,
-      "score": 248.24,
+      "line_rank": 0,
+      "score": 229.71,
       "energy_type": 3,
       "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_40d8aca6c113.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_706b9822ee91.csv"
     },
     {
-      "hash": "93f3355a4325a40bfea3fae369e6292f955ce0da",
-      "line": "Decidueye",
-      "line_rank": 2,
-      "score": 169.48,
-      "energy_type": 1,
-      "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_93f3355a4325.csv"
-    },
-    {
-      "hash": "b9fb48f190d7e4d2fd5843e6c6d3e706ff515090",
-      "line": "Greninja ex",
-      "line_rank": 3,
-      "score": 167.3,
-      "energy_type": 6,
-      "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_b9fb48f190d7.csv"
-    },
-    {
-      "hash": "ed41624f982c7c7972f1289bfd7923ad8d874afc",
-      "line": "Medicham",
-      "line_rank": 4,
-      "score": 161.62,
-      "energy_type": 6,
-      "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_ed41624f982c.csv"
-    },
-    {
-      "hash": "743b3331d5f5a3822dfee17654c83d9728da3fdf",
-      "line": "Centiskorch",
-      "line_rank": 5,
-      "score": 142.01,
+      "hash": "a38e3d067668a67f37d989571ad4a2c49a602018",
+      "line": "Ceruledge",
+      "line_rank": 1,
+      "score": 223.28,
       "energy_type": 2,
       "shell": "kyogre_engine",
-      "tech": "Medicham",
-      "csv": "deck_743b3331d5f5.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_a38e3d067668.csv"
     },
     {
-      "hash": "e71ec0569194134aae0ba3aafed7d8517987e54c",
-      "line": "Lurantis",
-      "line_rank": 6,
-      "score": 131.95,
+      "hash": "da27993b0ec0159791c7de909027543e9555f30f",
+      "line": "Decidueye",
+      "line_rank": 2,
+      "score": 187.58,
       "energy_type": 1,
       "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_e71ec0569194.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_da27993b0ec0.csv"
     },
     {
-      "hash": "5a05b84daba58f8da3254357a8e7d6015016a944",
-      "line": "Annihilape",
-      "line_rank": 7,
-      "score": 129.94,
+      "hash": "05810bff4f8674166ce8a70c67b5d4b850a4ae2f",
+      "line": "Greninja ex",
+      "line_rank": 3,
+      "score": 148.21,
       "energy_type": 6,
       "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_5a05b84daba5.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_05810bff4f86.csv"
     },
     {
-      "hash": "1487bc10b164f0569570931cb6c05d7f8d65bfe7",
+      "hash": "4fa879b2e0a5cd061b4afc8022384a8cce0aee69",
+      "line": "Lurantis",
+      "line_rank": 4,
+      "score": 145.8,
+      "energy_type": 1,
+      "shell": "kyogre_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_4fa879b2e0a5.csv"
+    },
+    {
+      "hash": "f2226deb87808e6d125810ea104e7e38b861b1a4",
+      "line": "Medicham",
+      "line_rank": 5,
+      "score": 144.78,
+      "energy_type": 6,
+      "shell": "kyogre_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_f2226deb8780.csv"
+    },
+    {
+      "hash": "96287f54429a86ad303617aaf71523aa3094ab68",
+      "line": "Centiskorch",
+      "line_rank": 6,
+      "score": 125.39,
+      "energy_type": 2,
+      "shell": "kyogre_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_96287f54429a.csv"
+    },
+    {
+      "hash": "cdc0d43fef4de93c282c21677b3687e1d7d7d376",
       "line": "Diggersby",
-      "line_rank": 8,
+      "line_rank": 7,
       "score": 124.0,
       "energy_type": 0,
       "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_1487bc10b164.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_cdc0d43fef4d.csv"
     },
     {
-      "hash": "702a84ed48218f5f8a37847e82c95f6e69ef76d5",
-      "line": "Flygon ex",
-      "line_rank": 9,
-      "score": 119.94,
+      "hash": "fbd816e62721d4ffa8c91d622c7fd098ad80d66a",
+      "line": "Annihilape",
+      "line_rank": 8,
+      "score": 115.34,
       "energy_type": 6,
       "shell": "kyogre_engine",
-      "tech": "Ceruledge",
-      "csv": "deck_702a84ed4821.csv"
+      "tech": "Iron Boulder",
+      "csv": "deck_fbd816e62721.csv"
+    },
+    {
+      "hash": "3cbfd2ee3bc6169a8239ee965c8368d0c2a852e5",
+      "line": "Hop\u2019s Cramorant",
+      "line_rank": 9,
+      "score": 112.0,
+      "energy_type": 0,
+      "shell": "kyogre_engine",
+      "tech": "Iron Boulder",
+      "csv": "deck_3cbfd2ee3bc6.csv"
     }
   ]
 }
