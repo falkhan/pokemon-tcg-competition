@@ -133,7 +133,9 @@ def _throttle() -> None:
 
 
 def _http_post(path: str, body: dict) -> dict:
-    """POST to a Kaggle EpisodeService endpoint. Raises a runbook-pointing error offline."""
+    """POST to a Kaggle EpisodeService endpoint (listings only — replay downloads
+    moved to the authenticated client, see ``_default_fetcher``). Raises a
+    runbook-pointing error offline."""
     try:
         import requests
 
@@ -150,7 +152,37 @@ def _http_post(path: str, body: dict) -> dict:
 
 
 def _default_fetcher(episode_id: int) -> dict:
-    return _http_post("GetEpisodeReplay", {"episodeId": int(episode_id)})
+    """Download one replay via the authenticated Kaggle API client.
+
+    Kaggle retired the unauthenticated ``EpisodeService/GetEpisodeReplay`` POST;
+    replays are now served only through the official client (GET
+    ``/api/v1/competitions/episodes/{id}/replay``), which needs
+    ``~/.kaggle/kaggle.json`` credentials. ``ListEpisodes`` still lives on the
+    old endpoint — see ``_http_post``.
+    """
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        from kagglesdk.competitions.types.competition_api_service import (
+            ApiGetEpisodeReplayRequest,
+        )
+
+        api = KaggleApi()
+        api.authenticate()
+        request = ApiGetEpisodeReplayRequest()
+        request.episode_id = int(episode_id)
+        with api.build_kaggle_client() as kaggle:
+            response = kaggle.competitions.competition_api_client.get_episode_replay(request)
+            # Despite the FileDownload annotation, the SDK hands back the raw
+            # requests.Response (FileDownload.prepare_from is the identity).
+            response.raise_for_status()
+            return json.loads(response.content)
+    except Exception as e:  # noqa: BLE001 — every failure mode gets the same remedy
+        raise RuntimeError(
+            f"[NET] Kaggle replay download failed ({type(e).__name__}: {e}). Needs the "
+            "`kaggle` package and ~/.kaggle/kaggle.json credentials — run the M7.0 "
+            "runbook in docs/M7.md, or download a replay manually from the episode "
+            "page and load it with `python -m rl.kaggle_ingest import-file ...`."
+        ) from e
 
 
 def _unwrap_replay(payload) -> dict:

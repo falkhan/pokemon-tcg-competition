@@ -24,3 +24,4 @@ data/kaggle/raw/
 # M7.3 generic-teacher BC shards: large, regenerable from the committed
 # population.json (`python -m rl.bc collect --teacher generic`).
 data/bc_v2/
+pokemon-tcg-ai-battle.zip
