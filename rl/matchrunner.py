@@ -18,6 +18,7 @@ Opponent specs (picklable tuples; deck = decks/ name | csv path | list of ids):
   ("rule",  agent, deck)    rule expert brain ("lucario"/"iono"/"tuned") on a deck
   ("model", ckpt, deck)     neural pilot (greedy OptionScorer) from a checkpoint
   ("generic", deck)         the deck-agnostic rule pilot
+  ("solver", deck)          generic pilot + within-turn combo solver (M7.4a)
   ("random", deck)          uniform-random legal moves
 
 Usage:
@@ -59,7 +60,7 @@ def parse_spec(s: str) -> OpponentSpec:
     "model:checkpoints/bc_v1.pt:kyogre", "random:kyogre"."""
     parts = s.split(":")
     kind = parts[0]
-    if kind in ("generic", "random") and len(parts) == 2:
+    if kind in ("generic", "random", "solver") and len(parts) == 2:
         return (kind, parts[1])
     if kind == "rule" and len(parts) in (2, 3):
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
@@ -86,6 +87,10 @@ def make_pilot(spec: OpponentSpec, instance: str):
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])
         return make_generic_pilot(ids), ids
+    if kind == "solver":
+        from rl.turn_solver import make_solver_pilot
+        ids = resolve_deck(spec[1])
+        return make_solver_pilot(ids, instance=instance), ids
     if kind == "random":
         rng = random.Random(hash(instance) & 0xFFFF)
         fn = lambda od: rng.sample(range(len(od["select"]["option"])),  # noqa: E731
@@ -182,8 +187,11 @@ def _engine_game(fn0, fn1, deck0: list[int], deck1: list[int],
                 except Exception:  # noqa: BLE001 — G1 counts crashes, then re-raises
                     s["errors"] += 1
                     raise
-                s["time_s"] += time.perf_counter() - t0
+                dt = time.perf_counter() - t0
+                s["time_s"] += dt
                 s["moves"] += 1
+                if stats.get("collect_samples"):   # per-move p99 (M7.4a G6)
+                    s.setdefault("samples", []).append(dt)
             else:
                 picks = fn(obs_dict)
             obs_dict = battle_select([int(i) for i in picks])
@@ -204,18 +212,23 @@ def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
     """Slot-fair series: a takes seat g%2. Returns 0 = a won, 1 = b won, 2 = draw
     per game. `game_fn(fn0, fn1, deck0, deck1, stats)` is the test seam (defaults
     to the [ENGINE] loop). `stats`, if given, accumulates per-SIDE ("a"/"b")
-    move/time/error totals across the series. `on_game(g, result, seat_stats)`
+    move/time/error totals across the series; pre-seed it with
+    {"collect_samples": True} to also keep every per-move latency under
+    side["samples"] (the M7.4a p99 input). `on_game(g, result, seat_stats)`
     is called after each game with a's result and that game's raw stats — the
     loss-forensics hook (the CLI's --diag)."""
     game = game_fn or _engine_game
     fn_a, deck_a = make_pilot(spec_a, instance=f"mr{seed}_a")
     fn_b, deck_b = make_pilot(spec_b, instance=f"mr{seed}_b")
+    collect = stats is not None and bool(stats.get("collect_samples"))
     out = []
     for g in range(n_games):
         a_seat = g % 2
         fns = (fn_a, fn_b) if a_seat == 0 else (fn_b, fn_a)
         decks = (deck_a, deck_b) if a_seat == 0 else (deck_b, deck_a)
-        seat_stats: dict | None = {} if (stats is not None or on_game) else None
+        seat_stats: dict | None = None
+        if stats is not None or on_game:
+            seat_stats = {"collect_samples": True} if collect else {}
         res = game(fns[0], fns[1], decks[0], decks[1], seat_stats)
         if stats is not None:
             for seat in (0, 1):
@@ -223,8 +236,11 @@ def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
                     continue
                 side = stats.setdefault("a" if seat == a_seat else "b",
                                         {"moves": 0, "time_s": 0.0, "errors": 0})
-                for k in side:
+                for k in ("moves", "time_s", "errors"):
                     side[k] += seat_stats[seat][k]
+                if collect:
+                    side.setdefault("samples", []).extend(
+                        seat_stats[seat].get("samples", ()))
         result = 2 if res == 2 else (0 if res == a_seat else 1)
         if on_game is not None:
             on_game(g, result, _from_a_view(seat_stats, a_seat))
@@ -246,6 +262,15 @@ def series_wr(results: list[int]) -> float:
     if not results:
         return 0.0
     return (sum(1 for r in results if r == 0) + 0.5 * sum(1 for r in results if r == 2)) / len(results)
+
+
+def percentile(xs: list[float], q: float) -> float:
+    """Nearest-rank percentile (q in [0, 100]); pure Python, no numpy."""
+    if not xs:
+        return 0.0
+    ys = sorted(xs)
+    rank = -(-q * len(ys) // 100)                     # ceil without math
+    return ys[min(len(ys) - 1, max(0, int(rank) - 1))]
 
 
 # ---------------------------------------------------------------------------
@@ -307,9 +332,13 @@ def _main() -> None:
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--diag", action="store_true",
                    help="per-game end-state lines (loss forensics; forces workers=1)")
+    s.add_argument("--latency", action="store_true",
+                   help="per-move latency mean/p50/p99 ms per side (M7.4a G6; "
+                        "forces workers=1)")
     a = p.parse_args()
 
     spec_a, spec_b = parse_spec(a.a), parse_spec(a.b)
+    on_game = None
     if a.diag:
         def on_game(g, result, view):
             f = view.get("final") or {}
@@ -319,15 +348,23 @@ def _main() -> None:
             print(f"game {g:>3}: {'WLD'[result]}  moves={moves:>3}  "
                   f"deck a/b={decks[0]}/{decks[1]}  prizes-left a/b={prizes[0]}/{prizes[1]}",
                   flush=True)
-        results = play_series(spec_a, spec_b, a.games, seed=a.seed, on_game=on_game)
-    elif a.workers <= 1:
-        results = play_series(spec_a, spec_b, a.games, seed=a.seed)
+    stats = {"collect_samples": True} if a.latency else None
+    if a.diag or a.latency or a.workers <= 1:
+        results = play_series(spec_a, spec_b, a.games, seed=a.seed,
+                              stats=stats, on_game=on_game)
     else:
         results = run_pairs([(spec_a, spec_b, a.games)], workers=a.workers)[0]
     w = sum(1 for r in results if r == 0)
     d = sum(1 for r in results if r == 2)
     print(f"{a.a} vs {a.b}: {w}W {len(results) - w - d}L {d}D over {len(results)} "
           f"(wr={series_wr(results):.3f})", flush=True)
+    if a.latency:
+        for side in ("a", "b"):
+            ms = [1000 * x for x in (stats.get(side) or {}).get("samples", [])]
+            if ms:
+                print(f"side {side}: mean={sum(ms) / len(ms):.1f}ms  "
+                      f"p50={percentile(ms, 50):.1f}ms  p99={percentile(ms, 99):.1f}ms  "
+                      f"over {len(ms)} moves", flush=True)
 
 
 if __name__ == "__main__":

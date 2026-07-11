@@ -495,7 +495,14 @@ honest n everywhere, few precious training runs.
   v2 (+embeddings, +deck pools), `OptionScorerV2`, BC from the L1-improved generic
   pilot across the M7.1 population. **Gate:** G5 pass and G3 ≥50% (parity with
   teacher — BC alone should *match*, not beat).
-- **M7.4a — Within-turn combo solver L2 (3–4d incl. research).** Forward-model turn
+- **M7.4a — Within-turn combo solver L2 (3–4d incl. research).** *Status 2026-07-11:
+  infrastructure landed — `rl/turn_solver.py` (rl/-only, bundle-pure, wraps the
+  parity-pinned pilot untouched), `solver:` matchrunner spec, `--latency` p99
+  machinery, 20+ offline tests. The curated suite is hand-authored scripted-tree
+  fixtures in `tests/test_turn_solver.py` (forensics emits aggregates, not
+  positions — a forensics-derived suite stays [NET]-deferred); the [ENGINE] A/B +
+  latency gates run via [M7-manual-tests.md](M7-manual-tests.md) §7; submission
+  wiring deferred to M7.5 behind that gate.* Forward-model turn
   search, lethal-first. **Gate:** on the curated combo-position suite (from forensics),
   finds the multi-prize lethal the greedy pilot misses; end-to-end ≥55% vs the same
   pilot without L2; p99 time within budget.

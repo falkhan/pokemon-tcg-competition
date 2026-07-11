@@ -17,7 +17,7 @@ uv run pytest -q
 
 | Gate | Threshold |
 |---|---|
-| all tests | 320 passed |
+| all tests | 345 passed |
 
 **Purpose.** Pins everything that doesn't need the engine: rl↔tcg twin parity
 (byte-identical scorers/encoders/nets), the score-ladder constants, deck legality,
@@ -239,11 +239,59 @@ attack the old failure's other half: overfitting to 3 opponents.
 
 ---
 
-## 7. Results discipline
+## 7. M7.4a — within-turn combo solver [ENGINE] ⏳
+
+```
+# the milestone A/B: same pilot, same deck, solver on vs off
+uv run python -m rl.matchrunner play --a solver:lucario --b generic:lucario -n 400 --workers 4
+# non-regressions vs the section-4 numbers:
+uv run python -m rl.matchrunner play --a solver:lucario --b rule:lucario -n 400 --workers 4
+uv run python -m rl.matchrunner play --a solver:lucario --b generic:floor_zero_damage -n 200 --workers 4
+# per-move latency (G6 with the solver ON):
+uv run python -m rl.matchrunner play --a solver:lucario --b generic:lucario -n 100 --latency
+```
+
+| Gate | Threshold | Last measured |
+|---|---|---|
+| A/B vs the same pilot without L2 | ≥ 0.55 | — |
+| vs Lucario expert | ≥ section 4's number (0.305) | — |
+| floor | ≥ section 4's number (0.695) | — |
+| latency | mean < 50 ms; p99 recorded (Kaggle 600s overage is a ship-time check) | — |
+
+**Hyperparams** (all in `rl/turn_solver.py`). Trigger: `LETHAL_MARGIN=70` (how far
+from lethal a boost trainer is still worth searching; raise → more solves, more
+time). Budget: `MAX_DEPTH=8`, `MAX_NODES=800`, `TOP_K=4` (non-attack children kept
+per prompt), `MAX_MULTI_COMBOS=8` (multi-select cap; the MCTS default is 64 — risk
+7), `SOLVE_DEADLINE_S=0.4` (hard wall-clock valve; the first knob if p99 blows up).
+Leaf weights: `W_PRIZE=100_000` ≫ `W_THREAT=2_000` ≫ chip/race tiebreaks, and
+`MIN_OVERRIDE_SCORE=W_PRIZE−1` — the solver only overrides greedy when a line nets
+an actual prize or a win (lower it to let "guaranteed lethal-next-turn" lines
+override too).
+
+**Purpose & math.** The greedy pilot scores one action at a time, so a lethal that
+needs `item → attach → attack` is never assembled. The solver runs a depth-first
+search over MY OWN remaining turn on the engine forward model (`search_begin` →
+`search_step` per action) — sound and cheap because the opponent never acts inside
+my turn: no opponent determinization, and my own draw reveals are absorbed by
+recomputing at every prompt (the engine re-prompts after each action). Damage-boost
+trainers need no effect parsing — the solver just *plays* them in the forward model
+and observes the prize delta. `W_PRIZE ≫ W_THREAT` encodes "prizes banked this turn
+beat any setup"; the stand-pat floor means a line is never worse than stopping
+early. The cheap trigger (near-lethal / boost-margin / multi-prize-in-reach /
+game-closing) keeps ~99% of decisions on the fast greedy path, which is what holds
+G6. n=400 resolves the 0.55 A/B gate at ±4.9pp (95% binomial CI). The offline combo
+suite is `tests/test_turn_solver.py` (hand-authored scripted trees — the
+forensics-derived suite stays [NET]-deferred). Submission wiring is deliberately
+deferred to M7.5: the module is bundle-pure now, gated by this section first.
+
+---
+
+## 8. Results discipline
 
 After each session, paste the numbers into the [M7.md](M7.md) results log. What
 unlocks what: M7.0's harvest → regenerate decks (`--meta`) and league anchors
 (`init --meta`), then RE-RUN sections 2–3 (promotions must hold on the newest meta).
 Section 4's floor fix gates nothing downstream but raises every pilot number.
 Section 5's fidelity gates section 6's start checkpoint. Two honest failures at
-section 6 = the L4 review, per plan.
+section 6 = the L4 review, per plan. Section 7's A/B pass flips the M7.5 submission
+to `make_solver_pilot` (a two-line change; the module already ships bundle-pure).

@@ -19,6 +19,7 @@ LUCARIO = [int(x) for x in (DECKS / "lucario.csv").read_text().split()]
 @pytest.mark.parametrize("s,expected", [
     ("generic:lucario", ("generic", "lucario")),
     ("random:kyogre", ("random", "kyogre")),
+    ("solver:lucario", ("solver", "lucario")),
     ("rule:iono", ("rule", "iono", "iono")),
     ("rule:lucario:kyogre", ("rule", "lucario", "kyogre")),
     ("model:checkpoints/bc_v1.pt:kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
@@ -92,6 +93,49 @@ def test_play_series_accumulates_per_side_stats(monkeypatch):
     # a sat seat 0 then seat 1 -> gets 10+8 moves; b the mirror
     assert stats["a"] == {"moves": 18, "time_s": 0.5, "errors": 1}
     assert stats["b"] == {"moves": 18, "time_s": 0.5, "errors": 1}
+
+
+def test_play_series_collects_latency_samples_when_asked(monkeypatch):
+    _fake_pilots(monkeypatch)
+
+    def game_fn(fn0, fn1, deck0, deck1, stats):
+        assert stats.get("collect_samples")   # the flag reaches _engine_game
+        stats[0] = {"moves": 2, "time_s": 0.3, "errors": 0, "samples": [0.1, 0.2]}
+        stats[1] = {"moves": 1, "time_s": 0.5, "errors": 0, "samples": [0.5]}
+        return 0
+
+    stats: dict = {"collect_samples": True}
+    mr.play_series(("generic", "lucario"), ("generic", "iono"), 2,
+                   game_fn=game_fn, stats=stats)
+    # a sat seat 0 then seat 1 -> its samples are game0-seat0 + game1-seat1
+    assert stats["a"]["samples"] == [0.1, 0.2, 0.5]
+    assert stats["b"]["samples"] == [0.5, 0.1, 0.2]
+    assert stats["a"]["moves"] == 3 and stats["a"]["time_s"] == pytest.approx(0.8)
+
+    def plain_game(fn0, fn1, deck0, deck1, stats):
+        assert "collect_samples" not in stats  # flag only propagates when set
+        stats[0] = {"moves": 2, "time_s": 0.3, "errors": 0}
+        stats[1] = {"moves": 1, "time_s": 0.5, "errors": 0}
+        return 0
+
+    plain: dict = {}
+    mr.play_series(("generic", "lucario"), ("generic", "iono"), 2,
+                   game_fn=plain_game, stats=plain)
+    assert "samples" not in plain["a"]         # opt-in only
+
+
+def test_percentile_nearest_rank():
+    ms = list(range(1, 101))                   # 1..100
+    assert mr.percentile(ms, 50) == 50
+    assert mr.percentile(ms, 99) == 99
+    assert mr.percentile(ms, 100) == 100
+    assert mr.percentile([7.0], 99) == 7.0
+    assert mr.percentile([], 99) == 0.0
+
+
+def test_make_pilot_solver_wraps_the_generic_pilot():
+    fn, deck = mr.make_pilot(("solver", "lucario"), "t0")
+    assert callable(fn) and len(deck) == 60
 
 
 def test_series_wr_counts_draws_as_half():

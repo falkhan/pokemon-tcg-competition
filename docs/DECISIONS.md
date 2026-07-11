@@ -7,6 +7,21 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-11 · The turn solver is a WRAPPER around the pilot, not a scorer hook — and boost items are detected empirically, not classified
+**Decisions (M7.4a):** (1) `rl/turn_solver.py` wraps `make_generic_pilot` (the rl/hybrid.py
+shape) instead of hooking `score_option`: the shipping pilot and its `tcg/pilot.py` twin stay
+byte-identical under the >400-scenario parity pins, and the solver follows the M7 rl/-only,
+no-twin rule. Submission wiring waits for the §7 A/B gate (M7.5 flip is two lines; a new
+import-tier test keeps the module bundle-pure meanwhile). (2) No effect text exists anywhere
+in the repo, so "is this trainer a damage boost?" is answered by PLAYING it in the forward
+model and observing the prize delta — the search subsumes classification. (3) Within my own
+turn the opponent never acts, so the search needs NO opponent determinization, and my own
+draw reveals are handled by recomputing at every prompt instead of caching a plan. (4) The
+milestone's "curated combo suite from forensics" cannot exist offline (forensics emits
+aggregate W/L tables, not positions, and is [NET]-gated) — substituted with hand-authored
+scripted-tree fixtures in `tests/test_turn_solver.py`; a real forensics-derived suite stays
+deferred behind M7.0 [NET].
+
 ### 2026-07-10 · The PPO loss bug was real — every "PPO failed" conclusion was trained on a corrupted objective
 **Confirmed and fixed (M7.4b):** `rl/ppo.py` and `tcg/ppo.py` both computed
 `loss = policy_loss * VALUE_COEF * value_loss − ENTROPY_COEF * entropy` — MULTIPLYING the
