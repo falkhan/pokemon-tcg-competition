@@ -9,12 +9,15 @@ Behavior is identical to the old ``rl/generic_pilot.py``; the score tiers and
 the reasoning behind them live in ``tcg.constants`` and docs/M6.md.
 """
 from collections.abc import Callable
+from types import SimpleNamespace
 
-from cg.api import AreaType, OptionType, to_observation_class
+from cg.api import AreaType, OptionType, SelectContext, to_observation_class
 
 from tcg import constants
 from tcg.combat import best_damage, turns_to_first_ko, turns_to_ready
-from tcg.library import ATTACKS, CARDS, ENERGY_CARD_IDS, POKEMON_CARD_IDS, known_attacks
+from tcg.library import (ATTACKS, CARDS, ENERGY_CARD_IDS,
+                         HAND_DISCARD_TRAINER_IDS, POKEMON_CARD_IDS,
+                         known_attacks)
 from tcg.models import UNKNOWN_ATTACK, UNKNOWN_CARD
 
 
@@ -96,6 +99,89 @@ def card_usefulness(card_id: int) -> int:
     return constants.USEFULNESS_OTHER
 
 
+def _pokemon_in_hand(me) -> list:
+    return [card for card in (me.hand or [])
+            if card is not None and card.id in POKEMON_CARD_IDS]
+
+
+def _my_pokemon_names(me, hand_pokemon) -> set:
+    """Names of my Pokémon in play and in hand — the evolution-basis pool."""
+    in_play = [pokemon for pokemon in (list(me.active or []) + list(me.bench or []))
+               if pokemon is not None]
+    return ({CARDS[p.id].name for p in in_play if p.id in CARDS}
+            | {CARDS[c.id].name for c in hand_pokemon if c.id in CARDS})
+
+
+def hand_holds_keepers(me) -> bool:
+    """Any hand Pokémon worth protecting from a hand-discard trainer: a basic,
+    an evolution whose basis is in play or hand, or a hard hitter even while
+    momentarily dead (the deck's win-condition class — kaggle ep 85467275
+    lost to Carmine discarding Mega Lucario ex twice)."""
+    hand_pokemon = _pokemon_in_hand(me)
+    basis_names = _my_pokemon_names(me, hand_pokemon)
+    for card in hand_pokemon:
+        data = CARDS.get(card.id)
+        if data is None:
+            return True                      # unknown card: keep, conservatively
+        if data.basic:
+            return True
+        if data.evolves_from is not None and data.evolves_from in basis_names:
+            return True
+        if attacker_quality(card.id) >= constants.HAND_DISCARD_PROTECT_QUALITY:
+            return True
+    return False
+
+
+def fetch_value(card, me) -> float:
+    """KEEP/fetch value with evolution-line awareness (M7.5): dead evolutions
+    sink, basics rise while the bench is empty or their evolution waits in
+    hand (kaggle ep 85469339: Poké Pad fetched a basis-less Hariyama twice
+    over live basics; the benched-out loss followed)."""
+    base = card_usefulness(card.id)
+    data = CARDS.get(card.id)
+    if card.id not in POKEMON_CARD_IDS or data is None:
+        return base
+    hand_pokemon = _pokemon_in_hand(me)
+    if data.evolves_from is not None:                     # evolution card
+        if data.evolves_from not in _my_pokemon_names(me, hand_pokemon):
+            return constants.FETCH_DEAD_EVOLUTION
+        return base
+    bonus = 0                                             # basic Pokémon
+    if not any(pokemon is not None for pokemon in me.bench):
+        bonus += constants.FETCH_EMPTY_BENCH_BASIC_BONUS
+    if data.name is not None and any(
+            CARDS.get(c.id) is not None and CARDS[c.id].evolves_from == data.name
+            for c in hand_pokemon):
+        bonus += constants.FETCH_ENABLES_EVOLUTION_BONUS
+    return base + bonus
+
+
+def attach_recipient_value(pokemon, me, opponent_active) -> float:
+    """ATTACH_FROM: which of MY (usually benched) Pokémon receives an energy.
+
+    Marginal value — the opposite of the promote ladder: a Pokémon whose best
+    attack is already paid gains nothing from another energy (kaggle ep
+    85607769: 5 energies on a 1-cost Solrock). A basic whose evolution waits
+    in hand is charged FOR the evolution — attached energy survives evolving,
+    so Riolu carrying 2 is a pre-charged Mega Brave."""
+    evolution = next(
+        (c for c in _pokemon_in_hand(me)
+         if CARDS.get(c.id) is not None and CARDS.get(pokemon.id) is not None
+         and CARDS[c.id].evolves_from is not None
+         and CARDS[c.id].evolves_from == CARDS[pokemon.id].name),
+        None)
+    profile = (SimpleNamespace(id=evolution.id,
+                               energies=list(getattr(pokemon, "energies", ()) or ()))
+               if evolution is not None else pokemon)
+    energy_gap = turns_to_ready(profile, opponent_active)
+    if energy_gap == 0:
+        return constants.ATTACH_RECIPIENT_CHARGED
+    quality = min(attacker_quality(profile.id), constants.ATTACKER_QUALITY_CAP)
+    return (constants.ATTACH_RECIPIENT_BASE + quality
+            - constants.PROMOTE_TURN_PENALTY
+            * min(energy_gap - 1, constants.PROMOTE_TURNS_CAP))
+
+
 def score_card(option, observation) -> float:
     """Card-selection contexts (SETUP/SWITCH/TO_HAND/DISCARD/...) — no coin flips."""
     state = observation.current
@@ -108,6 +194,9 @@ def score_card(option, observation) -> float:
     if card is None:
         return 0
 
+    if context == SelectContext.ATTACH_FROM:
+        return attach_recipient_value(card, state.players[state.yourIndex],
+                                      opponent_active)
     if context in constants.PROMOTE_CONTEXTS:
         # Start / promote / bench MY best attacker; bonus if it hits right now,
         # minus a race term for each attach it still needs (M7.2b) — a charged
@@ -121,7 +210,7 @@ def score_card(option, observation) -> float:
         return (quality + (constants.PROMOTE_READY_BONUS if can_hit_now else 0)
                 - constants.PROMOTE_TURN_PENALTY * turns_gap)
     if context in constants.KEEP_CONTEXTS:
-        return card_usefulness(card.id)
+        return fetch_value(card, state.players[state.yourIndex])
     if context in constants.DISCARD_CONTEXTS:  # discard the LEAST useful
         return -card_usefulness(card.id)
     if context in constants.TARGET_CONTEXTS:   # damage the highest-prize Pokémon
@@ -202,12 +291,23 @@ def score_retreat(observation) -> float:
 def score_play(option, observation) -> float:
     my_index = observation.current.yourIndex
     me = observation.current.players[my_index]
-    card = card_at(observation, option.area, option.index, my_index)
+    # Engine quirk (found 2026-07-12, kaggle ep 85467275 + local repro): PLAY
+    # options carry NO `area` field — the index is always a hand index. Without
+    # this default every play resolved to None -> flat 2000, so the whole play
+    # tier below (Pokémon vs trainer, taper, deck-out guard) never fired in a
+    # real game — only in tests, whose synthetic options set area explicitly.
+    area = option.area if option.area is not None else AreaType.HAND
+    card = card_at(observation, area, option.index, my_index)
 
     if card is None:
         return constants.SCORE_PLAY_UNRESOLVED_CARD
     if card.id in POKEMON_CARD_IDS:
+        if not any(pokemon is not None for pokemon in me.bench):
+            return constants.SCORE_PLAY_POKEMON_EMPTY_BENCH
         return constants.SCORE_PLAY_POKEMON
+
+    if card.id in HAND_DISCARD_TRAINER_IDS and hand_holds_keepers(me):
+        return constants.SCORE_HAND_DISCARD_BLOCKED
 
     has_board = ((bool(me.active) and me.active[0] is not None)
                  or any(pokemon for pokemon in me.bench))

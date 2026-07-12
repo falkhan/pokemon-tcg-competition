@@ -49,6 +49,8 @@ W_PRIZE = 100_000        # per prize I take this turn
 W_MY_PRIZE = -150_000    # per prize I concede (self-KO effects)
 W_THREAT = 2_000         # lethal-next-turn setup, x target's prize value
 W_COUNTER = -1_000       # opp active can return-KO my active, x its prize value
+W_BENCHLESS_KO = -5e8    # ... and my bench is EMPTY: that return-KO ends the GAME,
+                         # not a prize — dominates any prize haul (< -W_PRIZE * 6)
 W_DECK_LOW = -5_000      # per card drawn while my deckCount <= 6 (anti-mill)
 W_DAMAGE = 1.0           # per hp of chip on the opp active (tiebreak)
 W_RACE = -10             # per turn of my best turns-to-first-KO (tiebreak)
@@ -181,6 +183,8 @@ def score_leaf(snap: _Snap, obs) -> float:
         score += W_DAMAGE * max(0, snap.op_active_hp - op_active.hp)
         if my_active is not None and _best_damage(op_active, my_active) >= my_active.hp:
             score += W_COUNTER * _CARD.get(my_active.id, (0, 0, 0, [], 1))[4]
+            if len(board) == 1:          # active only, bench EMPTY: game over, not a prize
+                score += W_BENCHLESS_KO
         race = min(_turns_to_first_ko(p, op_active) for p in board)
         if race < UNREACHABLE:
             score += W_RACE * race

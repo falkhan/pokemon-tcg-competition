@@ -283,6 +283,27 @@ def test_score_leaf_ordering():
     assert leaf(result=1) < leaf(result=2) < dev         # loss < draw < any live line
 
 
+def test_score_leaf_benchless_return_ko_dominates_prizes():
+    # The M7.5 empty-bench loss: card 2 hits for 20, so my active at 20hp is
+    # return-KO'd. With the bench EMPTY that ends the GAME — the penalty must
+    # bury even a multi-prize haul, so lines that bench first strictly dominate.
+    snap = ts._Snap(me=0, my_prizes=4, op_prizes=4, op_active_hp=130,
+                    my_deck_count=30)
+
+    def leaf(bench=(), my_hp=20, op_prizes=4):
+        mine = player(active=pokemon(1, hp=my_hp, energies=(F, F)),
+                      bench=list(bench), prizes_remaining=4, deck_count=30)
+        opp = player(active=pokemon(2, hp=130, energies=(W,)),  # 20dmg affordable
+                     prizes_remaining=op_prizes)
+        return ts.score_leaf(snap, flipped(mine, opp))
+
+    exposed_benchless = leaf(op_prizes=2)                # 2 prizes taken, no bench
+    exposed_benched = leaf(bench=[pokemon(5)], op_prizes=2)
+    assert exposed_benchless < exposed_benched           # only the benchless case sinks
+    assert exposed_benchless < -3 * ts.W_PRIZE           # ... below ANY prize haul
+    assert leaf(my_hp=120) > ts.W_COUNTER * 3            # 20 dmg can't KO 120hp: no penalty
+
+
 def test_open_search_fills_opponent_zones_and_samples_mine(monkeypatch):
     captured = {}
 

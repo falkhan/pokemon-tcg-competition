@@ -9,6 +9,9 @@ change. The overall priority ladder, highest first:
     2900  attach that unblocks a KO by a benched Pokémon / retreat into a lethal attacker
     2800  evolve                    (free, doesn't end the turn)
     2750  attach to my fastest closer in the active     (race math, M7.2b)
+    2700  bench a Pokémon while the bench is EMPTY (above the KO tier — benching
+          never ends the turn, so the KO still fires on the re-prompt; skipping
+          it risks the instant benchless loss when the active is KO'd)
     2680  attach to my fastest closer on the bench      (above the KO tier: the
           attach doesn't end the turn — the KO fires on the re-prompt after it;
           ONLY while the active is attack-ready, else the active starves)
@@ -90,6 +93,11 @@ HEALTHY_HP_FRACTION = 0.75
 
 SCORE_PLAY_UNRESOLVED_CARD = 2000  # can't tell what it is: playing is usually fine
 SCORE_PLAY_POKEMON = 2400          # developing the board is always good
+SCORE_PLAY_POKEMON_EMPTY_BENCH = 2700  # EMPTY bench: above the whole KO tier (max
+                                   # 2650 = 2500 + 3x50) — benching never ends the
+                                   # turn, but attacking does, so KO-first meant an
+                                   # active that KO'd every turn NEVER benched and
+                                   # one return-KO ended the game with basics in hand
 SCORE_PLAY_TRAINER_NO_BOARD = 300  # no Pokémon in play yet: trainers can't help
 # Trainers are valued on NEED, not flat — the anti-deck-out fix (docs/M6.md).
 # (Crude: can't yet tell a draw supporter from a gust/Switch — no effect-text
@@ -100,6 +108,13 @@ SCORE_TRAINER_BASE = 2200
 TRAINER_HAND_TAPER = 200           # taper as the hand grows past COMFORTABLE_HAND_SIZE
 COMFORTABLE_HAND_SIZE = 4
 SCORE_TRAINER_FLOOR = 400
+# Hand-discard trainers ("discard your hand and draw 5") burn every Pokémon
+# still in hand — two shipped-game losses traced to Carmine discarding Mega
+# Lucario ex (kaggle eps 85467275/85469339 post-mortems, docs/M7.md
+# 2026-07-12). Identified by NAME: there is no effect-text parsing yet.
+HAND_DISCARD_TRAINER_NAMES = frozenset({"Carmine"})
+SCORE_HAND_DISCARD_BLOCKED = 150    # below near-deckout: effectively never
+HAND_DISCARD_PROTECT_QUALITY = 100  # hand Pokémon hitting this hard are keepers
 
 # --- card-selection contexts (score_card) --------------------------------------
 
@@ -107,7 +122,20 @@ USEFULNESS_POKEMON_BASE = 300  # attackers > energy > other, when fetching/keepi
 ATTACKER_QUALITY_CAP = 300
 USEFULNESS_ENERGY = 250
 USEFULNESS_OTHER = 120
+# Fetch-target priority (kaggle ep 85469339 post-mortem: Poké Pad fetched
+# Hariyama twice — an evolution with no Makuhita anywhere — while the bench
+# sat empty; the benched-out loss followed).
+FETCH_DEAD_EVOLUTION = 60            # evolution with no basis in play or hand
+FETCH_EMPTY_BENCH_BASIC_BONUS = 400  # bench empty: a body beats any attacker fetch
+FETCH_ENABLES_EVOLUTION_BONUS = 300  # basic whose evolution already waits in hand
 PROMOTE_READY_BONUS = 500      # promote a Pokémon that can damage the opponent NOW
+# ATTACH_FROM = "which of MY Pokémon receives an energy" (e.g. Mega Lucario's
+# discard-recharge). Marginal value, NOT promote value: a charged attacker
+# gains nothing from another energy (kaggle ep 85607769: 5 energies on a
+# 1-cost Solrock while Riolu/Hariyama sat empty — the promote ladder's
+# ready bonus made the richest Pokémon keep getting richer).
+ATTACH_RECIPIENT_CHARGED = 50  # best attack already paid: near-worthless
+ATTACH_RECIPIENT_BASE = 300    # scale anchor, mirrors USEFULNESS_POKEMON_BASE
 PROMOTE_TURN_PENALTY = 50      # M7.2b race term: -50 per attach still needed ...
 PROMOTE_TURNS_CAP = 4          # ... capped, so UNREACHABLE costs -200, not -4950
 TARGET_PRIZE_WEIGHT = 100      # damage the highest-prize opponent Pokémon
@@ -117,7 +145,7 @@ SCORE_CARD_NEUTRAL = 50        # unknown card context: neutral
 PROMOTE_CONTEXTS = frozenset({
     SelectContext.SETUP_ACTIVE_POKEMON, SelectContext.SETUP_BENCH_POKEMON,
     SelectContext.TO_ACTIVE, SelectContext.SWITCH, SelectContext.TO_FIELD,
-    SelectContext.TO_BENCH, SelectContext.ATTACH_FROM,
+    SelectContext.TO_BENCH,
 })  # pick MY best Pokémon
 KEEP_CONTEXTS = frozenset({
     SelectContext.TO_HAND, SelectContext.LOOK, SelectContext.NOT_MOVE,

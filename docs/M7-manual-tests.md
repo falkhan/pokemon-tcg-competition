@@ -205,6 +205,10 @@ no hidden AttackPlan to alias.
 uv run python -m rl.ppo --start osv2_bc.pt --decks data/league/population.json --value-ckpt checkpoints/bc_v1_value.pt --iterations 5 --games-per-iter 400
 # then the real run (hours; promotion gate at 0.55 vs the current best):
 uv run python -m rl.ppo --start osv2_bc.pt --decks data/league/population.json --value-ckpt checkpoints/bc_v1_value.pt --iterations 50
+# ATTEMPT 2 (2026-07-12, after attempt 1 regressed — docs/M7.md): rebalanced pool
+# (solver:lucario 0.25, mirror 0.4->0.2), promotion vs the FIXED solver opponent
+# (eval/vs_solver, beaten-best bar), lower entropy, race shaping, ship-deck eval:
+OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 uv run python -m rl.ppo --start osv2_bc.pt --decks data/league/population.json --value-ckpt checkpoints/bc_v1_value.pt --iterations 50 --games-per-iter 400 --workers 14 --eval-deck lucario --entropy-coef 0.0003 --race-shaping 0.05
 # gate the result like any pilot:
 uv run python -m rl.league add --deck decks/gen/deck_<best>.csv --pilot model:checkpoints/ppo_best.pt --id ppo_v2+<name>
 uv run python -m rl.league gate --entry ppo_v2+<name>

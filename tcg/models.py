@@ -42,6 +42,17 @@ class Card:
     prize_count: int
     """Prizes the opponent takes when this card is knocked out: 3 mega-ex / 2 ex / 1."""
 
+    name: str | None = None
+    """Printed card name — the key evolution lines are linked by. None in test
+    stubs that predate the M7.5 fetch/hand-discard guards."""
+
+    basic: bool = True
+    """True for basic Pokémon (playable straight to the bench). Non-Pokémon
+    cards keep the default; nothing consults it for them."""
+
+    evolves_from: str | None = None
+    """Name of the basic this card evolves from, or None for basics/non-Pokémon."""
+
 
 # Fallbacks for ids missing from the tables. The old code used two default
 # tuples — (None, None, 0, [], 1) in combat and (0, 0, 0, [], 1) in the pilot's
