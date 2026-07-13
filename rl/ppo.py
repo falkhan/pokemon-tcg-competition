@@ -148,7 +148,8 @@ def compute_gae(rewards: np.ndarray, values: np.ndarray,
 
 def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
                data: dict[str, np.ndarray], advantages: np.ndarray,
-               returns: np.ndarray, epochs: int = 4, batch_size: int = 256) -> dict:
+               returns: np.ndarray, epochs: int = 4, batch_size: int = 256,
+               entropy_coef: float = ENTROPY_COEF) -> dict:
     """The clipped PPO update over all collected decisions.
 
     Per minibatch (use collate_ppo above; shuffle rows each epoch):
@@ -196,7 +197,7 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
             # every stalled PPO run (M2-M4) — a multiplicative loss whose policy
             # gradient scales with the value error (and flips sign with it)
             # instead of the documented additive PPO objective.
-            loss = policy_loss + VALUE_COEF * value_loss - ENTROPY_COEF * entropy
+            loss = policy_loss + VALUE_COEF * value_loss - entropy_coef * entropy
 
             opt.zero_grad()
             loss.backward()
@@ -250,10 +251,26 @@ def _as_kaggle_agent(ckpt_path: Path, deck, instance: str):
     return agent
 
 
+def _solver_opponent(deck: str, instance: str):
+    """The FIXED eval opponent (M7.5 attempt 2): the live solver ship agent.
+    Attempt 1 promoted on the mirror (vs the drifting champion) and the two
+    metrics decorrelated — vs_best held ~47% while G3 collapsed 0.44->0.145.
+    Promotion now tracks the actual goal: beat the rules agent we ship."""
+    from rl.matchrunner import make_pilot
+    fn, deck_ids = make_pilot(("solver", deck), instance)
+
+    def agent(obs_dict: dict) -> list[int]:
+        if obs_dict.get("select") is None:
+            return deck_ids
+        return [int(i) for i in fn(obs_dict)]
+    return agent
+
+
 def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           lr: float = 1e-4, eval_every: int = 5, start: str = "bc_v1.pt",
           value_ckpt: str | None = None, decks_file: str | None = None,
-          eval_deck: str = "kyogre"):
+          eval_deck: str = "kyogre", entropy_coef: float = ENTROPY_COEF,
+          race_shaping: float = 0.0, shaping: str = "race"):
     from torch.utils.tensorboard import SummaryWriter
     from rl.eval import play_games
     from rl.teacher import load_teacher
@@ -269,13 +286,22 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         print(f"critic warm-start from {value_ckpt}: {loaded}", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
 
+    # M7.5 attempt 2: promotion tracks the FIXED goal opponent (the solver ship
+    # agent), not the drifting mirror champion. Bar = the current best's own
+    # measured rate, so a fresh warm start must genuinely improve to promote.
+    best_wr, _ = play_games(_as_kaggle_agent(best_path, eval_deck, "ppo_bp_base"),
+                            _solver_opponent(eval_deck, "ppo_sv_base"), 200,
+                            names=("best", "solver"))
+    print(f"baseline: current best vs_solver {best_wr:.1%}", flush=True)
+
     for it in range(iterations):
         # 1. fresh self-play data with the CURRENT policy
         for old in PPO_DIR.glob("ppo_shard_*.npz"):
             old.unlink()                                # on-policy: stale data is poison
         work = CKPT_DIR / "ppo_current.pt"
         torch.save(model.state_dict(), work)
-        collect(games_per_iter, str(work), workers, decks_file=decks_file)
+        collect(games_per_iter, str(work), workers, decks_file=decks_file,
+                race_shaping=race_shaping, shaping=shaping)
         data = load_shards()
 
         # 2. advantages per (game, seat) trajectory  [Piotr's compute_gae]
@@ -286,25 +312,27 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             advantages[rows], returns[rows] = adv, ret
 
         # 3. clipped update  [Piotr's ppo_update]
-        stats = ppo_update(model, opt, data, advantages, returns)
+        stats = ppo_update(model, opt, data, advantages, returns,
+                           entropy_coef=entropy_coef)
         for k, v in stats.items():
             writer.add_scalar(f"train/{k}", v, it)
         print(f"iter {it}: {stats}")
 
-        # 4. periodic evaluation + promotion (slot-fair)
+        # 4. periodic evaluation + promotion vs the fixed goal opponent
         if (it + 1) % eval_every == 0:
             challenger = _as_kaggle_agent(work, eval_deck, f"ppo_ch{it}")
-            champion = _as_kaggle_agent(best_path, eval_deck, f"ppo_bp{it}")
-            wr, _ = play_games(challenger, champion, 200, names=("challenger", "best"))
+            wr, _ = play_games(challenger, _solver_opponent(eval_deck, f"ppo_sv{it}"),
+                               200, names=("challenger", "solver"))
             wr_teacher, _ = play_games(challenger, load_teacher(f"ev{it}"), 100,
                                        names=("challenger", "teacher"))
-            writer.add_scalar("eval/vs_best", wr, it)
+            writer.add_scalar("eval/vs_solver", wr, it)
             writer.add_scalar("eval/vs_teacher", wr_teacher, it)
-            print(f"iter {it}: vs_best {wr:.1%}  vs_teacher {wr_teacher:.1%}")
-            if wr >= 0.55:
+            print(f"iter {it}: vs_solver {wr:.1%}  vs_teacher {wr_teacher:.1%}")
+            if wr > best_wr:
+                best_wr = wr
                 torch.save(model.state_dict(), best_path)
                 torch.save(model.state_dict(), CKPT_DIR / f"ppo_it{it:04d}.pt")
-                print(f"iter {it}: PROMOTED")
+                print(f"iter {it}: PROMOTED (best vs_solver {wr:.1%})")
 
 
 if __name__ == "__main__":
@@ -319,7 +347,19 @@ if __name__ == "__main__":
     p.add_argument("--decks", type=str, default=None,
                    help="deck population for multi-deck self-play (v2 checkpoints)")
     p.add_argument("--eval-deck", type=str, default="kyogre")
+    p.add_argument("--entropy-coef", type=float, default=ENTROPY_COEF,
+                   help="entropy bonus; cut it when entropy RISES over a run "
+                        "(the M2 diffusion signature, seen again in attempt 1)")
+    p.add_argument("--race-shaping", type=float, default=0.0,
+                   help="potential-based setup-shaping coef for the collector")
+    p.add_argument("--shaping", choices=["race", "dev"], default="race",
+                   help="shaping potential: race delta (M7.4b) or the M8.3 "
+                        "dev potential (race+ready+evo+bench)")
+    p.add_argument("--eval-every", type=int, default=5,
+                   help="iterations between evals (M8.3 decay probes use 2)")
     args = p.parse_args()
     train(args.iterations, args.games_per_iter, args.workers, lr=args.lr,
           start=args.start, value_ckpt=args.value_ckpt, decks_file=args.decks,
-          eval_deck=args.eval_deck)
+          eval_deck=args.eval_deck, entropy_coef=args.entropy_coef,
+          race_shaping=args.race_shaping, shaping=args.shaping,
+          eval_every=args.eval_every)

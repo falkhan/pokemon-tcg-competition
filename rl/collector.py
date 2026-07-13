@@ -52,14 +52,21 @@ def _deck(name: str) -> list[int]:
 
 def default_pool(checkpoint: str, learn_deck: str = LEARN_DECK):
     """Build (specs, weights): current self (mirror) + rule experts + the generic
-    pilot on the known decks (M7.4b field diversity) + random + recent selves."""
+    pilot on the known decks (M7.4b field diversity) + the LIVE solver ship agent
+    + random + recent selves.
+
+    M7.5 attempt-2 rebalance: attempt 1 spent 50% of games on mirror+random,
+    optimized the mirror, and REGRESSED vs every rules pilot (G3 0.44->0.145 —
+    docs/M7.md 2026-07-12). You become what you train against: the pool now
+    majority-weights the rule-based opponents, with the ship agent heaviest."""
     specs = [("model", str(checkpoint), learn_deck),   # mirror vs current policy
              ("rule", "lucario", "lucario"),           # strong fighting deck
              ("rule", "iono", "iono"),                 # lightning deck
              ("generic", "lucario"),                   # deck-agnostic pilot, strong deck
              ("generic", "iono"),                      # ... and the lightning deck
+             ("solver", "lucario"),                    # the LIVE ship agent — the bar
              ("random", "kyogre")]                     # weak/varied baseline
-    weights = [0.4, 0.15, 0.15, 0.1, 0.1, 0.1]
+    weights = [0.2, 0.15, 0.1, 0.15, 0.1, 0.25, 0.05]
     past = sorted((ROOT / "checkpoints").glob("ppo_it*.pt"))[-3:]   # recent promoted selves
     for p in past:
         specs.append(("model", str(p), learn_deck))
@@ -68,9 +75,26 @@ def default_pool(checkpoint: str, learn_deck: str = LEARN_DECK):
     return specs, (w / w.sum()).tolist()
 
 
+def _dev_potential(obs) -> float:
+    """M8.3 leg-B shaping potential: the M8.1 dev-tier terms as a bounded
+    state potential (the killed tier's leaf math migrates here per plan —
+    docs/M8.md 2026-07-13). phi in ~[0, 1.65]; taxonomy weights: race progress
+    dominates, then attack-readiness, evolution, bench insurance."""
+    from rl.turn_solver import _dev_facts
+    st = obs.current
+    me = st.players[st.yourIndex]
+    op = st.players[1 - st.yourIndex]
+    op_active = op.active[0] if op.active and op.active[0] is not None else None
+    race, ready, bench, evos, _hand = _dev_facts(me, op_active)
+    return ((10.0 - race) / 10.0
+            + 0.3 * min(ready, 1)
+            + 0.2 * min(evos, 2) / 2.0
+            + 0.15 * min(bench, 3) / 3.0)
+
+
 def _play_worker(args: tuple) -> str:
     (worker_id, n_games, checkpoint, learn_deck_name, learn_decks, specs, weights,
-     out_dir, seed, race_shaping) = args
+     out_dir, seed, race_shaping, shaping) = args
 
     import random
     import torch
@@ -173,7 +197,8 @@ def _play_worker(args: tuple) -> str:
                     # delta; F = coef*(phi' - phi) telescopes out of the return,
                     # so it credits board development without changing the
                     # optimal policy.
-                    phi = float(_race_features(obs.current)[7])
+                    phi = (_dev_potential(obs) if shaping == "dev"
+                           else float(_race_features(obs.current)[7]))
                     if prev_phi is not None:
                         reward += race_shaping * (phi - prev_phi)
                     prev_phi = phi
@@ -230,7 +255,8 @@ def _load_population(decks_file) -> list[list[int]]:
 
 def collect(n_games: int, checkpoint: str, n_workers: int = 4,
             learn_deck: str = LEARN_DECK, pool=None, out_dir: Path = OUT_DIR,
-            decks_file=None, race_shaping: float = 0.0) -> list[str]:
+            decks_file=None, race_shaping: float = 0.0,
+            shaping: str = "race") -> list[str]:
     """Collect n_games across n_workers, learning policy vs an opponent pool.
 
     decks_file: population.json — the learner samples a deck per game from it
@@ -242,7 +268,7 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
     learn_decks = _load_population(decks_file) if decks_file else None
     per = [n_games // n_workers + (1 if i < n_games % n_workers else 0) for i in range(n_workers)]
     jobs = [(i, per[i], checkpoint, learn_deck, learn_decks, specs, weights,
-             str(out_dir), 1000 + i, race_shaping)
+             str(out_dir), 1000 + i, race_shaping, shaping)
             for i in range(n_workers) if per[i] > 0]
 
     ctx = mp.get_context("spawn")
