@@ -71,7 +71,7 @@ def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:
 
     rl_pkg = SUBMISSION_RULES / "rl"
     rl_pkg.mkdir(exist_ok=True)
-    for name in ("__init__.py", "combat.py", "generic_pilot.py"):
+    for name in ("__init__.py", "combat.py", "generic_pilot.py", "turn_solver.py"):
         shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
 
     shutil.copy(str(deck_source(deck)), str(SUBMISSION_RULES / "deck.csv"))
@@ -79,24 +79,40 @@ def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:
 
 
 def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> None:
+    """Neural bundle. Arch is detected from the checkpoint: `embedding.weight`
+    means OptionScorerV2 (M7.3+), whose bundle also ships the ACTUAL encoder
+    modules (rl/encoders.py + rl/combat.py) and the feature matrix they load —
+    submission/main.py replays v2 only, so v1 exports are legacy artifacts."""
     import torch
 
     from tcg.encoders import FEAT
-    from tcg.network import OptionScorer, save_npz
+    from tcg.network import OptionScorer, OptionScorerV2, save_npz
 
-    model = OptionScorer()
     ckpt_path = ROOT / "checkpoints" / checkpoint
     if ckpt_path.exists():
-        model.load_state_dict(torch.load(ckpt_path, map_location="cpu"))
-        print(f"exporting checkpoint {checkpoint} paired with deck '{deck}'")
+        state_dict = torch.load(ckpt_path, map_location="cpu")
+        model = (OptionScorerV2() if "embedding.weight" in state_dict
+                 else OptionScorer())
+        model.load_state_dict(state_dict)
+        print(f"exporting checkpoint {checkpoint} ({type(model).__name__}) "
+              f"paired with deck '{deck}'")
     else:
         torch.manual_seed(0)
+        model = OptionScorer()
         print(f"checkpoint {checkpoint} not found -- exporting seeded random weights")
 
     save_npz(model, str(SUBMISSION / "policy_weights.npz"))
     np.save(str(SUBMISSION / "card_features.npy"), FEAT)
     shutil.copy(str(deck_source(deck)), str(SUBMISSION / "deck.csv"))
     copy_engine(SUBMISSION)
+
+    # v2: the bundled rl/ package main.py imports (encoders fall back to the
+    # .npy matrix when the training parquet is absent — no polars on Kaggle).
+    rl_pkg = SUBMISSION / "rl"
+    rl_pkg.mkdir(exist_ok=True)
+    for name in ("__init__.py", "combat.py", "encoders.py"):
+        shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
+    np.save(str(rl_pkg / "card_features.npy"), FEAT)
 
 
 # ---------------------------------------------------------------------------
@@ -112,31 +128,49 @@ def load_submission_module(main_path: str = SUBMISSION_MAIN):
     return sub
 
 
-def parity_check() -> float:
+def parity_check(main_path: str = SUBMISSION_MAIN) -> float:
     """Shipped npz through the submission's numpy forward pass vs torch. Returns max diff.
 
-    The torch reference is ``tcg.network.OptionScorer`` (proven equivalent to the
-    old ``rl.policy`` class by tests/test_network.py).
+    Arch-aware (M7.5): `embedding.weight` in the npz means OptionScorerV2 and
+    the submission's ``score_options_v2``; otherwise the legacy v1 pair. The
+    torch reference is ``tcg.network`` (proven equivalent to the old
+    ``rl.policy`` classes by tests/test_network.py).
     """
     import torch
 
-    from tcg.network import OptionScorer
+    from tcg import encoders
+    from tcg.network import OptionScorer, OptionScorerV2
 
-    sub = load_submission_module()
-
-    # Reference model rebuilt from the *shipped* weights, not a fresh seed.
-    model = OptionScorer()
-    model.load_state_dict({name: torch.from_numpy(array)
-                           for name, array in np.load("submission/policy_weights.npz").items()})
-
+    sub = load_submission_module(main_path)
+    weights = np.load(Path(main_path).parent / "policy_weights.npz")
+    torch_weights = {name: torch.from_numpy(array) for name, array in weights.items()}
     rng = np.random.default_rng(0)
-    state_ctx = rng.random(sub.STATE_DIM + sub.N_CONTEXTS, dtype=np.float32)
-    options = rng.random((9, sub.OPTION_DIM), dtype=np.float32)
 
-    ours = sub.score_options(state_ctx, options)
-    with torch.no_grad():
-        ref, _ = model(torch.from_numpy(state_ctx).unsqueeze(0),
-                       torch.from_numpy(options).unsqueeze(0))
+    if "embedding.weight" in weights:
+        model = OptionScorerV2()
+        model.load_state_dict(torch_weights)
+        state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS,
+                               dtype=np.float32)
+        state_ids = rng.integers(0, encoders.N_CARD_IDS,
+                                 size=encoders.N_STATE_IDS)
+        options = rng.random((9, encoders.OPTION_V2_DIM), dtype=np.float32)
+        option_ids = rng.integers(0, encoders.N_CARD_IDS,
+                                  size=(9, encoders.N_OPTION_IDS))
+        ours = sub.score_options_v2(state_ctx, state_ids, options, option_ids)
+        with torch.no_grad():
+            ref, _ = model(torch.from_numpy(state_ctx).unsqueeze(0),
+                           torch.from_numpy(state_ids).long().unsqueeze(0),
+                           torch.from_numpy(options).unsqueeze(0),
+                           torch.from_numpy(option_ids).long().unsqueeze(0))
+    else:
+        model = OptionScorer()
+        model.load_state_dict(torch_weights)
+        state_ctx = rng.random(sub.STATE_DIM + sub.N_CONTEXTS, dtype=np.float32)
+        options = rng.random((9, sub.OPTION_DIM), dtype=np.float32)
+        ours = sub.score_options(state_ctx, options)
+        with torch.no_grad():
+            ref, _ = model(torch.from_numpy(state_ctx).unsqueeze(0),
+                           torch.from_numpy(options).unsqueeze(0))
     ref = ref.squeeze(0).numpy()
 
     assert np.allclose(ours, ref, rtol=1e-4, atol=1e-4), \
@@ -247,10 +281,19 @@ def bundle_isolation_check(base: str = "submission_rules") -> int:
 
 
 def main_neural() -> None:
+    v2 = "embedding.weight" in np.load(SUBMISSION / "policy_weights.npz")
     diff = parity_check()
-    print(f"parity OK (max diff {diff:.2e})")
-    n_compared = encoder_parity_check()
-    print(f"encoder parity OK ({n_compared} decisions compared)")
+    print(f"parity OK ({'v2' if v2 else 'v1'}, max diff {diff:.2e})")
+    if v2:
+        # v2 ships the ACTUAL rl/encoders.py — no hand-copy to drift. The
+        # isolation game proves the bundle self-contained AND exercises the
+        # bundled encoders end-to-end (the encoder_parity_check equivalent).
+        decisions = bundle_isolation_check("submission")
+        print(f"bundle isolation OK (self-contained; {decisions} decisions, "
+              f"no polars/torch)")
+    else:
+        n_compared = encoder_parity_check()
+        print(f"encoder parity OK ({n_compared} decisions compared)")
     deck_size = deck_check()
     print(f"deck legal ({deck_size} cards)")
     game = gate_game()

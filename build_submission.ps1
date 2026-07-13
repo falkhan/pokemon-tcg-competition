@@ -1,14 +1,16 @@
 # build_submission.ps1 — one-command submission pipeline.
-# All logic lives in Python (rl/export.py, rl/gate.py); this only orchestrates.
+# All logic lives in Python (tcg/shipping.py); this only orchestrates.
 #
-# Build neural:      .\build_submission.ps1
+# Build neural:      .\build_submission.ps1 [-Checkpoint ppo_best.pt]
 # Build rule agent:  .\build_submission.ps1 -Agent rules
 # Build + submit:    .\build_submission.ps1 -Agent rules -Message "M6.0 generic pilot + Lucario deck"
 # (submitting is opt-in because Kaggle limits submissions per day)
 param(
     [string]$Message,
     [ValidateSet("neural", "rules")]
-    [string]$Agent = "neural"
+    [string]$Agent = "neural",
+    [string]$Checkpoint,
+    [string]$Deck
 )
 $ErrorActionPreference = "Stop"
 $Competition = "pokemon-tcg-ai-battle"
@@ -21,20 +23,30 @@ if ($Agent -eq "rules") {
     $subDir = "submission_rules"
     $tarFiles = @("main.py", "deck.csv", "cg", "rl")
     $required = @("main.py", "deck.csv", "cg/api.py", "cg/libcg.so",
-                  "rl/__init__.py", "rl/combat.py", "rl/generic_pilot.py")
+                  "rl/__init__.py", "rl/combat.py", "rl/generic_pilot.py",
+                  "rl/turn_solver.py")
 } else {
+    # v2 neural bundle (M7.5): ships the actual rl/ encoder modules + the
+    # feature matrix they fall back to (no polars/torch on Kaggle).
     $subDir = "submission"
-    $tarFiles = @("main.py", "deck.csv", "policy_weights.npz", "card_features.npy", "cg")
+    $tarFiles = @("main.py", "deck.csv", "policy_weights.npz", "card_features.npy",
+                  "cg", "rl")
     $required = @("main.py", "deck.csv", "policy_weights.npz", "card_features.npy",
-                  "cg/api.py", "cg/utils.py", "cg/sim.py", "cg/libcg.so")
+                  "cg/api.py", "cg/utils.py", "cg/sim.py", "cg/libcg.so",
+                  "rl/__init__.py", "rl/combat.py", "rl/encoders.py",
+                  "rl/card_features.npy")
 }
 
-Write-Host "[1/3] Export artifacts (rl.export --agent $Agent)" -ForegroundColor Cyan
-& $py -m rl.export --agent $Agent
+$exportArgs = @("--agent", $Agent)
+if ($Checkpoint) { $exportArgs += @("--checkpoint", $Checkpoint) }
+if ($Deck) { $exportArgs += @("--deck", $Deck) }
+
+Write-Host "[1/3] Export artifacts (tcg.shipping export $exportArgs)" -ForegroundColor Cyan
+& $py -m tcg.shipping export @exportArgs
 if ($LASTEXITCODE -ne 0) { throw "export failed" }
 
-Write-Host "[2/3] Gates (rl.gate --agent $Agent)" -ForegroundColor Cyan
-& $py -m rl.gate --agent $Agent
+Write-Host "[2/3] Gates (tcg.shipping gate --agent $Agent)" -ForegroundColor Cyan
+& $py -m tcg.shipping gate --agent $Agent
 if ($LASTEXITCODE -ne 0) { throw "gates failed" }
 
 Write-Host "[3/3] Package" -ForegroundColor Cyan

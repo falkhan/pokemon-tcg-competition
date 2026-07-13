@@ -16,16 +16,25 @@ Stage B enrichment (docs/M1-plan.md §B1 + the aliasing diagnosis from Stage A):
 from pathlib import Path
 
 import numpy as np
-import polars as pl
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # Card ids are 1..1267; row 0 of the matrix is an all-zeros "no card" padding row.
-_cards = pl.read_parquet(DATA_DIR / "cards_features.parquet")
-_numeric = _cards.drop(["card_id", "name"]).cast(pl.Float32)
-FEAT_DIM = _numeric.width
-FEAT = np.zeros((_cards["card_id"].max() + 1, FEAT_DIM), dtype=np.float32)
-FEAT[_cards["card_id"].to_numpy()] = _numeric.to_numpy()
+_PARQUET = DATA_DIR / "cards_features.parquet"
+if _PARQUET.exists():
+    import polars as pl
+
+    _cards = pl.read_parquet(_PARQUET)
+    _numeric = _cards.drop(["card_id", "name"]).cast(pl.Float32)
+    FEAT_DIM = _numeric.width
+    FEAT = np.zeros((_cards["card_id"].max() + 1, FEAT_DIM), dtype=np.float32)
+    FEAT[_cards["card_id"].to_numpy()] = _numeric.to_numpy()
+else:
+    # Submission bundle (M7.5): Kaggle has neither data/ nor polars — the v2
+    # neural bundle ships this ACTUAL module (no hand-copy) plus the exported
+    # feature matrix next to it (written by tcg.shipping export).
+    FEAT = np.load(Path(__file__).with_name("card_features.npy"))
+    FEAT_DIM = FEAT.shape[1]
 
 N_BENCH = 5          # max bench slots we encode
 N_CONTEXTS = 64      # SelectContext one-hot size (49 defined today; head-room for new ones)
