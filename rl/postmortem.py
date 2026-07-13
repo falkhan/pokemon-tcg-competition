@@ -153,6 +153,19 @@ def describe_option(opt: dict, cur: dict, us: int) -> str:
     return t + target
 
 
+def _action_for(steps: list, i: int, us: int):
+    """The action answering step i's select: recorded on the NEXT step.
+
+    Replay convention (env.toJSON() and the Kaggle cache alike, verified
+    2026-07-12 against the live pilot's scores on mirror_g000): steps[i] holds
+    the observation GIVEN to the agent, and the agent's response is recorded
+    at steps[i+1].action — pairing select and action at the same index reads
+    every decision one prompt late (the M8.0 instrument bug)."""
+    if i + 1 < len(steps):
+        return steps[i + 1][us].get("action")
+    return None
+
+
 def iter_decisions(steps: list, us: int):
     """(step_idx, turn, context_name, [option strs], chosen_action, cur) per prompt."""
     for i, step in enumerate(steps):
@@ -166,7 +179,7 @@ def iter_decisions(steps: list, us: int):
         except ValueError:
             ctx = f"context{sel.get('context')}"
         opts = [describe_option(o, cur, us) for o in (sel.get("option") or [])]
-        yield i, cur.get("turn"), ctx, opts, st.get("action"), cur
+        yield i, cur.get("turn"), ctx, opts, _action_for(steps, i, us), cur
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +272,7 @@ def _iter_selects(steps: list, us: int):
         cur = _cur(st)
         if not sel or not cur:
             continue
-        action = st.get("action")
+        action = _action_for(steps, i, us)
         chosen = set(action) if isinstance(action, list) else {action}
         yield i, cur.get("turn"), sel.get("context"), sel, chosen, cur
 
@@ -408,6 +421,66 @@ def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# batch aggregation (M8.0): a directory of env.toJSON() files -> taxonomy table
+# ---------------------------------------------------------------------------
+def _seat_for(path: Path, raw: dict, seat: str) -> int | None:
+    if seat in ("0", "1"):
+        return int(seat)
+    if seat == "a":
+        m = re.search(r"_a([01])\.json$", path.name)
+        if m:
+            return int(m.group(1))
+    parsed = parse_episode(raw, episode_id=0)      # fall back to deck-hash detect
+    return detect_our_seat(parsed)
+
+
+def batch(dir_path: str, seat: str = "a") -> None:
+    """Aggregate classify_end + audit_flags over every *.json in dir_path
+    (rl/eval.py play_games `json_prefix` output; cached Kaggle episodes work
+    too). Prints ending counts and a flag-kind frequency table with one
+    example each — the M8.0 setup-mistake taxonomy."""
+    files = sorted(Path(dir_path).glob("*.json"))
+    end_counts, kind_counts = Counter(), Counter()
+    example: dict[str, str] = {}
+    n_games = 0
+    for f in files:
+        raw = json.loads(f.read_text())
+        steps = raw.get("steps") or []
+        if not steps:
+            continue
+        us = _seat_for(f, raw, seat)
+        if us is None:
+            print(f"  (skipped {f.name}: seat undetectable)")
+            continue
+        last_cur = None
+        for step in steps:
+            cur = _cur(step[us])
+            if cur:
+                last_cur = cur
+        if last_cur is None:
+            continue
+        n_games += 1
+        rewards = raw.get("rewards") or [None, None]
+        verdict = classify_end(last_cur, us, rewards[us])
+        end_counts[verdict.split(" — ")[0].split(" (")[0]] += 1
+        for flag in audit_flags(steps, us):
+            kind = flag.split("]", 1)[0].lstrip("[")
+            kind_counts[kind] += 1
+            example.setdefault(kind, f"{f.name}: {flag}")
+
+    print(f"=== batch post-mortem: {n_games} games from {dir_path} ===")
+    print("\n-- endings --")
+    for name, count in end_counts.most_common():
+        print(f"  {count:>4}  {name}")
+    print("\n-- agent-error flags (kind: count across games) --")
+    for name, count in kind_counts.most_common():
+        print(f"  {count:>4}  {name}")
+        print(f"        e.g. {example[name]}")
+    if not kind_counts:
+        print("  (none)")
+
+
+# ---------------------------------------------------------------------------
 # report
 # ---------------------------------------------------------------------------
 def report(episode_id: int, seat: int | None = None, decisions: bool = False,
@@ -492,10 +565,21 @@ def report(episode_id: int, seat: int | None = None, decisions: bool = False,
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("episode", type=int)
+    p.add_argument("episode", type=int, nargs="?")
     p.add_argument("--seat", type=int, default=None, choices=(0, 1))
     p.add_argument("--decisions", action="store_true",
                    help="print every decoded option menu + choice")
     p.add_argument("--no-html", dest="html", action="store_false")
+    p.add_argument("--batch", metavar="DIR", default=None,
+                   help="aggregate audit_flags/classify_end over a directory "
+                        "of env.toJSON() replays (M8.0 taxonomy)")
+    p.add_argument("--batch-seat", default="a", choices=("a", "0", "1", "auto"),
+                   help="--batch seat: 'a' = the _a<slot> filename suffix "
+                        "(default), fixed 0/1, or deck-hash 'auto'")
     a = p.parse_args()
-    report(a.episode, seat=a.seat, decisions=a.decisions, html=a.html)
+    if a.batch:
+        batch(a.batch, a.batch_seat)
+    elif a.episode is None:
+        p.error("an episode id is required unless --batch is given")
+    else:
+        report(a.episode, seat=a.seat, decisions=a.decisions, html=a.html)
