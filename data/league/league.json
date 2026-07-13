@@ -965,12 +965,39 @@
       "games": 480,
       "frozen": false,
       "origin": "template"
+    },
+    "osv2_bc+lucario": {
+      "entry_id": "osv2_bc+lucario",
+      "pilot": [
+        "model",
+        "checkpoints/osv2_bc.pt",
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+      ],
+      "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "mu": 25.0,
+      "sigma": 8.333333333333334,
+      "games": 0,
+      "frozen": false,
+      "origin": "bc_v2"
+    },
+    "solver+lucario": {
+      "entry_id": "solver+lucario",
+      "pilot": [
+        "solver",
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+      ],
+      "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "mu": 25.0,
+      "sigma": 8.333333333333334,
+      "games": 0,
+      "frozen": false,
+      "origin": "ship"
     }
   },
   "meta": {
     "field_version": "meta_v1",
     "champion_deck": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
     "shipped_entry": null,
-    "updated_at": "2026-07-11T19:46:24Z"
+    "updated_at": "2026-07-11T22:12:12Z"
   }
 }
