@@ -341,6 +341,101 @@ def test_candidate_actions_keeps_attacks_and_end():
     assert len(cands) <= 1 + ts.TOP_K + 1
 
 
+# --- M8.1: the development tier ------------------------------------------------
+
+def undeveloped_board(hand=(hand_card(1),)):
+    """Active card 1 with NO energy (can't attack, slow race) + hand material."""
+    return player(active=pokemon(1, hp=120, energies=()), hand=list(hand),
+                  prizes_remaining=4)
+
+
+def test_dev_trigger_fires_on_underdeveloped_board():
+    obs = main_menu(undeveloped_board(), op_board(),
+                    [option(OptionType.ATTACH), END])
+    assert not ts.should_solve(obs)          # no lethal in sight
+    assert ts.should_solve_dev(obs)          # but development is searchable
+
+
+def test_dev_trigger_quiet_when_developed_or_without_material():
+    # (a) a loaded, fast board: greedy is fine
+    developed = main_menu(me_board(energies=(F, F)), op_board(),
+                          [option(OptionType.ATTACH), END])
+    assert not ts.should_solve_dev(developed)
+    # (b) underdeveloped but nothing to sequence (energy-only hand)
+    bare = main_menu(undeveloped_board(hand=(hand_card(6),)), op_board(),
+                     [option(OptionType.ATTACH), END])
+    assert not ts.should_solve_dev(bare)
+
+
+def test_dev_leaf_scores_development_deltas_below_threat():
+    root_me = undeveloped_board()
+    root_obs = observation(root_me, op_board())
+    snap = ts._root_snapshot(root_obs)
+
+    def leaf(me):
+        return ts.score_leaf(snap, flipped(me, op_board()), dev=True)
+
+    stand_pat = leaf(undeveloped_board())
+    loaded = leaf(player(active=pokemon(1, hp=120, energies=(F, F)),
+                         prizes_remaining=4))
+    benched = leaf(player(active=pokemon(1, hp=120, energies=()),
+                          bench=[pokemon(1)], prizes_remaining=4))
+    assert loaded > benched > stand_pat      # energy routing >> bench insurance
+    # every dev gain stays strictly below one lethal-next-turn threat tier
+    assert loaded - stand_pat < ts.W_THREAT
+    # dev=False must be unchanged by the block (back-compat with lethal tier)
+    assert ts.score_leaf(snap, flipped(undeveloped_board(), op_board())) \
+        == pytest.approx(stand_pat - ts._dev_bonus(
+            snap, undeveloped_board(), op_board().active[0]))
+
+
+def _dev_tree():
+    """Root: [ATTACH energy to active, END]. Attaching loads the racer
+    (development gain); END changes nothing."""
+    root_me = undeveloped_board()
+    root = main_menu(root_me, op_board(), [option(OptionType.ATTACH), END])
+    loaded = flipped(player(active=pokemon(1, hp=120, energies=(F, F)),
+                            prizes_remaining=4), op_board())
+    unchanged = flipped(root_me, op_board())
+    tree = {(0, (0,)): search_state(loaded, 10),
+            (0, (1,)): search_state(unchanged, 11)}
+    return root, lambda sid, action: tree[(sid, tuple(action))]
+
+
+def test_solve_turn_dev_overrides_on_real_development(monkeypatch):
+    root, step = _dev_tree()
+    patch_engine(monkeypatch, root, step)
+    assert ts.solve_turn(root, DECK, dev=True) == [0]
+    # the same tree does NOT clear the lethal tier (no prize taken)
+    assert ts.solve_turn(root, DECK) is None
+
+
+def test_solve_turn_dev_declines_noise(monkeypatch):
+    # both children leave development unchanged -> no line clears the margin
+    root_me = undeveloped_board()
+    root = main_menu(root_me, op_board(), [option(OptionType.ATTACH), END])
+    unchanged = flipped(root_me, op_board())
+    tree = {(0, (0,)): search_state(unchanged, 10),
+            (0, (1,)): search_state(unchanged, 11)}
+    patch_engine(monkeypatch, root, lambda sid, a: tree[(sid, tuple(a))])
+    assert ts.solve_turn(root, DECK, dev=True) is None
+
+
+def test_dev_pilot_wiring(monkeypatch):
+    """dev=True runs the dev tier when lethal doesn't fire; dev=False ignores it."""
+    calls = []
+    monkeypatch.setattr(ts, "should_solve", lambda obs: False)
+    monkeypatch.setattr(ts, "should_solve_dev", lambda obs: True)
+    monkeypatch.setattr(ts, "solve_turn",
+                        lambda obs, deck, deadline_s=None, dev=False:
+                        (calls.append(dev) or [7]) if dev else [1])
+    obs = main_menu(me_board(), op_board(), [EVOLVE, PLAY_HAND0, ATTACK_102, END])
+    dev_pilot = ts.make_solver_pilot(DECK, dev=True)
+    assert dev_pilot(obs) == [7] and calls == [True]
+    plain_pilot = ts.make_solver_pilot(DECK)
+    assert plain_pilot(obs) != [7]           # falls through to greedy
+
+
 def test_source_stays_bundle_pure():
     from pathlib import Path
     src = Path(ts.__file__).read_text()

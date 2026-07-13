@@ -31,7 +31,8 @@ from cg.api import (CardType, OptionType, all_card_data, search_begin,
                     search_end, search_step, to_observation_class)
 from rl.combat import (_CARD, UNREACHABLE, _best_damage, _hits_to_ko,
                        _turns_to_first_ko, _turns_to_ready)
-from rl.generic_pilot import make_generic_pilot, score_option
+from rl.generic_pilot import (_IS_BASIC, _IS_POKEMON, make_generic_pilot,
+                              score_option)
 
 # --- Search budget (risk 7: multi-select blowup; G6: no external timeout) ---
 MAX_DEPTH = 8            # decisions per line, incl. submenu picks
@@ -42,6 +43,28 @@ SOLVE_DEADLINE_S = 0.4   # perf_counter safety valve per solve call
 
 # --- Trigger ---
 LETHAL_MARGIN = 70       # T2: a boost trainer might close damage gaps up to this
+
+# --- Development tier (M8.1): search SETUP lines, not just lethal ones -------
+# The M8.0 taxonomy (docs/M8.md 2026-07-12): energy routed off the best racer
+# is the dominant setup mistake (55/100 games), then unused trainers. The dev
+# tier fires on UNDERDEVELOPED boards (T5) and overrides greedy only when a
+# line beats the stand-pat leaf by a margin — weights sized strictly below
+# W_THREAT so a real lethal-next-turn setup always outranks generic development.
+DEV_DEADLINE_S = 0.2     # T5 fires far more often than T1-T4: half the budget
+DEV_TTFK_SLOW = 3        # T5: my fastest KO is >= this many turns away = slow
+RACE_CAP_TURNS = 10.0    # ttfk capped here for dev math (encoders' RACE cap)
+W_DEV_RACE = 900         # per turn shaved off my board's turns-to-first-KO...
+DEV_RACE_CAP = 2         # ... capped: 2 turns = 1800 < W_THREAT's minimum 2000
+W_DEV_READY = 500        # a NEW attack-ready damaging attacker appeared
+W_DEV_EVO = 400          # per new evolution in play (cap 2)
+W_DEV_BENCH = 300        # per new bench member (cap 2)
+W_DEV_HAND = 40          # per net card drawn (cap 5; W_DECK_LOW still bites)
+DEV_OVERRIDE_MARGIN = 900  # dev line must beat stand-pat by this to override.
+                           # Tuning pass 1 (docs/M8.md 2026-07-13): at 500,
+                           # bench/evo-only deltas (300-440) overrode greedy and
+                           # cost tempo vs the expert (0.314 < 0.362) — at 900
+                           # only race-improving lines (the taxonomy's actual #1
+                           # mistake) or real multi-delta combos clear the bar.
 
 # --- Leaf scoring: prizes taken NOW dominate everything but the game result ---
 W_WIN, W_LOSS, W_DRAW = 1e9, -1e9, -5e8
@@ -68,7 +91,12 @@ _IS_TRAINER = {c.cardId for c in all_card_data()
                if c.cardType not in (CardType.POKEMON, CardType.BASIC_ENERGY,
                                      CardType.SPECIAL_ENERGY)}
 
-_Snap = namedtuple("_Snap", "me my_prizes op_prizes op_active_hp my_deck_count")
+# root_* fields (M8.1): development facts the dev leaf scores DELTAS against —
+# without them "do nothing" ties "develop". Defaults keep pre-M8.1 call sites
+# (and pinned tests) valid; they only matter when score_leaf(dev=True).
+_Snap = namedtuple("_Snap", "me my_prizes op_prizes op_active_hp my_deck_count "
+                            "root_race root_ready root_bench root_evos root_hand",
+                   defaults=(RACE_CAP_TURNS, 0, 0, 0, 0))
 
 
 def _my_board(player):
@@ -108,6 +136,52 @@ def should_solve(obs) -> bool:
     return False
 
 
+def _dev_facts(me, op_active) -> tuple[float, int, int, int, int]:
+    """(race, ready, bench, evos, hand) development facts for one side — the
+    quantities the dev leaf scores as deltas vs the root. race = my board's
+    best turns-to-first-KO (capped); ready = damaging attackers that can pay
+    their best attack NOW. Pure rl.combat dict math, O(board)."""
+    board = _my_board(me)
+    if op_active is not None and op_active.id in _CARD and board:
+        race = min(float(min(_turns_to_first_ko(p, op_active) for p in board)),
+                   RACE_CAP_TURNS)
+        ready = sum(1 for p in board if _turns_to_ready(p, op_active) == 0
+                    and _best_damage(p, op_active) > 0)
+    else:
+        race, ready = RACE_CAP_TURNS, 0
+    bench = sum(1 for p in me.bench if p is not None)
+    evos = sum(1 for p in board if p.id not in _IS_BASIC)
+    hand = len([c for c in me.hand if c is not None])
+    return race, ready, bench, evos, hand
+
+
+def should_solve_dev(obs) -> bool:
+    """T5 (M8.1): the DEVELOPMENT trigger — underdeveloped board + sequencing
+    material in hand. The pilot checks the lethal triggers FIRST; this fires
+    on the slow positions they ignore: nobody attack-ready, or my fastest KO
+    still >= DEV_TTFK_SLOW turns away, while the hand holds >= 2 trainers or
+    a Pokémon (the M8.0 sequencing cases: energy routing, bench building,
+    trainer chains)."""
+    if obs.select is None or getattr(obs, "search_begin_input", None) is None:
+        return False
+    if len(obs.select.option) < 2:
+        return False
+    st = obs.current
+    me, op = st.players[st.yourIndex], st.players[1 - st.yourIndex]
+    op_active = op.active[0] if op.active and op.active[0] is not None else None
+    if op_active is None or op_active.id not in _CARD:
+        return False
+    if not _my_board(me):
+        return False
+    hand = [c for c in me.hand if c is not None]
+    n_trainers = sum(1 for c in hand if c.id in _IS_TRAINER)
+    n_pokemon = sum(1 for c in hand if c.id in _IS_POKEMON)
+    if n_trainers < 2 and n_pokemon < 1:
+        return False                       # nothing to sequence: greedy is fine
+    race, ready, _, _, _ = _dev_facts(me, op_active)
+    return ready == 0 or race >= DEV_TTFK_SLOW
+
+
 def _open_search(obs, deck):
     """Open a concrete search game for MY turn (rl/mcts.py determinize recipe,
     duplicated locally: rl.mcts imports numpy/torch and would break bundle
@@ -134,8 +208,10 @@ def _root_snapshot(obs) -> _Snap:
     st = obs.current
     me, op = st.players[st.yourIndex], st.players[1 - st.yourIndex]
     op_active = op.active[0] if op.active and op.active[0] is not None else None
+    race, ready, bench, evos, hand = _dev_facts(me, op_active)
     return _Snap(st.yourIndex, len(me.prize), len(op.prize),
-                 op_active.hp if op_active is not None else 0, me.deckCount)
+                 op_active.hp if op_active is not None else 0, me.deckCount,
+                 race, ready, bench, evos, hand)
 
 
 def _candidate_actions(obs) -> list[list[int]]:
@@ -162,9 +238,26 @@ def _candidate_actions(obs) -> list[list[int]]:
     return [list(c) for c in combos[:MAX_MULTI_COMBOS]]
 
 
-def score_leaf(snap: _Snap, obs) -> float:
+def _dev_bonus(snap: _Snap, me_p, op_active) -> float:
+    """The M8.1 development block: deltas vs the root snapshot, all capped,
+    everything strictly below W_THREAT's minimum (2000) so a real
+    lethal-next-turn setup always outranks generic development. Taxonomy
+    weighting (docs/M8.md): race/energy-routing >> ready attacker > evolution
+    > bench > card advantage."""
+    race, ready, bench, evos, hand = _dev_facts(me_p, op_active)
+    bonus = W_DEV_RACE * max(0.0, min(float(DEV_RACE_CAP), snap.root_race - race))
+    bonus += W_DEV_READY * max(0, min(1, ready - snap.root_ready))
+    bonus += W_DEV_EVO * max(0, min(2, evos - snap.root_evos))
+    bonus += W_DEV_BENCH * max(0, min(2, bench - snap.root_bench))
+    bonus += W_DEV_HAND * max(0, min(5, hand - snap.root_hand))
+    return bonus
+
+
+def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
     """End-of-line value from MY perspective: game result, then prizes taken
-    this turn, then lethal-next-turn setup / exposure / chip tiebreaks."""
+    this turn, then lethal-next-turn setup / exposure / chip tiebreaks.
+    dev=True (M8.1) adds the development block — deltas vs the root snapshot,
+    so stand-pat scores 0 development and only real setup gains rank."""
     cur = obs.current
     if cur.result >= 0:
         if cur.result == 2:
@@ -190,10 +283,13 @@ def score_leaf(snap: _Snap, obs) -> float:
             score += W_RACE * race
     if me_p.deckCount <= DECK_LOW_AT:
         score += W_DECK_LOW * max(0, snap.my_deck_count - me_p.deckCount)
+    if dev:
+        score += _dev_bonus(snap, me_p, op_active)
     return score
 
 
-def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict):
+def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
+         dev: bool = False):
     """Depth-first search over MY remaining turn. Returns (score, line) where
     line is the action list-of-lists from `state` to the best leaf. Leaves:
     game over, turn passed to the opponent, or depth cap. The stand-pat floor
@@ -202,14 +298,14 @@ def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict):
     obs = state.observation
     if obs.current.result >= 0 or obs.current.yourIndex != snap.me \
             or depth >= MAX_DEPTH:
-        return score_leaf(snap, obs), []
-    best_score, best_line = score_leaf(snap, obs), []   # stand-pat floor
+        return score_leaf(snap, obs, dev), []
+    best_score, best_line = score_leaf(snap, obs, dev), []   # stand-pat floor
     for action in _candidate_actions(obs):
         if budget["nodes"] >= MAX_NODES or perf_counter() >= deadline:
             break
         budget["nodes"] += 1
         child = search_step(state.searchId, action)
-        score, line = _dfs(child, snap, depth + 1, deadline, budget)
+        score, line = _dfs(child, snap, depth + 1, deadline, budget, dev)
         if score > best_score:
             best_score, best_line = score, [action] + line
         if best_score >= W_WIN:                          # win short-circuit
@@ -217,28 +313,43 @@ def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict):
     return best_score, best_line
 
 
-def solve_turn(obs, deck: list[int],
-               deadline_s: float = SOLVE_DEADLINE_S) -> list[int] | None:
+def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
+               dev: bool = False) -> list[int] | None:
     """Search my remaining turn; return the FIRST action of the best line iff
-    it nets at least one prize (or wins), else None (defer to greedy). The
+    it clears the tier's override bar, else None (defer to greedy). The
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
-    draw reveals, so no plan is cached."""
+    draw reveals, so no plan is cached.
+
+    Tiers (M8.1): lethal (default) overrides only for >=1 prize or a win
+    (MIN_OVERRIDE_SCORE); dev overrides only when the best line beats the
+    stand-pat leaf by DEV_OVERRIDE_MARGIN — a real development gain, not
+    line-vs-line noise — under the shorter DEV_DEADLINE_S."""
+    if deadline_s is None:
+        deadline_s = DEV_DEADLINE_S if dev else SOLVE_DEADLINE_S
     snap = _root_snapshot(obs)
     deadline = perf_counter() + deadline_s
     budget = {"nodes": 0}
     root = _open_search(obs, deck)
     try:
-        best_score, best_line = _dfs(root, snap, 0, deadline, budget)
+        best_score, best_line = _dfs(root, snap, 0, deadline, budget, dev)
     finally:
         search_end()
-    if best_line and best_score >= MIN_OVERRIDE_SCORE:
+    if not best_line:
+        return None
+    if dev:
+        if best_score >= score_leaf(snap, obs, dev=True) + DEV_OVERRIDE_MARGIN:
+            return [int(i) for i in best_line[0]]
+        return None
+    if best_score >= MIN_OVERRIDE_SCORE:
         return [int(i) for i in best_line[0]]
     return None
 
 
-def make_solver_pilot(deck: list[int], instance: str = "ts"):
+def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
     """Generic pilot + within-turn combo solver. `instance` is accepted for
     the matchrunner uniqueness contract (unused: no module-level state).
+    dev=True (M8.1) additionally runs the DEVELOPMENT tier on underdeveloped
+    boards the lethal triggers ignore (`solver-dev:` matchrunner spec).
 
     Solves at ANY prompt the trigger fires on — including submenu prompts
     mid-combo (unlike rl/hybrid.py's MAIN-only guard), otherwise the line
@@ -254,6 +365,13 @@ def make_solver_pilot(deck: list[int], instance: str = "ts"):
         if should_solve(obs):
             try:
                 pick = solve_turn(obs, deck)
+            except Exception:
+                pick = None
+            if pick is not None:
+                return pick
+        elif dev and should_solve_dev(obs):
+            try:
+                pick = solve_turn(obs, deck, dev=True)
             except Exception:
                 pick = None
             if pick is not None:
