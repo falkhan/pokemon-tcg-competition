@@ -20,6 +20,9 @@ LUCARIO = [int(x) for x in (DECKS / "lucario.csv").read_text().split()]
     ("generic:lucario", ("generic", "lucario")),
     ("random:kyogre", ("random", "kyogre")),
     ("solver:lucario", ("solver", "lucario")),
+    ("solver-dev:lucario", ("solver-dev", "lucario")),
+    ("mcts:checkpoints/bc_v1_value_search.pt:kyogre:32",
+     ("mcts", "checkpoints/bc_v1_value_search.pt", "kyogre", 32)),
     ("rule:iono", ("rule", "iono", "iono")),
     ("rule:lucario:kyogre", ("rule", "lucario", "kyogre")),
     ("model:checkpoints/bc_v1.pt:kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
@@ -226,3 +229,87 @@ def test_model_pilot_loads_v2_checkpoints(tmp_path):
     torch.save(OptionScorerV2().state_dict(), ckpt)
     fn, deck = mr.make_pilot(("model", str(ckpt), "kyogre"), "v2")
     assert callable(fn) and len(deck) == 60
+
+
+# --- M8.1: chunk checkpointing / resume in run_pairs ---------------------------
+
+class _FakePool:
+    """In-process stand-in for the spawn Pool (checkpoint tests are offline)."""
+
+    def __init__(self, n):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def imap_unordered(self, fn, iterable):
+        return (fn(x) for x in iterable)
+
+
+def _patch_pool(monkeypatch, series_fn):
+    from types import SimpleNamespace
+    monkeypatch.setattr(mr, "play_series", series_fn)
+    monkeypatch.setattr(mr.mp, "get_context",
+                        lambda kind: SimpleNamespace(Pool=_FakePool))
+
+
+def test_run_pairs_checkpoint_writes_and_resumes(tmp_path, monkeypatch):
+    calls = []
+    _patch_pool(monkeypatch, lambda a, b, n, seed=0, **k:
+                calls.append((n, seed)) or [0] * n)
+    pairs = [(("generic", "x"), ("generic", "y"), 8)]
+    ck = tmp_path / "run.jsonl"
+
+    r1 = mr.run_pairs(pairs, workers=2, seed=5, checkpoint=str(ck))
+    assert [len(r) for r in r1] == [8]
+    n_calls = len(calls)
+    assert n_calls > 1                       # really chunked
+    assert len(ck.read_text().splitlines()) == 1 + n_calls  # header + chunks
+
+    r2 = mr.run_pairs(pairs, workers=2, seed=5, checkpoint=str(ck))
+    assert len(calls) == n_calls             # fully resumed: zero new games
+    assert [len(r) for r in r2] == [8]
+
+
+def test_run_pairs_checkpoint_resumes_after_crash(tmp_path, monkeypatch):
+    boom = {"after": 2}
+
+    def flaky(a, b, n, seed=0, **k):
+        if boom["after"] == 0:
+            raise RuntimeError("worker died")
+        boom["after"] -= 1
+        return [0] * n
+
+    _patch_pool(monkeypatch, flaky)
+    pairs = [(("generic", "x"), ("generic", "y"), 8)]
+    ck = tmp_path / "run.jsonl"
+    with pytest.raises(RuntimeError):
+        mr.run_pairs(pairs, workers=2, seed=5, checkpoint=str(ck))
+    survived = len(ck.read_text().splitlines()) - 1
+    assert survived == 2                     # completed chunks persisted
+
+    calls = []
+    _patch_pool(monkeypatch, lambda a, b, n, seed=0, **k:
+                calls.append(n) or [0] * n)
+    r = mr.run_pairs(pairs, workers=2, seed=5, checkpoint=str(ck))
+    assert [len(x) for x in r] == [8]
+    assert len(calls) + survived == 4        # only the missing chunks re-ran
+
+
+def test_run_pairs_checkpoint_rejects_different_run(tmp_path, monkeypatch):
+    _patch_pool(monkeypatch, lambda a, b, n, seed=0, **k: [0] * n)
+    pairs = [(("generic", "x"), ("generic", "y"), 8)]
+    ck = tmp_path / "run.jsonl"
+    mr.run_pairs(pairs, workers=2, seed=5, checkpoint=str(ck))
+    with pytest.raises(ValueError, match="different run"):
+        mr.run_pairs(pairs, workers=2, seed=6, checkpoint=str(ck))
+
+
+def test_run_pairs_seed_threads_into_chunk_seeds():
+    pairs = [(("generic", "x"), ("generic", "y"), 8)]
+    seeds_a = {j[4] for j in mr._make_jobs(pairs, 2, seed_base=1001)}
+    seeds_b = {j[4] for j in mr._make_jobs(pairs, 2, seed_base=1002)}
+    assert seeds_a != seeds_b                # --seed finally changes something

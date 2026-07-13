@@ -19,12 +19,14 @@ Opponent specs (picklable tuples; deck = decks/ name | csv path | list of ids):
   ("model", ckpt, deck)     neural pilot (greedy OptionScorer) from a checkpoint
   ("generic", deck)         the deck-agnostic rule pilot
   ("solver", deck)          generic pilot + within-turn combo solver (M7.4a)
+  ("solver-dev", deck)      solver + the development tier (M8.1: setup search)
   ("random", deck)          uniform-random legal moves
 
 Usage:
   python -m rl.matchrunner play --a generic:lucario --b random:kyogre -n 60
 """
 import argparse
+import json
 import multiprocessing as mp
 import random
 import time
@@ -60,8 +62,10 @@ def parse_spec(s: str) -> OpponentSpec:
     "model:checkpoints/bc_v1.pt:kyogre", "random:kyogre"."""
     parts = s.split(":")
     kind = parts[0]
-    if kind in ("generic", "random", "solver") and len(parts) == 2:
+    if kind in ("generic", "random", "solver", "solver-dev") and len(parts) == 2:
         return (kind, parts[1])
+    if kind == "mcts" and len(parts) == 4:
+        return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
     if kind == "model" and len(parts) == 3:
@@ -91,6 +95,27 @@ def make_pilot(spec: OpponentSpec, instance: str):
         from rl.turn_solver import make_solver_pilot
         ids = resolve_deck(spec[1])
         return make_solver_pilot(ids, instance=instance), ids
+    if kind == "solver-dev":
+        from rl.turn_solver import make_solver_pilot
+        ids = resolve_deck(spec[1])
+        return make_solver_pilot(ids, instance=instance, dev=True), ids
+    if kind == "mcts":
+        # ("mcts", ckpt, deck, n_sims) — the M8.4(b) sims-ladder instrument:
+        # MCTS over the checkpoint's own policy/value with L3 archetype
+        # determinization (rl/determinize.py). Dimension-aware like "model".
+        import torch
+        from rl.determinize import load_meta
+        from rl.mcts import make_mcts_agent
+        from rl.policy import OptionScorer
+        ckpt = Path(spec[1])
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt
+        sd = torch.load(ckpt, map_location="cpu")
+        m = OptionScorer(state_ctx_dim=sd["state_enc.0.weight"].shape[1])
+        m.load_state_dict(sd)
+        m.eval()
+        ids = resolve_deck(spec[2])
+        return make_mcts_agent(m, ids, n_sims=int(spec[3]), meta=load_meta()), ids
     if kind == "random":
         rng = random.Random(hash(instance) & 0xFFFF)
         fn = lambda od: rng.sample(range(len(od["select"]["option"])),  # noqa: E731
@@ -276,7 +301,7 @@ def percentile(xs: list[float], q: float) -> float:
 # ---------------------------------------------------------------------------
 # Multiprocessing across pairs (the rl/collector.py Pool pattern)
 # ---------------------------------------------------------------------------
-def _make_jobs(pairs: list[tuple], workers: int) -> list[tuple]:
+def _make_jobs(pairs: list[tuple], workers: int, seed_base: int = 1000) -> list[tuple]:
     """Split (spec_a, spec_b, n) pairs into even game chunks, ~2 jobs per worker.
     Chunks keep even sizes so each stays slot-fair. Pure — unit-tested offline.
     Job = (pair_idx, spec_a, spec_b, n_chunk, seed)."""
@@ -290,34 +315,82 @@ def _make_jobs(pairs: list[tuple], workers: int) -> list[tuple]:
         done = 0
         while done < n:
             chunk = min(target, n - done)
-            jobs.append((pair_idx, a, b, chunk, 1000 + len(jobs)))
+            jobs.append((pair_idx, a, b, chunk, seed_base + len(jobs)))
             done += chunk
     return jobs
 
 
-def _pair_worker(job: tuple) -> tuple[int, list[int]]:
-    pair_idx, spec_a, spec_b, n, seed = job
-    return pair_idx, play_series(spec_a, spec_b, n, seed=seed)
+def _pair_worker(arg: tuple) -> tuple[int, int, list[int]]:
+    job_idx, (pair_idx, spec_a, spec_b, n, seed) = arg
+    return job_idx, pair_idx, play_series(spec_a, spec_b, n, seed=seed)
 
 
-def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None) -> list[list[int]]:
+def _run_key(pairs: list[tuple], workers: int, seed: int) -> dict:
+    """The checkpoint header — json-normalized so tuple/list mismatch can't
+    false-negative the resume validation."""
+    return json.loads(json.dumps(
+        {"pairs": pairs, "workers": workers, "seed": seed}))
+
+
+def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
+              seed: int = 0, checkpoint: str | None = None) -> list[list[int]]:
     """Run [(spec_a, spec_b, n_games), ...]; returns per-pair result lists.
 
     workers <= 1 runs in-process (required for an injected game_fn — callables
     don't cross the spawn boundary). Otherwise a spawn Pool over even game
-    chunks; only str/int tuples are pickled. [ENGINE] unless game_fn given."""
+    chunks; only str/int tuples are pickled. [ENGINE] unless game_fn given.
+
+    seed offsets every chunk's instance seed (before M8.1 the CLI --seed was
+    silently dropped on this path; note the engine's own RNG drives game
+    variance either way — repeated runs are independent samples).
+
+    checkpoint (M8.1): a jsonl path. Line 1 pins the run key
+    (pairs/workers/seed); each completed chunk appends one line as it
+    finishes, and a rerun with the SAME key resumes, skipping completed
+    chunks — long measurements survive crashes and pauses. A key mismatch
+    raises instead of silently mixing two different runs."""
     if workers <= 1 or game_fn is not None:
         if workers > 1:
             raise ValueError("game_fn requires workers<=1 (not picklable)")
-        return [play_series(a, b, n, seed=1000 + k, game_fn=game_fn)
+        return [play_series(a, b, n, seed=1000 + seed + k, game_fn=game_fn)
                 for k, (a, b, n) in enumerate(pairs)]
 
-    jobs = _make_jobs(pairs, workers)
+    jobs = _make_jobs(pairs, workers, seed_base=1000 + seed)
     results: list[list[int]] = [[] for _ in pairs]
-    ctx = mp.get_context("spawn")
-    with ctx.Pool(min(workers, len(jobs))) as pool:
-        for pair_idx, chunk in pool.map(_pair_worker, jobs):
-            results[pair_idx].extend(chunk)
+    done: set[int] = set()
+    fh = None
+    if checkpoint:
+        path = Path(checkpoint)
+        key = _run_key(pairs, workers, seed)
+        if path.exists() and path.read_text().strip():
+            lines = [json.loads(line) for line in path.read_text().splitlines()
+                     if line.strip()]
+            if lines[0] != key:
+                raise ValueError(f"{checkpoint} belongs to a different run "
+                                 "(header mismatch) — delete it or use a new path")
+            for row in lines[1:]:
+                done.add(row["job"])
+                results[row["pair"]].extend(row["results"])
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(key) + "\n")
+        fh = path.open("a")
+
+    pending = [(i, job) for i, job in enumerate(jobs) if i not in done]
+    try:
+        if pending:
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(min(workers, len(pending))) as pool:
+                for job_idx, pair_idx, chunk in pool.imap_unordered(_pair_worker,
+                                                                    pending):
+                    results[pair_idx].extend(chunk)
+                    if fh is not None:
+                        fh.write(json.dumps({"job": job_idx, "pair": pair_idx,
+                                             "results": chunk}) + "\n")
+                        fh.flush()
+    finally:
+        if fh is not None:
+            fh.close()
     return results
 
 
@@ -335,6 +408,9 @@ def _main() -> None:
     s.add_argument("--latency", action="store_true",
                    help="per-move latency mean/p50/p99 ms per side (M7.4a G6; "
                         "forces workers=1)")
+    s.add_argument("--checkpoint", default=None, metavar="FILE",
+                   help="jsonl chunk checkpoint: appends per completed chunk; "
+                        "rerunning the same command resumes (M8.1)")
     a = p.parse_args()
 
     spec_a, spec_b = parse_spec(a.a), parse_spec(a.b)
@@ -353,7 +429,8 @@ def _main() -> None:
         results = play_series(spec_a, spec_b, a.games, seed=a.seed,
                               stats=stats, on_game=on_game)
     else:
-        results = run_pairs([(spec_a, spec_b, a.games)], workers=a.workers)[0]
+        results = run_pairs([(spec_a, spec_b, a.games)], workers=a.workers,
+                            seed=a.seed, checkpoint=a.checkpoint)[0]
     w = sum(1 for r in results if r == 0)
     d = sum(1 for r in results if r == 2)
     print(f"{a.a} vs {a.b}: {w}W {len(results) - w - d}L {d}D over {len(results)} "
