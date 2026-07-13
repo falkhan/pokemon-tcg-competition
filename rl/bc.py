@@ -128,23 +128,38 @@ def load_population(path) -> list[list[int]]:
     return [resolve_deck(d) for d in json.loads(Path(path).read_text())["decks"]]
 
 
+def _teacher_pilot(teacher: str, deck_ids: list[int], instance: str):
+    """Build one seat's teacher. "generic" = the M7.3 default; "solver" /
+    "solver-dev" (M8.2) route through matchrunner.make_pilot so BC can clone
+    the solver pilot's play — its overrides fire on ~1% of prompts, the rest
+    stays the observable generic scoring (low aliasing risk; the M8.2 leg-B
+    fidelity probe measures it)."""
+    if teacher == "generic":
+        from rl.generic_pilot import make_generic_pilot
+        return make_generic_pilot(deck_ids)
+    from rl.matchrunner import make_pilot
+    fn, _ = make_pilot((teacher, deck_ids), instance)
+    return fn
+
+
 def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
-                     shard_size: int = 200, log_every: int = 25, seed: int = 0) -> None:
-    """M7.3 collection: GENERIC-pilot self-play across the deck population.
+                     shard_size: int = 200, log_every: int = 25, seed: int = 0,
+                     teacher: str = "generic") -> None:
+    """M7.3 collection: teacher self-play across the deck population.
 
     Each seat samples its OWN deck per game — both seats are the teacher (the
     generic pilot's scoring is a function of observable state, no hidden
     AttackPlan to alias), so both are recorded, and the deck diversity is what
     makes the resulting pilot deck-conditioned. Decisions are encoded with
-    encoders v2. Extra shard columns vs v1:
+    encoders v2. teacher: "generic" (default) | "solver" | "solver-dev"
+    (M8.2 — keep different teachers in different out_dir!). Extra shard
+    columns vs v1:
       state_ids  (D, N_STATE_IDS)  int32   board card ids (embedding sites)
       option_ids (sum_N, 2)        int32   acted/target card ids per option
       deck_idx   (D,)              int32   the deciding seat's population index
                                            (G5-style held-out-deck splits)
     """
     import random
-
-    from rl.generic_pilot import make_generic_pilot
 
     population = load_population(decks_file)
     rng = random.Random(seed)
@@ -179,7 +194,8 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
     for game in range(n_games):
         picks_idx = [rng.randrange(len(population)) for _ in range(2)]
         decks = [population[picks_idx[0]], population[picks_idx[1]]]
-        pilots = [make_generic_pilot(d) for d in decks]
+        pilots = [_teacher_pilot(teacher, d, f"bc{game}_{seat}")
+                  for seat, d in enumerate(decks)]
 
         obs_dict, start_data = battle_start(decks[0], decks[1])
         if start_data.errorPlayer >= 0:
@@ -496,26 +512,36 @@ if __name__ == "__main__":
     c = sub.add_parser("collect", help="run teacher self-play and write shards")
     c.add_argument("--games", type=int, default=1000)
     c.add_argument("--shard-size", type=int, default=200)
-    c.add_argument("--teacher", type=str, default="rule", choices=["rule", "generic"],
-                   help="generic = M7.3 deck-population collection (encoders v2)")
+    c.add_argument("--teacher", type=str, default="rule",
+                   choices=["rule", "generic", "solver", "solver-dev"],
+                   help="generic/solver/solver-dev = deck-population collection "
+                        "(encoders v2); solver* clones the search pilot (M8.2)")
     c.add_argument("--agent", type=str, default="lucario")
     c.add_argument("--deck", type=str, default="lucario")
     c.add_argument("--decks", type=str, default="data/league/population.json",
-                   help="deck population file (generic teacher only)")
+                   help="deck population file (v2 teachers only)")
+    c.add_argument("--out", type=str, default=None,
+                   help="shard output dir (default data/bc_v2; keep different "
+                        "teachers in different dirs)")
     t = sub.add_parser("train", help="train the BC policy on collected shards")
     t.add_argument("--epochs", type=int, default=10)
     t.add_argument("--name", type=str, default=None)
     t.add_argument("--arch", type=str, default="v1", choices=["v1", "v2"])
+    t.add_argument("--data", type=str, default=None,
+                   help="shard dir for --arch v2 (default data/bc_v2)")
     args = p.parse_args()
 
     if args.cmd == "collect":
-        if args.teacher == "generic":
-            collect_games_v2(args.games, args.decks, shard_size=args.shard_size)
+        if args.teacher in ("generic", "solver", "solver-dev"):
+            collect_games_v2(args.games, args.decks, shard_size=args.shard_size,
+                             teacher=args.teacher,
+                             out_dir=Path(args.out) if args.out else DATA_DIR_V2)
         else:
             collect_games(args.games, shard_size=args.shard_size,
                           agent=args.agent, deck=args.deck)
     elif args.cmd == "train":
         if args.arch == "v2":
-            train_v2(epochs=args.epochs, name=args.name or "osv2_bc")
+            train_v2(epochs=args.epochs, name=args.name or "osv2_bc",
+                     data_dir=Path(args.data) if args.data else DATA_DIR_V2)
         else:
             train(epochs=args.epochs, name=args.name or "bc_v1")

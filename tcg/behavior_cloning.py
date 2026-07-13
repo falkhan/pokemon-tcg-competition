@@ -129,23 +129,38 @@ def load_population(path) -> list[list[int]]:
     return [resolve_deck(d) for d in json.loads(Path(path).read_text())["decks"]]
 
 
+def _teacher_pilot(teacher: str, deck_ids: list[int], instance: str):
+    """Build one seat's teacher. "generic" = the M7.3 default; "solver" /
+    "solver-dev" (M8.2) route through matchrunner.make_pilot so BC can clone
+    the solver pilot's play — its overrides fire on ~1% of prompts, the rest
+    stays the observable generic scoring (low aliasing risk; the M8.2 leg-B
+    fidelity probe measures it)."""
+    if teacher == "generic":
+        from tcg.pilot import make_generic_pilot
+        return make_generic_pilot(deck_ids)
+    from rl.matchrunner import make_pilot
+    fn, _ = make_pilot((teacher, deck_ids), instance)
+    return fn
+
+
 def collect_games_v2(n_games: int, decks_file, out_dir: Path = BC_DATA_DIR_V2,
-                     shard_size: int = 200, log_every: int = 25, seed: int = 0) -> None:
-    """M7.3 collection: GENERIC-pilot self-play across the deck population.
+                     shard_size: int = 200, log_every: int = 25, seed: int = 0,
+                     teacher: str = "generic") -> None:
+    """M7.3 collection: teacher self-play across the deck population.
 
     Each seat samples its OWN deck per game — both seats are the teacher (the
     generic pilot's scoring is a function of observable state, no hidden
     AttackPlan to alias), so both are recorded, and the deck diversity is what
     makes the resulting pilot deck-conditioned. Decisions are encoded with
-    encoders v2. Extra shard columns vs v1:
+    encoders v2. teacher: "generic" (default) | "solver" | "solver-dev"
+    (M8.2 — keep different teachers in different out_dir!). Extra shard
+    columns vs v1:
       state_ids  (D, N_STATE_IDS)  int32   board card ids (embedding sites)
       option_ids (sum_N, 2)        int32   acted/target card ids per option
       deck_idx   (D,)              int32   the deciding seat's population index
                                            (G5-style held-out-deck splits)
     """
     import random
-
-    from tcg.pilot import make_generic_pilot
 
     population = load_population(decks_file)
     rng = random.Random(seed)
@@ -171,7 +186,8 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = BC_DATA_DIR_V2,
     for game in range(n_games):
         deck_indices = [rng.randrange(len(population)) for _ in range(2)]
         decks = [population[deck_indices[0]], population[deck_indices[1]]]
-        pilots = [make_generic_pilot(d) for d in decks]
+        pilots = [_teacher_pilot(teacher, d, f"bc{game}_{seat}")
+                  for seat, d in enumerate(decks)]
 
         obs_dict, start_data = battle_start(decks[0], decks[1])
         if start_data.errorPlayer >= 0:
