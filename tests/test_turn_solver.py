@@ -436,6 +436,41 @@ def test_dev_pilot_wiring(monkeypatch):
     assert plain_pilot(obs) != [7]           # falls through to greedy
 
 
+def test_inner_pilot_gets_the_fall_through(monkeypatch):
+    """M8.6: `inner=` swaps the fall-through pilot — when no solve fires (or a
+    solve declines), the inner pilot answers; a found lethal line still
+    overrides it (the model-solver: spec contract)."""
+    inner_calls = []
+
+    def inner(obs_dict):
+        inner_calls.append(obs_dict)
+        return [3]
+
+    # No trigger at all -> inner answers directly.
+    monkeypatch.setattr(ts, "should_solve", lambda obs: False)
+    monkeypatch.setattr(ts, "should_solve_dev", lambda obs: False)
+    obs = main_menu(me_board(), op_board(), [EVOLVE, PLAY_HAND0, ATTACK_102, END])
+    assert ts.make_solver_pilot(DECK, inner=inner)(obs) == [3]
+    assert len(inner_calls) == 1
+    monkeypatch.undo()
+
+    # Trigger fires but no prize line -> solve declines -> inner again.
+    my_p, op_p = me_board(), op_board()
+    root = main_menu(my_p, op_p, [ATTACK_102, END])
+    chip = flipped(my_p, player(active=pokemon(2, hp=40), prizes_remaining=4))
+    ended = flipped(my_p, op_p)
+    tree = {(0, (0,)): search_state(chip, 1), (0, (1,)): search_state(ended, 2)}
+    patch_engine(monkeypatch, root, lambda s, a: tree[(s, tuple(a))])
+    assert ts.make_solver_pilot(DECK, inner=inner)(root) == [3]
+
+    # The headline lethal -> the solver overrides, inner never consulted.
+    root, step = combo_tree()
+    patch_engine(monkeypatch, root, step)
+    inner_calls.clear()
+    assert ts.make_solver_pilot(DECK, inner=inner)(root) == [1]
+    assert inner_calls == []
+
+
 def test_source_stays_bundle_pure():
     from pathlib import Path
     src = Path(ts.__file__).read_text()

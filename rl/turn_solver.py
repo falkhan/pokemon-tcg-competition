@@ -345,18 +345,24 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     return None
 
 
-def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
+def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False,
+                      inner=None):
     """Generic pilot + within-turn combo solver. `instance` is accepted for
     the matchrunner uniqueness contract (unused: no module-level state).
     dev=True (M8.1) additionally runs the DEVELOPMENT tier on underdeveloped
     boards the lethal triggers ignore (`solver-dev:` matchrunner spec).
+    inner (M8.6) swaps the fall-through pilot: the solver tiers are
+    pilot-agnostic (they fire BEFORE the inner pilot is consulted), so any
+    per-prompt agent — e.g. the neural pilot (`model-solver:` spec) — can gain
+    the same lethal override the ship agent has. Default stays the generic
+    pilot; the bundle path never passes inner, so purity is unaffected.
 
     Solves at ANY prompt the trigger fires on — including submenu prompts
     mid-combo (unlike rl/hybrid.py's MAIN-only guard), otherwise the line
     found at the MAIN prompt would derail one action later. Any solver error
     falls back to the greedy pick: the wrapper must never cost the G1 crash
     gate."""
-    inner = make_generic_pilot(deck)
+    inner = inner if inner is not None else make_generic_pilot(deck)
 
     def agent(obs_dict):
         obs = to_observation_class(obs_dict)

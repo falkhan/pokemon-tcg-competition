@@ -144,6 +144,79 @@ explicit sign-off regardless. No-go fallback: M8.1-style solver engineering +
 per-deck refreshed BC is already an "any agent that wins" candidate, and the
 team's deck-analysis pipeline becomes the next lever.
 
+## M8.6 — Inference hybrids + DAgger (post-M8.5 addendum; infra landed, legs pending)
+
+The M8.0–M8.5 verdicts falsified "train a better policy" (PPO neutral) and
+"search harder" (dev tier killed, sims ladder flat) — but left the two
+cheapest structural levers untouched:
+
+1. **The neural pilot fights without the ship agent's lethal override.**
+   `solver:` = generic pilot + L2 turn solver; `model:` = raw policy. The
+   solver tiers are pilot-agnostic (they fire BEFORE the inner pilot is
+   consulted), so the same override wraps any checkpoint —
+   **`model-solver:ckpt:deck`**. The solver's measured edge over its own
+   greedy inner was +3.3pp A/B (M7.4a re-run, 0.533 n=800); over a policy
+   that has NO multi-step lethal at all it should be at least that.
+2. **The clone is strictly weaker than its own teacher** (osv2_bc2 0.345 /
+   legB_it5 0.359 vs the generic pilot's implied ~0.467 vs `solver:lucario`)
+   — ~11pp of pure imitation loss. Two attacks, both landed:
+   - **Inference:** **`model-guard:ckpt:deck:tau`** defers to the generic
+     pilot on prompts where the policy's top-1 softmax confidence < tau
+     (tau=0 pure model, tau→1 pure generic). **`model-guard-solver:`** adds
+     the lethal override on top — the candidate ship shape.
+   - **Training:** DAgger — `rl.bc collect --driver CKPT` plays games with
+     the STUDENT while labeling every visited prompt with the teacher's
+     pick (`--driver-mix` for mixed trajectories); `rl.bc train --data
+     dir1,dir2` trains on the union. Compounding drift on student-visited
+     states is exactly what plain BC can't fix and DAgger does.
+
+**Honest ceiling:** guard+solver caps near the solver-mirror ~0.50 unless
+policy confidence correlates with out-thinking the teacher; DAgger caps at
+the teacher's ~0.467 + solver edge. These legs de-risk +10–15pp toward the
+0.55 bar; the last stretch still needs a stronger teacher (post-mortem
+engineering / per-deck BC) or a lever not yet on the table. Run them because
+they're cheap, additive, and every artifact they produce (a stronger clone)
+compounds with the teacher's own improvement.
+
+**Leg 1 — model-solver A/B (~40 min):** best artifact + override vs the bar.
+```
+uv run python -m rl.matchrunner play --a model-solver:checkpoints/ppo_m83_legB_it5.pt:lucario \
+  --b solver:lucario -n 400 --workers 14 --seed 91 --checkpoint data/m8/ck_ms_legB.jsonl
+```
+Reference 0.359 (n=800 seed 81). ≥ 0.40 at n=400 → verify at n=800; also
+`--latency` n=100 (G6: solver adds ~52 ms mean on solve prompts only).
+
+**Leg 2 — guard tau sweep (~60 min):** tau ∈ {0.35, 0.5, 0.65}, n=200 each,
+seeds 92–94, same opponent; best tau → n=800. Reads: monotone rise toward
+~0.467 = confidence uninformative (the dial is just a generic-blend); any
+point > 0.467 + noise = the neural pick adds value where it's confident.
+Then **leg 2b:** `model-guard-solver` at the winning tau, n=800 (seed 95) —
+the first credible run at ~0.50.
+
+**Leg 3 — DAgger round 1 (~2 h collect + ~40 min train, sign-off size):**
+```
+uv run python -m rl.bc collect --teacher generic --games 1500 \
+  --driver checkpoints/osv2_bc2.pt --out data/bc_dagger_r1
+uv run python -m rl.bc train --arch v2 --data data/bc_v2b,data/bc_dagger_r1 \
+  --name osv2_dagger1 --epochs 10
+```
+Gates (the M8.2 shape — must beat osv2_bc2 on BOTH strength reads): vs
+`solver:lucario` n=400 > 0.345; G3 vs generic n=400 > 0.350; fidelity
+reported on the mixed val (expect < 0.887 — student states are harder; the
+gate is strength, not fidelity). Pass → round 2 with `--driver` = round-1
+output (classic DAgger iteration); the guard/solver wrappers then take the
+strongest clone. Kill after 2 gainless rounds.
+
+**Optional forensic leg — WHERE does the neural agent lose?** The M8.0
+taxonomy ran on solver/expert games; nobody has batch-postmortemed the
+CLONE's losses. ~100 kaggle-env games of the v2 bundle vs the solver bundle
+with `play_games(json_prefix=...)` → `postmortem --batch` — if its losses
+are lethal-missed-dominated, leg 1 covers it; if setup-dominated, the
+dev-shaping φ terms become BC auxiliary-loss candidates.
+
+Not run, still on the table: KL-anchored PPO leg C (Piotr's call, unchanged
+evidence), per-deck lucario BC fine-tune (deck-analysis pipeline lever).
+
 ## Decision tree
 
 ```

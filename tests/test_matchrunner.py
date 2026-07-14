@@ -26,12 +26,20 @@ LUCARIO = [int(x) for x in (DECKS / "lucario.csv").read_text().split()]
     ("rule:iono", ("rule", "iono", "iono")),
     ("rule:lucario:kyogre", ("rule", "lucario", "kyogre")),
     ("model:checkpoints/bc_v1.pt:kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
+    ("model-solver:checkpoints/osv2_bc2.pt:lucario",
+     ("model-solver", "checkpoints/osv2_bc2.pt", "lucario")),
+    ("model-guard:checkpoints/osv2_bc2.pt:lucario:0.5",
+     ("model-guard", "checkpoints/osv2_bc2.pt", "lucario", 0.5)),
+    ("model-guard-solver:checkpoints/osv2_bc2.pt:lucario:0.35",
+     ("model-guard-solver", "checkpoints/osv2_bc2.pt", "lucario", 0.35)),
 ])
 def test_parse_spec_kinds(s, expected):
     assert mr.parse_spec(s) == expected
 
 
-@pytest.mark.parametrize("junk", ["generic", "banana:x", "model:onlyckpt", "rule:a:b:c"])
+@pytest.mark.parametrize("junk", ["generic", "banana:x", "model:onlyckpt", "rule:a:b:c",
+                                  "model-solver:ckpt", "model-guard:ckpt:deck",
+                                  "model-guard-solver:ckpt:deck"])
 def test_parse_spec_rejects_junk(junk):
     with pytest.raises(ValueError, match="spec"):
         mr.parse_spec(junk)
@@ -43,6 +51,10 @@ def test_resolve_and_spec_deck_contract():
     assert mr.resolve_deck(LUCARIO) == LUCARIO
     assert mr.spec_deck(("rule", "lucario", "kyogre")) == "kyogre"
     assert mr.spec_deck(("generic", "lucario")) == "lucario"
+    assert mr.spec_deck(("model-solver", "ckpt.pt", "lucario")) == "lucario"
+    assert mr.spec_deck(("model-guard", "ckpt.pt", "lucario", 0.5)) == "lucario"
+    assert mr.spec_deck(("model-guard-solver", "ckpt.pt", "iono", 0.5)) == "iono"
+    assert mr.spec_deck(("mcts", "ckpt.pt", "kyogre", 32)) == "kyogre"
     # deck_search's historic helpers still delegate here
     assert ds._resolve_deck("lucario") == LUCARIO
 
@@ -229,6 +241,71 @@ def test_model_pilot_loads_v2_checkpoints(tmp_path):
     torch.save(OptionScorerV2().state_dict(), ckpt)
     fn, deck = mr.make_pilot(("model", str(ckpt), "kyogre"), "v2")
     assert callable(fn) and len(deck) == 60
+
+
+# --- M8.6: hybrid specs (neural pilot + the ship agent's structural edges) ----
+
+def test_m86_hybrid_specs_build_pilots(tmp_path):
+    torch = pytest.importorskip("torch")
+    from rl.policy import OptionScorerV2
+
+    ckpt = tmp_path / "osv2.pt"
+    torch.save(OptionScorerV2().state_dict(), ckpt)
+    for spec in (("model-solver", str(ckpt), "lucario"),
+                 ("model-guard", str(ckpt), "lucario", 0.5),
+                 ("model-guard-solver", str(ckpt), "lucario", 0.5)):
+        fn, deck = mr.make_pilot(spec, "m86")
+        assert callable(fn) and len(deck) == 60, spec
+
+
+def test_guard_fn_defers_below_tau():
+    picks_conf = {"conf": 0.9}
+    conf_fn = lambda od: ([1], picks_conf["conf"])          # noqa: E731
+    fallback = lambda od: [2]                               # noqa: E731
+
+    guarded = mr._guard_fn(conf_fn, fallback, tau=0.5)
+    assert guarded(None) == [1]                             # confident: model
+    picks_conf["conf"] = 0.3
+    assert guarded(None) == [2]                             # unsure: generic
+    assert mr._guard_fn(conf_fn, fallback, tau=0.0)(None) == [1]   # tau=0 = pure model
+    assert mr._guard_fn(conf_fn, fallback, tau=1.01)(None) == [2]  # tau>1 = pure generic
+
+
+def test_model_pilot_reports_top1_softmax_confidence(tmp_path):
+    # The conf channel the guard gates on: picks unchanged vs the plain model
+    # spec, conf = softmax prob of the top pick (1.0 on a forced menu).
+    torch = pytest.importorskip("torch")
+    import numpy as np
+    from rl.policy import OptionScorerV2
+    from tests.builders import observation, option, player, pokemon
+    from tests.fake_cg import OptionType, SelectContext
+
+    ckpt = tmp_path / "osv2.pt"
+    torch.save(OptionScorerV2().state_dict(), ckpt)
+    conf_fn, deck = mr._model_pilot(str(ckpt), "lucario")
+    plain_fn, _ = mr.make_pilot(("model", str(ckpt), "lucario"), "m86c")
+
+    obs = observation(player(active=pokemon(1, energies=())),
+                      player(active=pokemon(2)),
+                      context=SelectContext.MAIN,
+                      options=[option(OptionType.ATTACK, attack_id=102),
+                               option(OptionType.END)])
+    picks, conf = conf_fn(obs)
+    assert picks == plain_fn(obs)                # same greedy pick order
+    assert 0.0 < conf <= 1.0
+    forced = observation(player(active=pokemon(1)), player(active=pokemon(2)),
+                         context=SelectContext.MAIN,
+                         options=[option(OptionType.END)])
+    assert conf_fn(forced)[1] == pytest.approx(1.0)
+
+    # The v1 (OptionScorer) path reports conf the same way.
+    from rl.policy import OptionScorer
+    ckpt1 = tmp_path / "os1.pt"
+    torch.save(OptionScorer().state_dict(), ckpt1)
+    conf1_fn, _ = mr._model_pilot(str(ckpt1), "lucario")
+    plain1_fn, _ = mr.make_pilot(("model", str(ckpt1), "lucario"), "m86d")
+    picks1, conf1 = conf1_fn(obs)
+    assert picks1 == plain1_fn(obs) and 0.0 < conf1 <= 1.0
 
 
 # --- M8.1: chunk checkpointing / resume in run_pairs ---------------------------

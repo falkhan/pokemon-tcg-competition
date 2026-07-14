@@ -22,6 +22,16 @@ Opponent specs (picklable tuples; deck = decks/ name | csv path | list of ids):
   ("solver-dev", deck)      solver + the development tier (M8.1: setup search)
   ("random", deck)          uniform-random legal moves
 
+M8.6 hybrid specs (the neural pilot with the ship agent's structural edges):
+  ("model-solver", ckpt, deck)       neural pilot + the lethal turn solver —
+                                     the L2 override the solver: spec has and
+                                     model: lacks (fires before the pilot)
+  ("model-guard", ckpt, deck, tau)   neural pilot that DEFERS to the generic
+                                     pilot when its softmax confidence in the
+                                     top pick is < tau (tau=0 -> pure model,
+                                     tau=1 -> generic on any real choice)
+  ("model-guard-solver", ckpt, deck, tau)  both wrappers (candidate ship shape)
+
 Usage:
   python -m rl.matchrunner play --a generic:lucario --b random:kyogre -n 60
 """
@@ -54,12 +64,15 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model") else spec[1]
+    if spec[0] in ("rule", "mcts") or spec[0].startswith("model"):
+        return spec[2]
+    return spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
     """CLI shorthand -> spec tuple: "generic:lucario", "rule:iono[:deck]",
-    "model:checkpoints/bc_v1.pt:kyogre", "random:kyogre"."""
+    "model:checkpoints/bc_v1.pt:kyogre", "random:kyogre",
+    "model-solver:<ckpt>:<deck>", "model-guard[-solver]:<ckpt>:<deck>:<tau>"."""
     parts = s.split(":")
     kind = parts[0]
     if kind in ("generic", "random", "solver", "solver-dev") and len(parts) == 2:
@@ -68,10 +81,13 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
-    if kind == "model" and len(parts) == 3:
-        return ("model", parts[1], parts[2])
+    if kind in ("model", "model-solver") and len(parts) == 3:
+        return (kind, parts[1], parts[2])
+    if kind in ("model-guard", "model-guard-solver") and len(parts) == 4:
+        return (kind, parts[1], parts[2], float(parts[3]))
     raise ValueError(f"cannot parse opponent spec {s!r} "
-                     "(want kind:deck or rule:agent[:deck] or model:ckpt:deck)")
+                     "(want kind:deck or rule:agent[:deck] or model:ckpt:deck "
+                     "or model-solver:ckpt:deck or model-guard[-solver]:ckpt:deck:tau)")
 
 
 def make_pilot(spec: OpponentSpec, instance: str):
@@ -122,69 +138,122 @@ def make_pilot(spec: OpponentSpec, instance: str):
                                    od["select"]["maxCount"])
         return fn, resolve_deck(spec[1])
     if kind == "model":
-        import numpy as np
-        import torch
-        from cg.api import to_observation_class
-        from rl.encoders import (COMBAT_SLICE, N_COMBAT, N_CONTEXTS, STATE_DIM,
-                                 encode_context, encode_option, encode_state)
-        from rl.policy import OptionScorer
-
-        ckpt = Path(spec[1])
-        if not ckpt.is_absolute() and not ckpt.exists():
-            ckpt = ROOT / ckpt          # league specs store ROOT-relative paths
-        sd = torch.load(ckpt, map_location="cpu")
-
-        if "embedding.weight" in sd:
-            # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
-            # deck-context pools — the pilot closes over its own deck list.
-            from rl.encoders import encode_option_v2, encode_state_v2
-            from rl.policy import OptionScorerV2
-            m2 = OptionScorerV2()
-            m2.load_state_dict(sd)
-            m2.eval()
-            deck_ids = resolve_deck(spec[2])
-
-            def fn2(od):
-                obs = to_observation_class(od)
-                num, sids = encode_state_v2(obs.current, deck_ids)
-                sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
-                pairs = [encode_option_v2(o, obs) for o in obs.select.option]
-                opts = np.stack([n for n, _ in pairs]).astype(np.float32)
-                oids = np.stack([i for _, i in pairs])
-                return m2.act(sc, sids, opts, oids, obs.select.maxCount, greedy=True)
-            return fn2, deck_ids
-
-        # Dimension-aware v1 load: bc_v1 predates the M3 combat features. Its
-        # state input is exactly N_COMBAT narrower, and the combat block is a
-        # contiguous slice of the current encoding — slicing it out
-        # reconstructs the encoder the checkpoint was trained on.
-        in_dim = sd["state_enc.0.weight"].shape[1]
-        expected = STATE_DIM + N_CONTEXTS
-        if in_dim == expected:
-            cut = None
-        elif in_dim == expected - N_COMBAT:
-            cut = COMBAT_SLICE
-        else:
-            raise ValueError(
-                f"{spec[1]}: state input dim {in_dim} matches neither the current "
-                f"encoder ({expected}) nor the pre-M3 one ({expected - N_COMBAT})")
-        m = OptionScorer(state_ctx_dim=in_dim)
-        m.load_state_dict(sd)
-        m.eval()
-
-        def fn(od):
-            obs = to_observation_class(od)
-            sc = np.concatenate([encode_state(obs.current),
-                                 encode_context(obs.select.context)]).astype(np.float32)
-            if cut is not None:
-                sc = np.delete(sc, np.s_[cut[0]:cut[1]])
-            opts = np.stack([encode_option(o, obs) for o in obs.select.option]).astype(np.float32)
-            with torch.no_grad():
-                logits, _ = m(torch.from_numpy(sc).unsqueeze(0), torch.from_numpy(opts).unsqueeze(0))
-            order = torch.argsort(logits.squeeze(0), descending=True).tolist()
-            return [int(i) for i in order[: obs.select.maxCount]]
-        return fn, resolve_deck(spec[2])
+        conf_fn, ids = _model_pilot(spec[1], spec[2])
+        return (lambda od: conf_fn(od)[0]), ids
+    if kind == "model-solver":
+        # M8.6: the neural pilot with the ship agent's lethal override — the
+        # solver tiers fire BEFORE the inner pilot, so this is exactly the
+        # solver: spec with the greedy scorer swapped for the checkpoint.
+        from rl.turn_solver import make_solver_pilot
+        conf_fn, ids = _model_pilot(spec[1], spec[2])
+        return make_solver_pilot(ids, instance=instance,
+                                 inner=lambda od: conf_fn(od)[0]), ids
+    if kind in ("model-guard", "model-guard-solver"):
+        # M8.6: defer to the generic pilot on low-confidence prompts. The BC
+        # clone is strictly weaker than its teacher (0.345-0.359 vs the
+        # teacher's ~0.467 vs solver:lucario) — tau interpolates between them,
+        # keeping the neural pick only where the policy is sure of itself.
+        from rl.generic_pilot import make_generic_pilot
+        conf_fn, ids = _model_pilot(spec[1], spec[2])
+        guarded = _guard_fn(conf_fn, make_generic_pilot(ids), float(spec[3]))
+        if kind == "model-guard":
+            return guarded, ids
+        from rl.turn_solver import make_solver_pilot
+        return make_solver_pilot(ids, instance=instance, inner=guarded), ids
     raise ValueError(f"unknown opponent spec kind: {spec!r}")
+
+
+def _guard_fn(conf_fn, fallback_fn, tau: float):
+    """Confidence gate (M8.6): `conf_fn(od) -> (picks, conf)`; return the model
+    picks when conf >= tau, else the fallback pilot's. Single-prompt deferral —
+    a deferred submenu inside a model-opened line stays coherent because the
+    generic pilot re-scores every prompt from ground truth, same as the
+    solver's fall-through contract."""
+    def fn(od):
+        picks, conf = conf_fn(od)
+        return picks if conf >= tau else fallback_fn(od)
+    return fn
+
+
+def _model_pilot(ckpt_slot, deck_slot):
+    """Load a checkpoint into a per-prompt pilot. Returns (fn, deck_ids) where
+    `fn(od) -> (picks, conf)`; conf is the softmax probability of the top pick
+    over the option menu (1.0 on forced single-option prompts). The plain
+    "model" spec strips conf; the M8.6 guard specs gate on it. [ENGINE]"""
+    import numpy as np
+    import torch
+    from cg.api import to_observation_class
+    from rl.encoders import (COMBAT_SLICE, N_COMBAT, N_CONTEXTS, STATE_DIM,
+                             encode_context, encode_option, encode_state)
+    from rl.policy import OptionScorer
+
+    ckpt = Path(ckpt_slot)
+    if not ckpt.is_absolute() and not ckpt.exists():
+        ckpt = ROOT / ckpt          # league specs store ROOT-relative paths
+    sd = torch.load(ckpt, map_location="cpu")
+
+    def _rank(logits, max_count):
+        """Greedy pick order + top-1 softmax confidence from one prompt's
+        logits — the same argmax the old model fn took (topk == argsort head),
+        now also reporting how sure the policy is."""
+        order = torch.argsort(logits, descending=True).tolist()
+        conf = float(torch.softmax(logits, dim=-1).max())
+        return [int(i) for i in order[:max_count]], conf
+
+    if "embedding.weight" in sd:
+        # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
+        # deck-context pools — the pilot closes over its own deck list.
+        from rl.encoders import encode_option_v2, encode_state_v2
+        from rl.policy import OptionScorerV2
+        m2 = OptionScorerV2()
+        m2.load_state_dict(sd)
+        m2.eval()
+        deck_ids = resolve_deck(deck_slot)
+
+        def fn2(od):
+            obs = to_observation_class(od)
+            num, sids = encode_state_v2(obs.current, deck_ids)
+            sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
+            pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+            opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+            oids = np.stack([i for _, i in pairs])
+            with torch.no_grad():
+                logits, _ = m2(torch.from_numpy(sc).unsqueeze(0),
+                               torch.from_numpy(sids).long().unsqueeze(0),
+                               torch.from_numpy(opts).unsqueeze(0),
+                               torch.from_numpy(oids).long().unsqueeze(0))
+            return _rank(logits.squeeze(0), obs.select.maxCount)
+        return fn2, deck_ids
+
+    # Dimension-aware v1 load: bc_v1 predates the M3 combat features. Its
+    # state input is exactly N_COMBAT narrower, and the combat block is a
+    # contiguous slice of the current encoding — slicing it out
+    # reconstructs the encoder the checkpoint was trained on.
+    in_dim = sd["state_enc.0.weight"].shape[1]
+    expected = STATE_DIM + N_CONTEXTS
+    if in_dim == expected:
+        cut = None
+    elif in_dim == expected - N_COMBAT:
+        cut = COMBAT_SLICE
+    else:
+        raise ValueError(
+            f"{ckpt_slot}: state input dim {in_dim} matches neither the current "
+            f"encoder ({expected}) nor the pre-M3 one ({expected - N_COMBAT})")
+    m = OptionScorer(state_ctx_dim=in_dim)
+    m.load_state_dict(sd)
+    m.eval()
+
+    def fn(od):
+        obs = to_observation_class(od)
+        sc = np.concatenate([encode_state(obs.current),
+                             encode_context(obs.select.context)]).astype(np.float32)
+        if cut is not None:
+            sc = np.delete(sc, np.s_[cut[0]:cut[1]])
+        opts = np.stack([encode_option(o, obs) for o in obs.select.option]).astype(np.float32)
+        with torch.no_grad():
+            logits, _ = m(torch.from_numpy(sc).unsqueeze(0), torch.from_numpy(opts).unsqueeze(0))
+        return _rank(logits.squeeze(0), obs.select.maxCount)
+    return fn, resolve_deck(deck_slot)
 
 
 def _engine_game(fn0, fn1, deck0: list[int], deck1: list[int],

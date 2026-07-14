@@ -130,6 +130,16 @@ def register_deck(deck) -> tuple[str, Path]:
     return h, csv
 
 
+def _respec(spec: OpponentSpec, deck) -> OpponentSpec:
+    """The same pilot brain on a different deck. The deck slot is spec[2] for
+    kinds that carry a brain/checkpoint slot first (rule, model*, mcts) and
+    spec[1] otherwise; trailing params (the M8.6 guard tau, mcts sims) ride
+    along unchanged."""
+    if spec[0] in ("rule", "mcts") or spec[0].startswith("model"):
+        return (spec[0], spec[1], deck) + tuple(spec[3:])
+    return (spec[0], deck)
+
+
 def _normalize_spec(spec: OpponentSpec, csv: Path) -> OpponentSpec:
     """Rewrite the spec's deck slot to the registered csv path — ROOT-relative
     POSIX form, so league.json is portable across machines and OSes (an
@@ -137,9 +147,7 @@ def _normalize_spec(spec: OpponentSpec, csv: Path) -> OpponentSpec:
     resolve_deck resolves relative paths against ROOT). Specs stay hashable
     tuples of plain strings."""
     deck = csv.relative_to(ROOT).as_posix() if csv.is_relative_to(ROOT) else str(csv)
-    if spec[0] in ("rule", "model"):
-        return (spec[0], spec[1], deck)
-    return (spec[0], deck)
+    return _respec(spec, deck)
 
 
 def add_entry(league: League, spec: OpponentSpec, entry_id: str | None = None,
@@ -298,7 +306,7 @@ def _held_out_decks(league: League, k: int = 5) -> list[str]:
 
 def _redeck(pilot: OpponentSpec, deck: str) -> OpponentSpec:
     """The same pilot brain on a different deck (G5)."""
-    return (pilot[0], pilot[1], deck) if pilot[0] in ("rule", "model") else (pilot[0], deck)
+    return _respec(pilot, deck)
 
 
 def run_gates(league: League, entry_id: str, play=None, held_out: list | None = None,

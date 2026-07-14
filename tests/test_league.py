@@ -313,6 +313,18 @@ def test_normalize_spec_stores_root_relative_posix_paths(ldirs, tmp_path, monkey
     assert "\\" not in e.pilot[1] and not Path(e.pilot[1]).is_absolute()
 
 
+def test_respec_keeps_brain_slot_and_trailing_params():
+    # M8.6 specs carry a checkpoint AND a trailing tau — a league redeck /
+    # normalize must not drop either (the old rule/model-only rewrite did).
+    assert lg._respec(("model-guard-solver", "c.pt", "lucario", 0.5), "iono") \
+        == ("model-guard-solver", "c.pt", "iono", 0.5)
+    assert lg._respec(("model-solver", "c.pt", "lucario"), "iono") \
+        == ("model-solver", "c.pt", "iono")
+    assert lg._respec(("mcts", "c.pt", "lucario", 32), "iono") == ("mcts", "c.pt", "iono", 32)
+    assert lg._respec(("generic", "lucario"), "iono") == ("generic", "iono")
+    assert lg._respec(("rule", "lucario", "lucario"), "iono") == ("rule", "lucario", "iono")
+
+
 def test_export_population_prefers_rated_candidates(ldirs):
     league = _fresh()
     strong = lg.add_entry(league, ("generic", "lucario"), entry_id="c_strong")

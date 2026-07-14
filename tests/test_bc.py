@@ -161,3 +161,93 @@ def test_load_population_resolves_names_and_paths(tmp_path):
     decks = old.load_population(pop)
     assert len(decks) == 2 and all(len(d) == 60 for d in decks)
     assert decks == new.load_population(pop)
+
+
+# --- M8.6: DAgger (--driver) + multi-dir dataset union --------------------------
+
+def test_bcdatasetv2_accepts_multiple_dirs(tmp_path):
+    # DAgger trains on teacher shards + correction shards from separate dirs;
+    # game ids must keep re-basing across the dir boundary.
+    dir_a = make_v2_shards(tmp_path / "a")
+    dir_b = make_v2_shards(tmp_path / "b")
+    ds_one = old.BCDatasetV2(dir_a)
+    ds_two = old.BCDatasetV2([dir_a, dir_b])
+    assert len(ds_two) == 2 * len(ds_one)
+    assert ds_two.game_ids.tolist() == [0, 0, 1, 2, 2, 3, 3, 4, 5, 5]
+    assert ds_two.starts.tolist()[len(ds_one):][0] == sum(ds_one.n_options)
+
+
+class _EngineObs:
+    """Duck-types the engine dict (subscript access in the collection loop)
+    AND the observation class (attribute access after the fake passthrough
+    to_observation_class)."""
+
+    def __init__(self, ns):
+        self._ns = ns
+
+    def __getattr__(self, k):
+        return getattr(self._ns, k)
+
+    def __getitem__(self, k):
+        from types import SimpleNamespace
+        v = getattr(self._ns, k)
+        return _EngineObs(v) if isinstance(v, SimpleNamespace) else v
+
+
+def _scripted_battle(monkeypatch, selected):
+    """One-decision game: MAIN menu with two END options, then a seat-0 win.
+    Records every battle_select payload into `selected`."""
+    import json
+    from types import SimpleNamespace
+
+    from tests.builders import observation, option, player, pokemon
+    from tests.fake_cg import OptionType, SelectContext
+
+    prompt = _EngineObs(observation(
+        player(active=pokemon(1)), player(active=pokemon(2)),
+        context=SelectContext.MAIN,
+        options=[option(OptionType.END), option(OptionType.END)]))
+    terminal = _EngineObs(observation(
+        player(active=pokemon(1)), player(active=pokemon(2)), result=0))
+
+    monkeypatch.setattr(old, "battle_start",
+                        lambda d0, d1: (prompt, SimpleNamespace(errorPlayer=-1)))
+    monkeypatch.setattr(old, "battle_select",
+                        lambda picks: selected.append(picks) or terminal)
+    monkeypatch.setattr(old, "battle_finish", lambda: None)
+
+    pop = json.dumps({"decks": ["lucario"]})
+    return pop
+
+
+def test_collect_v2_driver_acts_but_labels_stay_teacher(tmp_path, monkeypatch):
+    import json
+    import rl.matchrunner as mr
+
+    selected: list = []
+    pop_file = tmp_path / "population.json"
+    pop_file.write_text(_scripted_battle(monkeypatch, selected))
+    monkeypatch.setattr(old, "_teacher_pilot",
+                        lambda teacher, deck_ids, instance: (lambda od: [0]))
+
+    driver_specs = []
+
+    def fake_make_pilot(spec, instance):
+        driver_specs.append(spec)
+        return (lambda od: [1]), spec[2]
+
+    monkeypatch.setattr(mr, "make_pilot", fake_make_pilot)
+
+    out = tmp_path / "dagger"
+    old.collect_games_v2(1, pop_file, out_dir=out, driver="ckpt.pt",
+                         driver_mix=1.0, log_every=1000)
+    shard = np.load(next(out.glob("*.npz")))
+    assert shard["labels"].tolist() == [0]      # label: the TEACHER's pick
+    assert selected == [[1]]                    # action: the DRIVER's pick
+    assert driver_specs == [("model", "ckpt.pt", mr.resolve_deck("lucario"))]
+
+    # Without a driver the teacher acts (pre-M8.6 behavior unchanged).
+    selected.clear()
+    out2 = tmp_path / "plain"
+    old.collect_games_v2(1, pop_file, out_dir=out2, log_every=1000)
+    assert selected == [[0]]

@@ -144,7 +144,8 @@ def _teacher_pilot(teacher: str, deck_ids: list[int], instance: str):
 
 def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
                      shard_size: int = 200, log_every: int = 25, seed: int = 0,
-                     teacher: str = "generic") -> None:
+                     teacher: str = "generic", driver: str | None = None,
+                     driver_mix: float = 1.0) -> None:
     """M7.3 collection: teacher self-play across the deck population.
 
     Each seat samples its OWN deck per game — both seats are the teacher (the
@@ -158,12 +159,32 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
       option_ids (sum_N, 2)        int32   acted/target card ids per option
       deck_idx   (D,)              int32   the deciding seat's population index
                                            (G5-style held-out-deck splits)
+
+    driver (M8.6, DAgger): a checkpoint path — game ACTIONS come from this
+    model pilot while LABELS stay the teacher's pick at every visited prompt,
+    so training covers the states the STUDENT actually reaches (the ~12pp
+    clone-vs-teacher gap is BC's compounding drift; this is the standard fix).
+    driver_mix is the per-decision probability the driver acts (else the
+    teacher does) — 1.0 = pure student trajectories. Keep DAgger shards in
+    their own out_dir and TRAIN ON THE UNION with the teacher's shards.
     """
     import random
 
     population = load_population(decks_file)
     rng = random.Random(seed)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    driver_cache: dict[tuple, object] = {}
+
+    def _driver_pilot(deck_ids: list[int]):
+        """One model pilot per distinct deck (torch.load once, not per game —
+        the pilot is stateless so games can share it)."""
+        key = tuple(deck_ids)
+        if key not in driver_cache:
+            from rl.matchrunner import make_pilot
+            driver_cache[key] = make_pilot(("model", driver, deck_ids),
+                                           f"dagger{len(driver_cache)}")[0]
+        return driver_cache[key]
 
     columns = ("states", "state_ids", "options", "option_ids",
                "n_options", "labels", "game_ids", "results", "deck_idx")
@@ -215,7 +236,11 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
             picks = picks[:obs.select.maxCount]
             game_decisions.append((state_ctx, state_ids, opts, opt_ids,
                                    picks[0], player))
-            obs_dict = battle_select([int(i) for i in picks])
+            exec_picks = picks                      # teacher acts (pre-M8.6 path)
+            if driver is not None and rng.random() < driver_mix:
+                exec_picks = _driver_pilot(decks[player])(obs_dict)
+                exec_picks = exec_picks[:obs.select.maxCount]
+            obs_dict = battle_select([int(i) for i in exec_picks])
 
         result = obs_dict["current"]["result"]
         battle_finish()
@@ -325,16 +350,22 @@ def collate(batch):
     return states, options, valid, labels, results
 
 class BCDatasetV2(torch.utils.data.Dataset):
-    """v2 shards: v1 fields + parallel state_ids/option_ids + deck_idx."""
+    """v2 shards: v1 fields + parallel state_ids/option_ids + deck_idx.
 
-    def __init__(self, data_dir: Path = DATA_DIR_V2):
+    data_dir may be one directory or a list of them (M8.6: DAgger trains on
+    the UNION of the teacher's shards and the student-visited correction
+    shards — game ids are re-based across shards, so mixing dirs is safe)."""
+
+    def __init__(self, data_dir: Path | str | list = DATA_DIR_V2):
+        dirs = ([data_dir] if isinstance(data_dir, (str, Path))
+                else list(data_dir))
         cols = {k: [] for k in ("states", "state_ids", "options", "option_ids",
                                 "n_options", "labels", "game_ids", "results",
                                 "deck_idx")}
         starts_list = []
         option_base = 0
         game_base = 0
-        for path in sorted(Path(data_dir).glob("*.npz")):
+        for path in [p for d in dirs for p in sorted(Path(d).glob("*.npz"))]:
             print(f"loading {path.name}", flush=True)
             shard = np.load(path)
             starts = np.cumsum(shard["n_options"]) - shard["n_options"]
@@ -523,25 +554,39 @@ if __name__ == "__main__":
     c.add_argument("--out", type=str, default=None,
                    help="shard output dir (default data/bc_v2; keep different "
                         "teachers in different dirs)")
+    c.add_argument("--driver", type=str, default=None, metavar="CKPT",
+                   help="DAgger (M8.6): this model checkpoint PLAYS the games "
+                        "while labels stay the teacher's picks — collects "
+                        "teacher corrections on student-visited states "
+                        "(v2 teachers only; use a dedicated --out)")
+    c.add_argument("--driver-mix", type=float, default=1.0,
+                   help="per-decision probability the --driver acts instead "
+                        "of the teacher (default 1.0 = pure student play)")
     t = sub.add_parser("train", help="train the BC policy on collected shards")
     t.add_argument("--epochs", type=int, default=10)
     t.add_argument("--name", type=str, default=None)
     t.add_argument("--arch", type=str, default="v1", choices=["v1", "v2"])
     t.add_argument("--data", type=str, default=None,
-                   help="shard dir for --arch v2 (default data/bc_v2)")
+                   help="shard dir for --arch v2 (default data/bc_v2); "
+                        "comma-separate to train on a union, e.g. teacher "
+                        "shards + DAgger correction shards (M8.6)")
     args = p.parse_args()
 
     if args.cmd == "collect":
         if args.teacher in ("generic", "solver", "solver-dev"):
             collect_games_v2(args.games, args.decks, shard_size=args.shard_size,
-                             teacher=args.teacher,
+                             teacher=args.teacher, driver=args.driver,
+                             driver_mix=args.driver_mix,
                              out_dir=Path(args.out) if args.out else DATA_DIR_V2)
         else:
+            if args.driver:
+                raise SystemExit("--driver needs a v2 teacher (generic/solver*)")
             collect_games(args.games, shard_size=args.shard_size,
                           agent=args.agent, deck=args.deck)
     elif args.cmd == "train":
         if args.arch == "v2":
             train_v2(epochs=args.epochs, name=args.name or "osv2_bc",
-                     data_dir=Path(args.data) if args.data else DATA_DIR_V2)
+                     data_dir=([Path(x) for x in args.data.split(",")]
+                               if args.data else DATA_DIR_V2))
         else:
             train(epochs=args.epochs, name=args.name or "bc_v1")
