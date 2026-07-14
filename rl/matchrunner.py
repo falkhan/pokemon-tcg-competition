@@ -20,6 +20,7 @@ Opponent specs (picklable tuples; deck = decks/ name | csv path | list of ids):
   ("generic", deck)         the deck-agnostic rule pilot
   ("solver", deck)          generic pilot + within-turn combo solver (M7.4a)
   ("solver-dev", deck)      solver + the development tier (M8.1: setup search)
+  ("solver-model", ckpt, deck)  neural pilot + the lethal combo solver (M9)
   ("random", deck)          uniform-random legal moves
 
 Usage:
@@ -54,7 +55,7 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model") else spec[1]
+    return spec[2] if spec[0] in ("rule", "model", "solver-model", "mcts") else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -68,8 +69,8 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
-    if kind == "model" and len(parts) == 3:
-        return ("model", parts[1], parts[2])
+    if kind in ("model", "solver-model") and len(parts) == 3:
+        return (kind, parts[1], parts[2])
     raise ValueError(f"cannot parse opponent spec {s!r} "
                      "(want kind:deck or rule:agent[:deck] or model:ckpt:deck)")
 
@@ -99,6 +100,14 @@ def make_pilot(spec: OpponentSpec, instance: str):
         from rl.turn_solver import make_solver_pilot
         ids = resolve_deck(spec[1])
         return make_solver_pilot(ids, instance=instance, dev=True), ids
+    if kind == "solver-model":
+        # ("solver-model", ckpt, deck) — the M9 hybrid: the neural checkpoint
+        # plays every prompt EXCEPT where the lethal triggers T1–T4 fire and
+        # the turn solver finds a prize line (the solver's whole edge over the
+        # generic pilot; the checkpoint inherits it without retraining).
+        from rl.turn_solver import make_solver_pilot
+        fn, ids = make_pilot(("model", spec[1], spec[2]), instance)
+        return make_solver_pilot(ids, instance=instance, inner=fn), ids
     if kind == "mcts":
         # ("mcts", ckpt, deck, n_sims) — the M8.4(b) sims-ladder instrument:
         # MCTS over the checkpoint's own policy/value with L3 archetype

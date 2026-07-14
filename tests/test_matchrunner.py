@@ -26,6 +26,8 @@ LUCARIO = [int(x) for x in (DECKS / "lucario.csv").read_text().split()]
     ("rule:iono", ("rule", "iono", "iono")),
     ("rule:lucario:kyogre", ("rule", "lucario", "kyogre")),
     ("model:checkpoints/bc_v1.pt:kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
+    ("solver-model:checkpoints/osv2_bc2.pt:lucario",
+     ("solver-model", "checkpoints/osv2_bc2.pt", "lucario")),
 ])
 def test_parse_spec_kinds(s, expected):
     assert mr.parse_spec(s) == expected
@@ -43,6 +45,8 @@ def test_resolve_and_spec_deck_contract():
     assert mr.resolve_deck(LUCARIO) == LUCARIO
     assert mr.spec_deck(("rule", "lucario", "kyogre")) == "kyogre"
     assert mr.spec_deck(("generic", "lucario")) == "lucario"
+    assert mr.spec_deck(("solver-model", "checkpoints/x.pt", "lucario")) == "lucario"
+    assert mr.spec_deck(("mcts", "checkpoints/x.pt", "kyogre", 32)) == "kyogre"
     # deck_search's historic helpers still delegate here
     assert ds._resolve_deck("lucario") == LUCARIO
 

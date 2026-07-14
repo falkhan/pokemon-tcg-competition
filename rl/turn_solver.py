@@ -345,18 +345,24 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     return None
 
 
-def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
-    """Generic pilot + within-turn combo solver. `instance` is accepted for
+def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False,
+                      inner=None):
+    """Greedy pilot + within-turn combo solver. `instance` is accepted for
     the matchrunner uniqueness contract (unused: no module-level state).
     dev=True (M8.1) additionally runs the DEVELOPMENT tier on underdeveloped
     boards the lethal triggers ignore (`solver-dev:` matchrunner spec).
+    `inner` (M9) swaps the fallback policy: default is the generic rule pilot,
+    but any `agent(obs_dict) -> picks` callable works — the `solver-model:`
+    spec layers the lethal tiers on a NEURAL checkpoint, since solve_turn /
+    should_solve read only the raw obs and are policy-agnostic.
 
     Solves at ANY prompt the trigger fires on — including submenu prompts
     mid-combo (unlike rl/hybrid.py's MAIN-only guard), otherwise the line
     found at the MAIN prompt would derail one action later. Any solver error
     falls back to the greedy pick: the wrapper must never cost the G1 crash
     gate."""
-    inner = make_generic_pilot(deck)
+    if inner is None:
+        inner = make_generic_pilot(deck)
 
     def agent(obs_dict):
         obs = to_observation_class(obs_dict)

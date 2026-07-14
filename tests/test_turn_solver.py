@@ -436,6 +436,31 @@ def test_dev_pilot_wiring(monkeypatch):
     assert plain_pilot(obs) != [7]           # falls through to greedy
 
 
+def test_inner_pilot_solver_still_overrides(monkeypatch):
+    """inner= swaps only the FALLBACK: a found lethal outranks the inner pick
+    (the solver-model: hybrid inherits the solver's whole edge)."""
+    root, step = combo_tree()
+    patch_engine(monkeypatch, root, step)
+    calls = []
+
+    def neural(obs_dict):
+        calls.append(obs_dict)
+        return [0]                               # would EVOLVE past the lethal
+
+    assert ts.make_solver_pilot(DECK, inner=neural)(root) == [1]
+    assert not calls                             # override never consults inner
+
+
+def test_inner_pilot_answers_when_triggers_decline(monkeypatch):
+    """No trigger -> the injected inner policy answers, not the generic pilot."""
+    monkeypatch.setattr(ts, "should_solve", lambda obs: False)
+    monkeypatch.setattr(ts, "should_solve_dev", lambda obs: False)
+    obs = main_menu(me_board(), op_board(), [EVOLVE, PLAY_HAND0, ATTACK_102, END])
+    pilot = ts.make_solver_pilot(DECK, inner=lambda od: [3])
+    assert pilot(obs) == [3]
+    assert pilot(obs) != make_generic_pilot(DECK)(obs)
+
+
 def test_source_stays_bundle_pure():
     from pathlib import Path
     src = Path(ts.__file__).read_text()
