@@ -142,9 +142,18 @@ def _teacher_pilot(teacher: str, deck_ids: list[int], instance: str):
     return fn
 
 
+def _student_pilot(student: str, deck_ids: list[int], instance: str):
+    """The DAgger acting policy: a `model:` checkpoint pilot (greedy, same as
+    every eval). Routed through matchrunner.make_pilot so the dimension shims
+    and v1/v2 detection come for free. Seam for the offline tests."""
+    from rl.matchrunner import make_pilot
+    fn, _ = make_pilot(("model", student, deck_ids), instance)
+    return fn
+
+
 def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
                      shard_size: int = 200, log_every: int = 25, seed: int = 0,
-                     teacher: str = "generic") -> None:
+                     teacher: str = "generic", student: str | None = None):
     """M7.3 collection: teacher self-play across the deck population.
 
     Each seat samples its OWN deck per game — both seats are the teacher (the
@@ -158,6 +167,16 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
       option_ids (sum_N, 2)        int32   acted/target card ids per option
       deck_idx   (D,)              int32   the deciding seat's population index
                                            (G5-style held-out-deck splits)
+
+    student (M9 DAgger): a checkpoint path. The STUDENT then plays every
+    prompt (both seats), so games visit the student's own state distribution
+    — the states where BC's compounding drift lives — while the teacher only
+    LABELS each prompt (labels = teacher's top pick, exactly as above).
+    Returns the student/teacher top-1 agreement rate: fidelity measured
+    on-student-distribution, directly comparable to the ~0.89 on-teacher
+    val fidelity (the gap between the two is the DAgger opportunity).
+    Train by aggregating these shards WITH the round-0 teacher shards
+    (classic DAgger), e.g. both dirs merged via `--data`.
     """
     import random
 
@@ -170,6 +189,7 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
     shard: dict[str, list] = {k: [] for k in columns}
     shard_idx = sum(1 for _ in out_dir.glob("shard_*.npz"))
     wins = [0, 0, 0]
+    agree = labeled = 0
 
     def flush():
         nonlocal shard_idx
@@ -196,6 +216,9 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
         decks = [population[picks_idx[0]], population[picks_idx[1]]]
         pilots = [_teacher_pilot(teacher, d, f"bc{game}_{seat}")
                   for seat, d in enumerate(decks)]
+        actors = pilots if student is None else \
+            [_student_pilot(student, d, f"da{game}_{seat}")
+             for seat, d in enumerate(decks)]
 
         obs_dict, start_data = battle_start(decks[0], decks[1])
         if start_data.errorPlayer >= 0:
@@ -204,7 +227,13 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
         game_decisions: list[tuple] = []
         while obs_dict["current"]["result"] < 0:
             player = obs_dict["current"]["yourIndex"]
-            picks = pilots[player](obs_dict)
+            label_picks = pilots[player](obs_dict)
+            if student is None:
+                picks = label_picks
+            else:
+                picks = actors[player](obs_dict)
+                agree += int(picks[0] == label_picks[0])
+                labeled += 1
 
             obs = to_observation_class(obs_dict)
             state_num, state_ids = encode_state_v2(obs.current, decks[player])
@@ -214,7 +243,7 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
             opt_ids = np.stack([ids for _, ids in pairs])
             picks = picks[:obs.select.maxCount]
             game_decisions.append((state_ctx, state_ids, opts, opt_ids,
-                                   picks[0], player))
+                                   label_picks[0], player))
             obs_dict = battle_select([int(i) for i in picks])
 
         result = obs_dict["current"]["result"]
@@ -235,11 +264,18 @@ def collect_games_v2(n_games: int, decks_file, out_dir: Path = DATA_DIR_V2,
         if (game + 1) % shard_size == 0:
             flush()
         if (game + 1) % log_every == 0:
-            print(f"[{game + 1}/{n_games}] p0/p1/draw = {wins[0]}/{wins[1]}/{wins[2]}",
-                  flush=True)
+            extra = f"  agree = {agree / max(1, labeled):.3f}" if student else ""
+            print(f"[{game + 1}/{n_games}] p0/p1/draw = {wins[0]}/{wins[1]}/{wins[2]}"
+                  f"{extra}", flush=True)
 
     flush()
     print(f"done: {n_games} games -> {shard_idx} shards in {out_dir}")
+    if student is not None:
+        agreement = agree / max(1, labeled)
+        print(f"student/teacher top-1 agreement: {agreement:.3f} "
+              f"({agree}/{labeled}) — on-STUDENT-distribution fidelity")
+        return agreement
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -325,16 +361,20 @@ def collate(batch):
     return states, options, valid, labels, results
 
 class BCDatasetV2(torch.utils.data.Dataset):
-    """v2 shards: v1 fields + parallel state_ids/option_ids + deck_idx."""
+    """v2 shards: v1 fields + parallel state_ids/option_ids + deck_idx.
 
-    def __init__(self, data_dir: Path = DATA_DIR_V2):
+    data_dir may be one dir or a list of dirs — DAgger training (M9)
+    aggregates the teacher round-0 shards with the student-rollout shards."""
+
+    def __init__(self, data_dir=DATA_DIR_V2):
+        dirs = data_dir if isinstance(data_dir, (list, tuple)) else [data_dir]
         cols = {k: [] for k in ("states", "state_ids", "options", "option_ids",
                                 "n_options", "labels", "game_ids", "results",
                                 "deck_idx")}
         starts_list = []
         option_base = 0
         game_base = 0
-        for path in sorted(Path(data_dir).glob("*.npz")):
+        for path in sorted(p for d in dirs for p in Path(d).glob("*.npz")):
             print(f"loading {path.name}", flush=True)
             shard = np.load(path)
             starts = np.cumsum(shard["n_options"]) - shard["n_options"]
@@ -387,11 +427,36 @@ def collate_v2(batch):
     return states, state_ids, options, option_ids, valid, labels, results, deck_idx
 
 
+def weighted_policy_loss(logits, labels, results, beta: float = 0.0):
+    """Masked cross-entropy, optionally outcome-weighted (M9 AWR-lite).
+
+    beta=0 is the plain BC objective. beta>0 multiplies each decision's CE by
+    exp(beta * result) — result is +1 win / -1 loss / 0 draw for the deciding
+    player — mean-normalized per batch so the loss scale (and the lr that goes
+    with it) stays comparable across betas. Clone winners' decisions harder
+    than losers': advantage-weighted regression with a zero baseline, the
+    supervised path to EXCEED the teacher where policy-gradient credit was
+    measured too weak to move a BC-anchored policy (M8.3)."""
+    ce = F.cross_entropy(logits, labels, reduction="none")
+    if beta == 0.0:
+        return ce.mean()
+    weights = torch.exp(beta * results)
+    weights = weights / weights.mean().clamp_min(1e-8)
+    return (weights * ce).mean()
+
+
 def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
-             data_dir: Path = DATA_DIR_V2):
+             data_dir=DATA_DIR_V2, weight_beta: float = 0.0):
     """Train OptionScorerV2 on generic-teacher v2 shards. Reports overall AND
     per-deck val accuracy (the G5 deck-conditioning signal). BC should MATCH
-    the teacher, not beat it — the M7.3 gate is fidelity >= 0.80 val top-1."""
+    the teacher, not beat it — the M7.3 gate is fidelity >= 0.80 val top-1.
+
+    weight_beta > 0 (M9): outcome-weighted cloning (weighted_policy_loss).
+    Fidelity is then NOT the objective — deviating from the teacher on losing
+    decisions is the point — so the checkpoint criterion switches from best
+    val accuracy to lowest weighted val CE, and the epoch line adds the
+    win/loss-decision accuracy split (expect win-acc to hold while loss-acc
+    drops). The strength read stays [ENGINE]: vs solver:lucario, n>=400."""
     ds = BCDatasetV2(data_dir)
 
     rng = np.random.default_rng(0)
@@ -410,7 +475,7 @@ def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
 
     model = OptionScorerV2()
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
-    best_acc = 0.0
+    best_score = -float("inf")
 
     for epoch in range(epochs):
         model.train()
@@ -419,13 +484,16 @@ def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
             opt.zero_grad()
             logits, value = model(states, sids, options, oids)
             logits = logits.masked_fill(~valid, -1e9)
-            loss = F.cross_entropy(logits, labels) + 0.5 * F.huber_loss(value, results)
+            loss = (weighted_policy_loss(logits, labels, results, weight_beta)
+                    + 0.5 * F.huber_loss(value, results))
             loss.backward()
             opt.step()
             running += loss.item()
 
         model.eval()
         correct = total = 0
+        wce_sum = 0.0
+        by_outcome = {1: [0, 0], -1: [0, 0], 0: [0, 0]}   # result -> [hits, n]
         per_deck: dict[int, list[int]] = {}
         with torch.no_grad():
             for states, sids, options, oids, valid, labels, results, didx in val_dl:
@@ -434,17 +502,29 @@ def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
                 hit = (logits.argmax(dim=1) == labels)
                 correct += hit.sum().item()
                 total += len(labels)
+                wce_sum += weighted_policy_loss(logits, labels, results,
+                                                weight_beta).item() * len(labels)
+                for r, h in zip(results.tolist(), hit.tolist()):
+                    row = by_outcome[int(r)]
+                    row[0] += h
+                    row[1] += 1
                 for d, h in zip(didx.tolist(), hit.tolist()):
                     per_deck.setdefault(d, [0, 0])
                     per_deck[d][0] += h
                     per_deck[d][1] += 1
         acc = correct / max(1, total)
+        val_wce = wce_sum / max(1, total)
         by_deck = " ".join(f"d{d}:{c / n:.2f}" for d, (c, n) in sorted(per_deck.items()))
+        wl = " ".join(f"{k}:{c / max(1, n):.3f}" for k, (c, n) in
+                      (("win", by_outcome[1]), ("loss", by_outcome[-1])))
         print(f"epoch {epoch}: train_loss {running / len(train_dl):.3f}  "
-              f"val_acc {acc:.3f}  [{by_deck}]")
+              f"val_acc {acc:.3f}  val_wce {val_wce:.3f}  [{wl}]  [{by_deck}]")
 
-        if acc > best_acc:
-            best_acc = acc
+        # beta=0: best fidelity (unchanged). beta>0: lowest weighted val CE —
+        # the held-out objective; overall accuracy would bias back to beta=0.
+        score = acc if weight_beta == 0.0 else -val_wce
+        if score > best_score:
+            best_score = score
             Path(ROOT / "checkpoints").mkdir(exist_ok=True)
             torch.save(model.state_dict(), ROOT / "checkpoints" / f"{name}.pt")
 
@@ -523,25 +603,41 @@ if __name__ == "__main__":
     c.add_argument("--out", type=str, default=None,
                    help="shard output dir (default data/bc_v2; keep different "
                         "teachers in different dirs)")
+    c.add_argument("--student", type=str, default=None, metavar="CKPT",
+                   help="M9 DAgger: this checkpoint PLAYS every prompt, the "
+                        "teacher only labels; prints student/teacher agreement "
+                        "(v2 teachers only; keep DAgger shards in their own --out)")
     t = sub.add_parser("train", help="train the BC policy on collected shards")
     t.add_argument("--epochs", type=int, default=10)
     t.add_argument("--name", type=str, default=None)
     t.add_argument("--arch", type=str, default="v1", choices=["v1", "v2"])
     t.add_argument("--data", type=str, default=None,
-                   help="shard dir for --arch v2 (default data/bc_v2)")
+                   help="shard dir(s) for --arch v2, comma-separated to "
+                        "aggregate e.g. teacher + DAgger rounds "
+                        "(default data/bc_v2)")
+    t.add_argument("--weight-outcome", type=float, default=0.0, metavar="BETA",
+                   help="M9 outcome-weighted cloning: scale each decision's CE "
+                        "by exp(BETA * result), mean-normalized (v2 only; "
+                        "0 = plain BC)")
     args = p.parse_args()
 
     if args.cmd == "collect":
         if args.teacher in ("generic", "solver", "solver-dev"):
             collect_games_v2(args.games, args.decks, shard_size=args.shard_size,
-                             teacher=args.teacher,
+                             teacher=args.teacher, student=args.student,
                              out_dir=Path(args.out) if args.out else DATA_DIR_V2)
         else:
+            if args.student:
+                p.error("--student requires a v2 teacher (generic/solver/solver-dev)")
             collect_games(args.games, shard_size=args.shard_size,
                           agent=args.agent, deck=args.deck)
     elif args.cmd == "train":
         if args.arch == "v2":
+            data = ([Path(x) for x in args.data.split(",")] if args.data
+                    else DATA_DIR_V2)
             train_v2(epochs=args.epochs, name=args.name or "osv2_bc",
-                     data_dir=Path(args.data) if args.data else DATA_DIR_V2)
+                     data_dir=data, weight_beta=args.weight_outcome)
         else:
+            if args.weight_outcome:
+                p.error("--weight-outcome requires --arch v2")
             train(epochs=args.epochs, name=args.name or "bc_v1")

@@ -154,6 +154,126 @@ def test_write_shard_rejects_undeclared_v2_column(tmp_path):
         write_shard(tmp_path / "x.npz", {"mystery": [1]}, frozenset(), frozenset())
 
 
+def test_bcdatasetv2_aggregates_multiple_dirs(tmp_path):
+    # DAgger training loads teacher round-0 + student-rollout dirs together.
+    bc_dir = make_v2_shards(tmp_path)
+    single = old.BCDatasetV2(bc_dir)
+    d1, d2 = tmp_path / "a", tmp_path / "b"
+    d1.mkdir(), d2.mkdir()
+    (bc_dir / "shard_0000.npz").rename(d1 / "shard_0000.npz")
+    (bc_dir / "shard_0001.npz").rename(d2 / "shard_0001.npz")
+    multi = old.BCDatasetV2([d1, d2])
+    for attr in ("states", "options", "labels", "game_ids", "starts", "results"):
+        assert np.array_equal(getattr(single, attr), getattr(multi, attr)), attr
+
+
+# --- M9 outcome-weighted cloning (AWR-lite) ---------------------------------
+
+def test_weighted_policy_loss_beta0_is_plain_ce():
+    torch.manual_seed(1)
+    logits = torch.randn(8, 5)
+    labels = torch.randint(0, 5, (8,))
+    results = torch.tensor([1.0, -1.0] * 4)
+    plain = torch.nn.functional.cross_entropy(logits, labels)
+    assert torch.allclose(old.weighted_policy_loss(logits, labels, results, 0.0),
+                          plain)
+
+
+def test_weighted_policy_loss_upweights_win_decisions():
+    torch.manual_seed(2)
+    logits = torch.randn(6, 4)
+    labels = torch.randint(0, 4, (6,))
+    results = torch.tensor([1.0, 1.0, -1.0, -1.0, 0.0, 0.0])
+    beta = 1.0
+    ce = torch.nn.functional.cross_entropy(logits, labels, reduction="none")
+    w = torch.exp(beta * results)
+    expected = (w / w.mean() * ce).mean()
+    got = old.weighted_policy_loss(logits, labels, results, beta)
+    assert torch.allclose(got, expected)
+    # a win decision's CE moves the weighted loss more than a loss decision's
+    assert (w[0] / w.mean()) > 1.0 > (w[2] / w.mean())
+
+
+def test_weighted_policy_loss_normalization_keeps_scale():
+    # All-same-outcome batches must reduce to the plain mean CE (weights = 1),
+    # so beta cannot silently rescale the effective lr.
+    torch.manual_seed(3)
+    logits = torch.randn(5, 3)
+    labels = torch.randint(0, 3, (5,))
+    for r in (1.0, -1.0):
+        results = torch.full((5,), r)
+        assert torch.allclose(
+            old.weighted_policy_loss(logits, labels, results, 2.0),
+            torch.nn.functional.cross_entropy(logits, labels))
+
+
+# --- M9 DAgger collection: student acts, teacher labels ---------------------
+
+def _scripted_battle(monkeypatch, prompts, winner=0):
+    """Wire collect_games_v2's engine seam to a fixed prompt list. Each prompt
+    is a builders observation; the battle serves them in order to seat 0, then
+    ends with `winner`. Returns the list of picks battle_select received."""
+    from types import SimpleNamespace
+    selections = []
+    frames = [{"current": {"result": -1, "yourIndex": 0}, "obs": o} for o in prompts]
+    frames.append({"current": {"result": winner, "yourIndex": 0}})
+    it = iter(frames[1:])
+    monkeypatch.setattr(old, "battle_start",
+                        lambda d0, d1: (frames[0], SimpleNamespace(errorPlayer=-1)))
+    monkeypatch.setattr(old, "battle_select",
+                        lambda picks: (selections.append(picks), next(it))[1])
+    monkeypatch.setattr(old, "battle_finish", lambda: None)
+    monkeypatch.setattr(old, "to_observation_class", lambda d: d["obs"])
+    return selections
+
+
+def test_dagger_student_acts_teacher_labels(tmp_path, monkeypatch):
+    import json
+    from tests.builders import observation, option, player
+    from tests.fake_cg import OptionType, SelectContext
+
+    deck = [1] * 10 + [3] * 4 + [6] * 40 + [7] * 6
+    pop = tmp_path / "population.json"
+    pop.write_text(json.dumps({"decks": [deck]}))
+    menu = [option(OptionType.END), option(OptionType.END)]
+    prompts = [observation(player(), player(), context=SelectContext.MAIN,
+                           options=menu) for _ in range(2)]
+    selections = _scripted_battle(monkeypatch, prompts, winner=0)
+
+    monkeypatch.setattr(old, "_teacher_pilot", lambda t, d, i: lambda od: [0, 1])
+    monkeypatch.setattr(old, "_student_pilot", lambda s, d, i: lambda od: [1, 0])
+
+    out = tmp_path / "dagger"
+    agreement = old.collect_games_v2(1, pop, out_dir=out, student="stu.pt")
+
+    assert selections == [[1], [1]]          # the STUDENT's pick drove the game
+    assert agreement == 0.0                  # student always disagreed
+    shard = np.load(next(out.glob("*.npz")))
+    assert shard["labels"].tolist() == [0, 0]     # ...but the TEACHER labeled
+    assert shard["results"].tolist() == [1.0, 1.0]  # seat 0 decided and won
+
+
+def test_teacher_collection_unchanged_without_student(tmp_path, monkeypatch):
+    import json
+    from tests.builders import observation, option, player
+    from tests.fake_cg import OptionType, SelectContext
+
+    deck = [1] * 10 + [3] * 4 + [6] * 40 + [7] * 6
+    pop = tmp_path / "population.json"
+    pop.write_text(json.dumps({"decks": [deck]}))
+    prompts = [observation(player(), player(), context=SelectContext.MAIN,
+                           options=[option(OptionType.END), option(OptionType.END)])]
+    selections = _scripted_battle(monkeypatch, prompts, winner=1)
+    monkeypatch.setattr(old, "_teacher_pilot", lambda t, d, i: lambda od: [1, 0])
+
+    out = tmp_path / "teacher"
+    assert old.collect_games_v2(1, pop, out_dir=out) is None
+    assert selections == [[1]]               # teacher both acts and labels
+    shard = np.load(next(out.glob("*.npz")))
+    assert shard["labels"].tolist() == [1]
+    assert shard["results"].tolist() == [-1.0]    # seat 0 decided, seat 1 won
+
+
 def test_load_population_resolves_names_and_paths(tmp_path):
     import json
     pop = tmp_path / "population.json"
