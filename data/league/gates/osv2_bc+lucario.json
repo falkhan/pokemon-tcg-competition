@@ -1,0 +1,52 @@
+{
+  "entry_id": "osv2_bc+lucario",
+  "field_version": "meta_v1",
+  "n_scale": 0.5,
+  "date": "2026-07-11T21:57:11Z",
+  "gates": {
+    "G1": {
+      "threshold": 0,
+      "n": 100,
+      "value": 0.0,
+      "pass": true,
+      "date": "2026-07-11T21:54:15Z"
+    },
+    "G2": {
+      "threshold": 0.9,
+      "n": 100,
+      "value": 0.64,
+      "pass": false,
+      "date": "2026-07-11T21:54:40Z"
+    },
+    "G3": {
+      "threshold": 0.55,
+      "n": 200,
+      "value": 0.4375,
+      "pass": false,
+      "date": "2026-07-11T21:55:55Z"
+    },
+    "G4": {
+      "threshold": 0.35,
+      "n": 200,
+      "value": 0.3,
+      "pass": false,
+      "date": "2026-07-11T21:57:11Z"
+    },
+    "G5": {
+      "threshold": -0.03,
+      "n": 0,
+      "value": 0.0,
+      "pass": false,
+      "date": "2026-07-11T21:57:11Z",
+      "reason": "no held-out decks"
+    },
+    "G6": {
+      "threshold": 50.0,
+      "n": 33364,
+      "value": 5.4068,
+      "pass": true,
+      "date": "2026-07-11T21:57:11Z",
+      "note": "mean move ms over G1-G4; p99 game overage measured on-Kaggle only"
+    }
+  }
+}

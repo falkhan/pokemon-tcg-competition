@@ -1,0 +1,101 @@
+Warning! The implementation of 'quoridor' has known issues. Please see the games list on github or the code for details.
+Warning! The implementation of 'quoridor' has known issues. Please see the games list on github or the code for details.
+Warning! The implementation of 'quoridor' has known issues. Please see the games list on github or the code for details.
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO: Successfully loaded OpenSpiel environments: 37.
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_amazons
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_ant_foraging_arena
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_backgammon
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_bargaining
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_python_ant_foraging
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_breakthrough
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_bridge_arena
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_checkers
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_chess
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_clobber
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_coin_game
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_coin_game_arena
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_connect_four
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_dark_hex
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_dots_and_boxes
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_gin_rummy
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_go
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_goofspiel
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_havannah
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_hearts
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_hex
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_hive
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_lines_of_action
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_mancala
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_matching_pennies_3p
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_negotiation
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_oshi_zumo
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_othello
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_quoridor
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_repeated_game
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_tic_tac_toe
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_ultimate_tic_tac_toe
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_snake
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_y
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_universal_poker
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_repeated_poker
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO:    open_spiel_python_repeated_pokerkit
+[kaggle_environments.envs.open_spiel_env.open_spiel_env] INFO: OpenSpiel games skipped: 0.
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/deepseek/deepseek-v3.2-speciale not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/qwen/qwen3-max not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/z-ai/glm-4.5 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/z-ai/glm-4.5-air not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/qwen/qwen3-30b-a3b not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/x-ai/grok-4-fast not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/moonshotai/kimi-k2-thinking not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/google/gemini-2.5-flash-lite not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openrouter/meituan/longcat-flash-chat not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-3-5-haiku@20241022 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-3-5-sonnet-v2@20241022 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-opus-4@20250514 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-opus-4-1@20250805 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-sonnet-4@20250514 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-sonnet-4-5@20250929 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-sonnet-4-6@default not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-opus-4-5@20251101 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/anthropic/claude-opus-4-6@default not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/deepseek-ai/deepseek-r1-0528 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/deepseek-ai/deepseek-v3.1 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-1.5-flash not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-1.5-pro not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-2.0-flash-001 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-2.0-flash-lite not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-2.5-flash not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-2.5-flash-lite not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-2.5-pro not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-3-pro-preview not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-3.1-pro-preview not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/google/gemini-3-flash-preview not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/meta/llama-3.1-70b not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/openai/gpt-oss-20b not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/openai/gpt-oss-120b not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+[92m10:17:21 - LiteLLM:WARNING[0m: utils.py:2705 - register_model: model=openai/qwen/qwen3-235b-a22b-instruct-2507 not in built-in cost map and no prefix/region variant matched; cache cost fields will default to 0. To track cache cost, add cache_creation_input_token_cost and cache_read_input_token_cost to model_info
+critic warm-start from checkpoints/bc_v1_value.pt: ['value_head.0.bias', 'value_head.0.weight', 'value_head.2.bias', 'value_head.2.weight']
+baseline: current best vs_solver 28.5%
+iter 0: {'policy_loss': -0.004198772858470938, 'value_loss': 0.23684715652881666, 'entropy': 0.5828821872209393, 'ratio': 0.9969556283119113}
+iter 1: {'policy_loss': -0.0044797728513935355, 'value_loss': 0.11424018086002367, 'entropy': 0.5736816425512477, 'ratio': 1.0004592032694235}
+iter 2: {'policy_loss': -0.001991659299660982, 'value_loss': 0.08326201090081171, 'entropy': 0.5905808660794388, 'ratio': 0.9974175732244145}
+iter 3: {'policy_loss': -0.0015903003156629645, 'value_loss': 0.06588522880338132, 'entropy': 0.5842930906536904, 'ratio': 0.9977303546938029}
+iter 4: {'policy_loss': -0.003804038985565837, 'value_loss': 0.05719364277042803, 'entropy': 0.5923601999169305, 'ratio': 1.0009598040155}
+iter 4: vs_solver 34.5%  vs_teacher 30.0%
+iter 4: PROMOTED (best vs_solver 34.5%)
+iter 5: {'policy_loss': -0.0052001699805259705, 'value_loss': 0.05174819710339571, 'entropy': 0.5979619303414988, 'ratio': 0.99736778507399}
+iter 6: {'policy_loss': -0.003039429926006547, 'value_loss': 0.05051108585162596, 'entropy': 0.5841975328935818, 'ratio': 1.0007918917319991}
+iter 7: {'policy_loss': -0.002758876407622463, 'value_loss': 0.05384805293546783, 'entropy': 0.6114246219396591, 'ratio': 0.9990070872836643}
+iter 8: {'policy_loss': -0.0033268959120695673, 'value_loss': 0.047842563021668165, 'entropy': 0.6014931163815564, 'ratio': 1.0009477301392444}
+iter 9: {'policy_loss': -0.005182036866123478, 'value_loss': 0.04487972390941448, 'entropy': 0.6094514068630007, 'ratio': 0.9981607490115696}
+iter 9: vs_solver 29.5%  vs_teacher 31.0%
+iter 10: {'policy_loss': -0.0022797024718278812, 'value_loss': 0.05015091144790252, 'entropy': 0.6046890997224383, 'ratio': 0.9993791818618775}
+iter 11: {'policy_loss': -0.0058129092440535515, 'value_loss': 0.049127484226356384, 'entropy': 0.639160618185997, 'ratio': 0.9989826672750971}
+iter 12: {'policy_loss': -0.0033138543341515794, 'value_loss': 0.04574837719814645, 'entropy': 0.6181453466415405, 'ratio': 1.00125263399548}
+iter 13: {'policy_loss': -0.0030205399889382534, 'value_loss': 0.045158116961829364, 'entropy': 0.6302581233903766, 'ratio': 0.9983373436455926}
+iter 14: {'policy_loss': -0.005959161294158548, 'value_loss': 0.045660042040981355, 'entropy': 0.6322829666733741, 'ratio': 1.0000802436470986}
+iter 14: vs_solver 26.0%  vs_teacher 23.0%
+iter 15: {'policy_loss': -0.005097995388179856, 'value_loss': 0.04348412439551042, 'entropy': 0.6302060860654582, 'ratio': 1.0002999791632528}
+iter 16: {'policy_loss': -0.003468885535109253, 'value_loss': 0.04662064073528064, 'entropy': 0.6195968291226853, 'ratio': 0.9968131092634607}
+iter 17: {'policy_loss': -0.005633119701784342, 'value_loss': 0.04483934797029546, 'entropy': 0.6395259659658087, 'ratio': 0.9961822606781696}
+iter 18: {'policy_loss': -0.005114474270764428, 'value_loss': 0.04210196256948014, 'entropy': 0.6388641856610775, 'ratio': 0.9988447080055872}
