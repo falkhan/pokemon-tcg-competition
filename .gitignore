@@ -4,7 +4,7 @@
 
 replays/**
 dist/**
-cg
+
 pokemon-tcg-ai-battle
 __pycache__/
 # Rule-agent bundle: main.py + deck.csv are committed source; cg/ (via `cg` above)
@@ -16,7 +16,7 @@ submission_rules/rl/
 *.pdf
 data/EN_Card_Data.csv
 events.out.*
-
+submission/cg/**
 # Kaggle episode-replay cache (rl/kaggle_ingest.py): immutable gzip blobs, can be
 # hundreds of MB and are re-fetchable. The derived parquets/snapshots ARE committed.
 data/kaggle/raw/
