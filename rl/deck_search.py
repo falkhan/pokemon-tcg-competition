@@ -83,36 +83,97 @@ def mutate_flex(deck: list[int], n_swaps: int | None = None) -> list[int]:
     raise RuntimeError("could not produce a legal flex mutation in 200 tries")
 
 
+# --- Diverse-field fitness (M7.1, docs/M7-plan.md §2.4) ---
+
+# The OpponentSpec vocabulary and battle loops moved to rl/matchrunner.py (M7.2,
+# the canonical home). These wrappers keep this module's historic signatures.
+OpponentSpec = tuple
+
+
+def _resolve_deck(deck) -> list[int]:
+    from rl.matchrunner import resolve_deck
+    return resolve_deck(deck)
+
+
+def _spec_pilot(spec: OpponentSpec, instance: str):
+    """Build (agent_callable, deck_ids) for an opponent spec. [ENGINE]"""
+    from rl.matchrunner import make_pilot
+    return make_pilot(spec, instance)
+
+
+def _play_vs_spec(deck: list[int], spec: OpponentSpec, n_games: int,
+                  pilot: str = "generic") -> list[int]:
+    """Play `deck` (piloted by `pilot`) vs one opponent spec, slot-fair.
+    Returns per-game results: 0 = deck won, 1 = opponent, 2 = draw. [ENGINE]"""
+    from rl.matchrunner import play_series
+    mine = ("generic", deck) if pilot == "generic" else ("rule", pilot, deck)
+    return play_series(mine, spec, n_games)
+
+
+def field_hill_climb(seed_deck: list[int], field: list[OpponentSpec],
+                     proposals: int = 50, games_per_opp: int = 30,
+                     min_gain: float = 0.02, pilot: str = "generic", seed: int = 0,
+                     fitness_fn=None):
+    """Archetype-preserving hill-climb on FIELD fitness — the M7.1 refinement
+    pass (M7-plan §2.4). Unlike hill_climb below (candidate vs champion mirror,
+    the documented overfit trap), every proposal is scored against the full
+    diverse field, so improvements must generalize. Accepts only clear gains
+    (min_gain over the current champion's fitness, same n). Returns
+    (champion_deck, champion_fitness, history). [ENGINE] unless fitness_fn
+    is injected."""
+    fitness_fn = fitness_fn or field_fitness
+    rng = random.Random(seed)
+    champ = list(seed_deck)
+    best, _ = fitness_fn(champ, field, games_per_opp=games_per_opp, pilot=pilot)
+    print(f"seed fitness: {best:.3f} (field of {len(field)}, "
+          f"{games_per_opp} games/opp)", flush=True)
+    history = [("seed", round(best, 4), "SEED")]
+    for p in range(proposals):
+        cand = mutate_flex(champ, n_swaps=rng.randint(1, 2))
+        fit, _ = fitness_fn(cand, field, games_per_opp=games_per_opp, pilot=pilot)
+        if fit >= best + min_gain:
+            champ, best = cand, fit
+            history.append((p, round(fit, 4), "ACCEPT"))
+            print(f"proposal {p}: fitness {fit:.3f} -> ACCEPTED", flush=True)
+        else:
+            history.append((p, round(fit, 4), "reject"))
+    return champ, best, history
+
+
+def field_fitness(deck: list[int], field: list[OpponentSpec], games_per_opp: int = 60,
+                  pilot: str = "generic", weights: list[float] | None = None,
+                  play_fn=None) -> tuple[float, dict]:
+    """Fitness vs a diverse FIXED field — never mirror-only (the documented
+    mirror-overfit failure, DECISIONS.md 2026-07-08). Slot-fair vs each member.
+
+    Returns (weighted mean win rate, per-opponent breakdown). Draws count as
+    half a win. `play_fn(deck, spec, n_games, pilot)` is injectable for tests;
+    the default engine loop is [ENGINE].
+    """
+    if weights is not None and len(weights) != len(field):
+        raise ValueError(f"{len(weights)} weights for {len(field)} field members")
+    play = play_fn or _play_vs_spec
+    per_opp, total, wsum = {}, 0.0, 0.0
+    for k, spec in enumerate(field):
+        r = play(deck, spec, games_per_opp, pilot)
+        w = sum(1 for x in r if x == 0)
+        d = sum(1 for x in r if x == 2)
+        wr = (w + 0.5 * d) / len(r)
+        per_opp[str(spec)] = {"wr": round(wr, 4), "wins": w, "draws": d, "n": len(r)}
+        weight = weights[k] if weights else 1.0
+        total += weight * wr
+        wsum += weight
+    return total / wsum if wsum else 0.0, per_opp
+
+
 # --- Self-play deck evaluation + evolutionary search (M4) ---
 
 def matchup(deckA: list[int], deckB: list[int], n_games: int = 12,
             agent: str = "lucario") -> list[int]:
     """Play deckA vs deckB, the SAME rule agent piloting both sides, slot-fair.
     Returns per-game results: 0 = A won, 1 = B won, 2 = draw. Direct engine loop (fast)."""
-    from cg.game import battle_start, battle_select, battle_finish
-    from rl.teacher import load_teacher
-
-    pilots = [load_teacher(f"dm_{agent}_0", agent=agent, deck=agent),
-              load_teacher(f"dm_{agent}_1", agent=agent, deck=agent)]
-    out = []
-    for g in range(n_games):
-        a_seat = g % 2                                   # slot-fair
-        d0, d1 = (deckA, deckB) if a_seat == 0 else (deckB, deckA)
-        obs_dict, start = battle_start(d0, d1)
-        if start.errorPlayer >= 0:
-            battle_finish()
-            raise ValueError(f"battle_start rejected a deck (errorType={start.errorType})")
-        while obs_dict["current"]["result"] < 0:
-            seat = obs_dict["current"]["yourIndex"]
-            obs_dict = battle_select([int(i) for i in pilots[seat](obs_dict)])
-        res = obs_dict["current"]["result"]              # 0/1 winner seat, 2 draw
-        battle_finish()
-        if res == 2:
-            out.append(2)
-        else:                                            # map winner seat -> A/B
-            a_won = (res == 0) if a_seat == 0 else (res == 1)
-            out.append(0 if a_won else 1)
-    return out
+    from rl.matchrunner import play_series
+    return play_series(("rule", agent, deckA), ("rule", agent, deckB), n_games)
 
 
 def rate_population(decks, n_rounds: int = 4, games_per_pair: int = 8,
@@ -180,3 +241,45 @@ def evolve(seed_deck: list[int], pop_size: int = 12, generations: int = 6,
     ords = rate_population(pop, n_rounds=6, agent=agent, seed=rng.randint(0, 1 << 30))
     best = max(range(len(pop)), key=lambda k: ords[k])
     return pop[best], round(ords[best], 2), history
+
+
+def _main() -> None:
+    """CLI for the refinement pass (M7-plan §6): hill-climb a deck on the
+    league's anchor field under the generic pilot. [ENGINE]
+
+    Usage:  python -m rl.deck_search climb --deck decks/gen/deck_<hash>.csv
+    """
+    import argparse
+
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("climb", help="field-fitness hill-climb (anchor field, generic pilot)")
+    s.add_argument("--deck", required=True, help="decks/ name, csv path, or league hash")
+    s.add_argument("--proposals", type=int, default=50)
+    s.add_argument("--games-per-opp", type=int, default=30)
+    s.add_argument("--min-gain", type=float, default=0.02)
+    s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--out", type=Path, default=None,
+                   help="output csv (default decks/gen/refined_<hash12>.csv)")
+    a = p.parse_args()
+
+    # Lazy: league imports validate_deck from this module at its top level.
+    from rl.kaggle_ingest import _write_deck_csv, deck_hash
+    from rl.league import _load_or_init, anchor_field
+    from rl.matchrunner import resolve_deck
+
+    seed_deck = resolve_deck(a.deck)
+    field = anchor_field(_load_or_init())
+    champ, best, history = field_hill_climb(
+        seed_deck, field, proposals=a.proposals, games_per_opp=a.games_per_opp,
+        min_gain=a.min_gain, seed=a.seed)
+    accepted = sum(1 for _, _, tag in history if tag == "ACCEPT")
+    out = a.out or (Path(__file__).resolve().parent.parent / "decks" / "gen"
+                    / f"refined_{deck_hash(champ)[:12]}.csv")
+    _write_deck_csv(out, champ)
+    print(f"{accepted}/{a.proposals} accepted; final fitness {best:.3f} -> {out}",
+          flush=True)
+
+
+if __name__ == "__main__":
+    _main()

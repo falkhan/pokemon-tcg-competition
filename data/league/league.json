@@ -1,0 +1,1003 @@
+{
+  "entries": {
+    "lucario_expert": {
+      "entry_id": "lucario_expert",
+      "pilot": [
+        "rule",
+        "lucario",
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+      ],
+      "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "mu": 51.649115252374195,
+      "sigma": 2.435403587674608,
+      "games": 2480,
+      "frozen": true,
+      "origin": "anchor"
+    },
+    "iono_expert": {
+      "entry_id": "iono_expert",
+      "pilot": [
+        "rule",
+        "iono",
+        "data/league/decks/0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b.csv"
+      ],
+      "deck_hash": "0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b",
+      "mu": 61.66128096889845,
+      "sigma": 2.956734029688509,
+      "games": 2480,
+      "frozen": true,
+      "origin": "anchor"
+    },
+    "tuned_lucario": {
+      "entry_id": "tuned_lucario",
+      "pilot": [
+        "rule",
+        "tuned",
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+      ],
+      "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "mu": 50.36635060481547,
+      "sigma": 2.2731178541389547,
+      "games": 2480,
+      "frozen": true,
+      "origin": "anchor"
+    },
+    "generic+lucario": {
+      "entry_id": "generic+lucario",
+      "pilot": [
+        "generic",
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+      ],
+      "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "mu": 43.4183100250624,
+      "sigma": 1.9285159179963145,
+      "games": 2480,
+      "frozen": true,
+      "origin": "anchor"
+    },
+    "generic+iono": {
+      "entry_id": "generic+iono",
+      "pilot": [
+        "generic",
+        "data/league/decks/0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b.csv"
+      ],
+      "deck_hash": "0391e575975ccd2f5e4d9a49e1bbac68a3d7ca7b",
+      "mu": 29.355821579072906,
+      "sigma": 1.6134706021536986,
+      "games": 2480,
+      "frozen": true,
+      "origin": "anchor"
+    },
+    "bc_v1+kyogre": {
+      "entry_id": "bc_v1+kyogre",
+      "pilot": [
+        "model",
+        "checkpoints/bc_v1.pt",
+        "data/league/decks/8c326ebadcf97c33dd4a723b9a474962234b674c.csv"
+      ],
+      "deck_hash": "8c326ebadcf97c33dd4a723b9a474962234b674c",
+      "mu": 36.86844185481432,
+      "sigma": 1.698716356700961,
+      "games": 2480,
+      "frozen": true,
+      "origin": "anchor"
+    },
+    "random+kyogre": {
+      "entry_id": "random+kyogre",
+      "pilot": [
+        "random",
+        "data/league/decks/8c326ebadcf97c33dd4a723b9a474962234b674c.csv"
+      ],
+      "deck_hash": "8c326ebadcf97c33dd4a723b9a474962234b674c",
+      "mu": 30.30443436565746,
+      "sigma": 1.5641347197074444,
+      "games": 2480,
+      "frozen": true,
+      "origin": "anchor"
+    },
+    "generic+mega_lucario_ex+solrock@meta_v1": {
+      "entry_id": "generic+mega_lucario_ex+solrock@meta_v1",
+      "pilot": [
+        "generic",
+        "data/league/decks/8c326ebadcf97c33dd4a723b9a474962234b674c.csv"
+      ],
+      "deck_hash": "8c326ebadcf97c33dd4a723b9a474962234b674c",
+      "mu": 40.3296574450365,
+      "sigma": 1.8723441569528285,
+      "games": 2480,
+      "frozen": true,
+      "origin": "harvested"
+    },
+    "generic+drakloak+dreepy@meta_v1": {
+      "entry_id": "generic+drakloak+dreepy@meta_v1",
+      "pilot": [
+        "generic",
+        "data/league/decks/dedf515dc8a4e193f29d39e0277384d1ed05ddd1.csv"
+      ],
+      "deck_hash": "dedf515dc8a4e193f29d39e0277384d1ed05ddd1",
+      "mu": 38.12122218525352,
+      "sigma": 1.805624139882425,
+      "games": 2480,
+      "frozen": true,
+      "origin": "harvested"
+    },
+    "generic+alakazam+kadabra@meta_v1": {
+      "entry_id": "generic+alakazam+kadabra@meta_v1",
+      "pilot": [
+        "generic",
+        "data/league/decks/b9bcfb3e1063d48b513fe1a50c02196af2b1a5dd.csv"
+      ],
+      "deck_hash": "b9bcfb3e1063d48b513fe1a50c02196af2b1a5dd",
+      "mu": 21.77923615917313,
+      "sigma": 1.5044924488138214,
+      "games": 2480,
+      "frozen": true,
+      "origin": "harvested"
+    },
+    "generic+mega_kangaskhan_ex+crustle@meta_v1": {
+      "entry_id": "generic+mega_kangaskhan_ex+crustle@meta_v1",
+      "pilot": [
+        "generic",
+        "data/league/decks/6f9479267b348ff060ec492c130f5ec3f9c470b8.csv"
+      ],
+      "deck_hash": "6f9479267b348ff060ec492c130f5ec3f9c470b8",
+      "mu": 36.48705315594222,
+      "sigma": 1.6536133300951361,
+      "games": 2480,
+      "frozen": true,
+      "origin": "harvested"
+    },
+    "generic+mega_kangaskhan_ex+lillie_s_clefairy_ex@meta_v1": {
+      "entry_id": "generic+mega_kangaskhan_ex+lillie_s_clefairy_ex@meta_v1",
+      "pilot": [
+        "generic",
+        "data/league/decks/1b0760468f6e2438c03c6ced5c85287b93c4f720.csv"
+      ],
+      "deck_hash": "1b0760468f6e2438c03c6ced5c85287b93c4f720",
+      "mu": 32.299539617063175,
+      "sigma": 1.6012674508716216,
+      "games": 2480,
+      "frozen": true,
+      "origin": "harvested"
+    },
+    "generic+deck_05810bff4f86": {
+      "entry_id": "generic+deck_05810bff4f86",
+      "pilot": [
+        "generic",
+        "data/league/decks/05810bff4f8674166ce8a70c67b5d4b850a4ae2f.csv"
+      ],
+      "deck_hash": "05810bff4f8674166ce8a70c67b5d4b850a4ae2f",
+      "mu": 6.298662024586538,
+      "sigma": 2.401691217707629,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_0f68f2eb26d8": {
+      "entry_id": "generic+deck_0f68f2eb26d8",
+      "pilot": [
+        "generic",
+        "data/league/decks/0f68f2eb26d86e837b002fa1c0141eb5b5ce80e7.csv"
+      ],
+      "deck_hash": "0f68f2eb26d86e837b002fa1c0141eb5b5ce80e7",
+      "mu": 17.99532734597152,
+      "sigma": 1.7224807129652593,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_10826e3f7c03": {
+      "entry_id": "generic+deck_10826e3f7c03",
+      "pilot": [
+        "generic",
+        "data/league/decks/10826e3f7c037365c7e7932c77bb0fe19d6b3d7c.csv"
+      ],
+      "deck_hash": "10826e3f7c037365c7e7932c77bb0fe19d6b3d7c",
+      "mu": 16.695401222821832,
+      "sigma": 1.6494529721571998,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_12eeba25c74a": {
+      "entry_id": "generic+deck_12eeba25c74a",
+      "pilot": [
+        "generic",
+        "data/league/decks/12eeba25c74acf1263b1585828f80d87a873831f.csv"
+      ],
+      "deck_hash": "12eeba25c74acf1263b1585828f80d87a873831f",
+      "mu": 14.485157717901899,
+      "sigma": 1.6503275220917704,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_1487bc10b164": {
+      "entry_id": "generic+deck_1487bc10b164",
+      "pilot": [
+        "generic",
+        "data/league/decks/1487bc10b164f0569570931cb6c05d7f8d65bfe7.csv"
+      ],
+      "deck_hash": "1487bc10b164f0569570931cb6c05d7f8d65bfe7",
+      "mu": 14.421340603613785,
+      "sigma": 1.6436426241226607,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_270aae0b57d9": {
+      "entry_id": "generic+deck_270aae0b57d9",
+      "pilot": [
+        "generic",
+        "data/league/decks/270aae0b57d972a352cb37c7e105627363f1ea3d.csv"
+      ],
+      "deck_hash": "270aae0b57d972a352cb37c7e105627363f1ea3d",
+      "mu": 12.524532403586777,
+      "sigma": 1.6230831116818814,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_29cab3384fb1": {
+      "entry_id": "generic+deck_29cab3384fb1",
+      "pilot": [
+        "generic",
+        "data/league/decks/29cab3384fb1552f7f58619e3190e5329713b118.csv"
+      ],
+      "deck_hash": "29cab3384fb1552f7f58619e3190e5329713b118",
+      "mu": 10.185759320810007,
+      "sigma": 1.7667167655528113,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_327734c66911": {
+      "entry_id": "generic+deck_327734c66911",
+      "pilot": [
+        "generic",
+        "data/league/decks/327734c66911271677afed3c84d030541df16cce.csv"
+      ],
+      "deck_hash": "327734c66911271677afed3c84d030541df16cce",
+      "mu": 8.404493795602251,
+      "sigma": 1.7095888844392242,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_33cd35f95773": {
+      "entry_id": "generic+deck_33cd35f95773",
+      "pilot": [
+        "generic",
+        "data/league/decks/33cd35f957735f8e16b9c6e98f0a0806aaebf041.csv"
+      ],
+      "deck_hash": "33cd35f957735f8e16b9c6e98f0a0806aaebf041",
+      "mu": 10.848189781354801,
+      "sigma": 1.6756074527549847,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_3447c82b1fc5": {
+      "entry_id": "generic+deck_3447c82b1fc5",
+      "pilot": [
+        "generic",
+        "data/league/decks/3447c82b1fc5e167aafba1048ae23b6179f931a8.csv"
+      ],
+      "deck_hash": "3447c82b1fc5e167aafba1048ae23b6179f931a8",
+      "mu": 8.747361809716848,
+      "sigma": 1.7392320229135025,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_3cbfd2ee3bc6": {
+      "entry_id": "generic+deck_3cbfd2ee3bc6",
+      "pilot": [
+        "generic",
+        "data/league/decks/3cbfd2ee3bc6169a8239ee965c8368d0c2a852e5.csv"
+      ],
+      "deck_hash": "3cbfd2ee3bc6169a8239ee965c8368d0c2a852e5",
+      "mu": 13.779334254484398,
+      "sigma": 1.6947907086107585,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_40d8aca6c113": {
+      "entry_id": "generic+deck_40d8aca6c113",
+      "pilot": [
+        "generic",
+        "data/league/decks/40d8aca6c11301eed0f8bdb6957ae08c03e384bd.csv"
+      ],
+      "deck_hash": "40d8aca6c11301eed0f8bdb6957ae08c03e384bd",
+      "mu": 11.431484678808324,
+      "sigma": 1.7867088220232212,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_4ee272c974cf": {
+      "entry_id": "generic+deck_4ee272c974cf",
+      "pilot": [
+        "generic",
+        "data/league/decks/4ee272c974cf2e3f4dd81655dbbefdc2d3df3509.csv"
+      ],
+      "deck_hash": "4ee272c974cf2e3f4dd81655dbbefdc2d3df3509",
+      "mu": 14.335381874592406,
+      "sigma": 1.6645211748633217,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_4fa879b2e0a5": {
+      "entry_id": "generic+deck_4fa879b2e0a5",
+      "pilot": [
+        "generic",
+        "data/league/decks/4fa879b2e0a5cd061b4afc8022384a8cce0aee69.csv"
+      ],
+      "deck_hash": "4fa879b2e0a5cd061b4afc8022384a8cce0aee69",
+      "mu": 14.616081228298215,
+      "sigma": 1.7013131045022434,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_507d16d4aa6a": {
+      "entry_id": "generic+deck_507d16d4aa6a",
+      "pilot": [
+        "generic",
+        "data/league/decks/507d16d4aa6a0f6c7e954190424935d79d942e69.csv"
+      ],
+      "deck_hash": "507d16d4aa6a0f6c7e954190424935d79d942e69",
+      "mu": 16.4985220551357,
+      "sigma": 1.7321708815825678,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_524761388684": {
+      "entry_id": "generic+deck_524761388684",
+      "pilot": [
+        "generic",
+        "data/league/decks/524761388684801e9c2c71c203edec604530b6d1.csv"
+      ],
+      "deck_hash": "524761388684801e9c2c71c203edec604530b6d1",
+      "mu": 15.54792021952781,
+      "sigma": 1.6944437390291842,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_5667a46fce4f": {
+      "entry_id": "generic+deck_5667a46fce4f",
+      "pilot": [
+        "generic",
+        "data/league/decks/5667a46fce4f942423c8a9a683776b7c12032e65.csv"
+      ],
+      "deck_hash": "5667a46fce4f942423c8a9a683776b7c12032e65",
+      "mu": 15.817267999621112,
+      "sigma": 1.7955388008128734,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_57aa340c7e9b": {
+      "entry_id": "generic+deck_57aa340c7e9b",
+      "pilot": [
+        "generic",
+        "data/league/decks/57aa340c7e9b2fe9aba091687beb8c564a16c3b3.csv"
+      ],
+      "deck_hash": "57aa340c7e9b2fe9aba091687beb8c564a16c3b3",
+      "mu": 20.70002501531134,
+      "sigma": 1.6390642244581892,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_594dab5d27ce": {
+      "entry_id": "generic+deck_594dab5d27ce",
+      "pilot": [
+        "generic",
+        "data/league/decks/594dab5d27ceb900012d16d6a89c3437e698eaee.csv"
+      ],
+      "deck_hash": "594dab5d27ceb900012d16d6a89c3437e698eaee",
+      "mu": 20.070476980081356,
+      "sigma": 1.6342013898444319,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_5a05b84daba5": {
+      "entry_id": "generic+deck_5a05b84daba5",
+      "pilot": [
+        "generic",
+        "data/league/decks/5a05b84daba58f8da3254357a8e7d6015016a944.csv"
+      ],
+      "deck_hash": "5a05b84daba58f8da3254357a8e7d6015016a944",
+      "mu": 11.897461290381129,
+      "sigma": 1.8747982405914074,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_5afa511702cf": {
+      "entry_id": "generic+deck_5afa511702cf",
+      "pilot": [
+        "generic",
+        "data/league/decks/5afa511702cfbd07851edda6d29fb872ee9c75fd.csv"
+      ],
+      "deck_hash": "5afa511702cfbd07851edda6d29fb872ee9c75fd",
+      "mu": 13.58722556155202,
+      "sigma": 1.7491609975279865,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_5d7daf7956e4": {
+      "entry_id": "generic+deck_5d7daf7956e4",
+      "pilot": [
+        "generic",
+        "data/league/decks/5d7daf7956e45e027f2b66cfcb083f02a4e16b1d.csv"
+      ],
+      "deck_hash": "5d7daf7956e45e027f2b66cfcb083f02a4e16b1d",
+      "mu": 21.022173125396407,
+      "sigma": 1.7370942069846107,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_5df6773b8be4": {
+      "entry_id": "generic+deck_5df6773b8be4",
+      "pilot": [
+        "generic",
+        "data/league/decks/5df6773b8be46f455df783e89bbac4a65e0b8d8d.csv"
+      ],
+      "deck_hash": "5df6773b8be46f455df783e89bbac4a65e0b8d8d",
+      "mu": 25.880652576198997,
+      "sigma": 1.5943825722786071,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_61a166873d71": {
+      "entry_id": "generic+deck_61a166873d71",
+      "pilot": [
+        "generic",
+        "data/league/decks/61a166873d71947e48a8e74bb7ff78ca7443fe85.csv"
+      ],
+      "deck_hash": "61a166873d71947e48a8e74bb7ff78ca7443fe85",
+      "mu": 21.85550822347156,
+      "sigma": 1.6604949342517947,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_61c426539d7a": {
+      "entry_id": "generic+deck_61c426539d7a",
+      "pilot": [
+        "generic",
+        "data/league/decks/61c426539d7a866623a73178a354407665525ad7.csv"
+      ],
+      "deck_hash": "61c426539d7a866623a73178a354407665525ad7",
+      "mu": 18.241079694736744,
+      "sigma": 1.61842033563205,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_61deac8ac766": {
+      "entry_id": "generic+deck_61deac8ac766",
+      "pilot": [
+        "generic",
+        "data/league/decks/61deac8ac7668b9b8376619053b49822efe9d2c4.csv"
+      ],
+      "deck_hash": "61deac8ac7668b9b8376619053b49822efe9d2c4",
+      "mu": 15.320133878348509,
+      "sigma": 1.695473618837693,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_68406572e852": {
+      "entry_id": "generic+deck_68406572e852",
+      "pilot": [
+        "generic",
+        "data/league/decks/68406572e852f2dec8dcd4ce82e9e545711f9487.csv"
+      ],
+      "deck_hash": "68406572e852f2dec8dcd4ce82e9e545711f9487",
+      "mu": 21.93636156395983,
+      "sigma": 1.6207439275838953,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_6c92802d0bf2": {
+      "entry_id": "generic+deck_6c92802d0bf2",
+      "pilot": [
+        "generic",
+        "data/league/decks/6c92802d0bf20b9d7b7790a6e2573b9f597744d3.csv"
+      ],
+      "deck_hash": "6c92802d0bf20b9d7b7790a6e2573b9f597744d3",
+      "mu": 21.74619244046521,
+      "sigma": 1.6192260161903893,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_6d3e5f9767a8": {
+      "entry_id": "generic+deck_6d3e5f9767a8",
+      "pilot": [
+        "generic",
+        "data/league/decks/6d3e5f9767a87755ecae7f69aebd465ad5027cf8.csv"
+      ],
+      "deck_hash": "6d3e5f9767a87755ecae7f69aebd465ad5027cf8",
+      "mu": 21.22072148356216,
+      "sigma": 1.6680161684234385,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_6f9622cdaa0f": {
+      "entry_id": "generic+deck_6f9622cdaa0f",
+      "pilot": [
+        "generic",
+        "data/league/decks/6f9622cdaa0f5e523cb257469a8383130b30a57f.csv"
+      ],
+      "deck_hash": "6f9622cdaa0f5e523cb257469a8383130b30a57f",
+      "mu": 19.156563630180912,
+      "sigma": 1.7411822817891185,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_702a84ed4821": {
+      "entry_id": "generic+deck_702a84ed4821",
+      "pilot": [
+        "generic",
+        "data/league/decks/702a84ed48218f5f8a37847e82c95f6e69ef76d5.csv"
+      ],
+      "deck_hash": "702a84ed48218f5f8a37847e82c95f6e69ef76d5",
+      "mu": 24.751371986491318,
+      "sigma": 1.6466582929435056,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_706b9822ee91": {
+      "entry_id": "generic+deck_706b9822ee91",
+      "pilot": [
+        "generic",
+        "data/league/decks/706b9822ee91b785dd118d44be7616c6041d6d0c.csv"
+      ],
+      "deck_hash": "706b9822ee91b785dd118d44be7616c6041d6d0c",
+      "mu": 17.331667954676682,
+      "sigma": 1.7662985947522731,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_743b3331d5f5": {
+      "entry_id": "generic+deck_743b3331d5f5",
+      "pilot": [
+        "generic",
+        "data/league/decks/743b3331d5f5a3822dfee17654c83d9728da3fdf.csv"
+      ],
+      "deck_hash": "743b3331d5f5a3822dfee17654c83d9728da3fdf",
+      "mu": 22.323036095259965,
+      "sigma": 1.656889499014426,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_77fbceb7d99d": {
+      "entry_id": "generic+deck_77fbceb7d99d",
+      "pilot": [
+        "generic",
+        "data/league/decks/77fbceb7d99d0167cf39fe50560e156c81a59190.csv"
+      ],
+      "deck_hash": "77fbceb7d99d0167cf39fe50560e156c81a59190",
+      "mu": 25.194648718352884,
+      "sigma": 1.6365006303087453,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_7d87422747f7": {
+      "entry_id": "generic+deck_7d87422747f7",
+      "pilot": [
+        "generic",
+        "data/league/decks/7d87422747f7d0ad534ed9b13c039dcf640bbc9f.csv"
+      ],
+      "deck_hash": "7d87422747f7d0ad534ed9b13c039dcf640bbc9f",
+      "mu": 22.459133270960624,
+      "sigma": 1.7303363311474231,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_80391ae96af1": {
+      "entry_id": "generic+deck_80391ae96af1",
+      "pilot": [
+        "generic",
+        "data/league/decks/80391ae96af14cefdf15983157beeb567d1b33a0.csv"
+      ],
+      "deck_hash": "80391ae96af14cefdf15983157beeb567d1b33a0",
+      "mu": 23.823717682496362,
+      "sigma": 1.67041192409772,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_89f0c0aeeb8d": {
+      "entry_id": "generic+deck_89f0c0aeeb8d",
+      "pilot": [
+        "generic",
+        "data/league/decks/89f0c0aeeb8df425eae088657e1c5e3aa5609fc5.csv"
+      ],
+      "deck_hash": "89f0c0aeeb8df425eae088657e1c5e3aa5609fc5",
+      "mu": 27.45998560648534,
+      "sigma": 1.5999204394399342,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_8b308f48a15d": {
+      "entry_id": "generic+deck_8b308f48a15d",
+      "pilot": [
+        "generic",
+        "data/league/decks/8b308f48a15d88acabf728ef95bd0c62b13f2d24.csv"
+      ],
+      "deck_hash": "8b308f48a15d88acabf728ef95bd0c62b13f2d24",
+      "mu": 18.855303575363475,
+      "sigma": 1.921644443047041,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_8f7736998dd5": {
+      "entry_id": "generic+deck_8f7736998dd5",
+      "pilot": [
+        "generic",
+        "data/league/decks/8f7736998dd54c1094eea0201f07e4ed55566d26.csv"
+      ],
+      "deck_hash": "8f7736998dd54c1094eea0201f07e4ed55566d26",
+      "mu": 20.914895328292634,
+      "sigma": 1.767661731912523,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_91ee87e7641b": {
+      "entry_id": "generic+deck_91ee87e7641b",
+      "pilot": [
+        "generic",
+        "data/league/decks/91ee87e7641bdb746f8ac84c555cc2e3ad02f09d.csv"
+      ],
+      "deck_hash": "91ee87e7641bdb746f8ac84c555cc2e3ad02f09d",
+      "mu": 17.639134640341137,
+      "sigma": 1.8984724787938574,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_93f3355a4325": {
+      "entry_id": "generic+deck_93f3355a4325",
+      "pilot": [
+        "generic",
+        "data/league/decks/93f3355a4325a40bfea3fae369e6292f955ce0da.csv"
+      ],
+      "deck_hash": "93f3355a4325a40bfea3fae369e6292f955ce0da",
+      "mu": 21.412886931168508,
+      "sigma": 1.8021466664774943,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_95c991fe1b62": {
+      "entry_id": "generic+deck_95c991fe1b62",
+      "pilot": [
+        "generic",
+        "data/league/decks/95c991fe1b6252947dd2ec56dd7d2219340b99ff.csv"
+      ],
+      "deck_hash": "95c991fe1b6252947dd2ec56dd7d2219340b99ff",
+      "mu": 21.99755045466494,
+      "sigma": 1.7327028259049306,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_96287f54429a": {
+      "entry_id": "generic+deck_96287f54429a",
+      "pilot": [
+        "generic",
+        "data/league/decks/96287f54429a86ad303617aaf71523aa3094ab68.csv"
+      ],
+      "deck_hash": "96287f54429a86ad303617aaf71523aa3094ab68",
+      "mu": 26.391584697158375,
+      "sigma": 1.7144583571987686,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_9a9cc75f1203": {
+      "entry_id": "generic+deck_9a9cc75f1203",
+      "pilot": [
+        "generic",
+        "data/league/decks/9a9cc75f12036b20f002e9fbcc3358dd57c1f5e2.csv"
+      ],
+      "deck_hash": "9a9cc75f12036b20f002e9fbcc3358dd57c1f5e2",
+      "mu": 23.068418746758027,
+      "sigma": 1.785014943181947,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_9f2070745fa9": {
+      "entry_id": "generic+deck_9f2070745fa9",
+      "pilot": [
+        "generic",
+        "data/league/decks/9f2070745fa9e161c004c0e380d75a7f10af9450.csv"
+      ],
+      "deck_hash": "9f2070745fa9e161c004c0e380d75a7f10af9450",
+      "mu": 25.404113739407542,
+      "sigma": 1.656524955653534,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_9f9d09dcc27e": {
+      "entry_id": "generic+deck_9f9d09dcc27e",
+      "pilot": [
+        "generic",
+        "data/league/decks/9f9d09dcc27e2eda40841fc11a4f5dd26bb95280.csv"
+      ],
+      "deck_hash": "9f9d09dcc27e2eda40841fc11a4f5dd26bb95280",
+      "mu": 18.02309883564273,
+      "sigma": 1.9556101994783992,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_a012c468adde": {
+      "entry_id": "generic+deck_a012c468adde",
+      "pilot": [
+        "generic",
+        "data/league/decks/a012c468adde0bdaef6ffb6c5e75522abb5777aa.csv"
+      ],
+      "deck_hash": "a012c468adde0bdaef6ffb6c5e75522abb5777aa",
+      "mu": 22.03839941645007,
+      "sigma": 1.712407105885598,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_a38e3d067668": {
+      "entry_id": "generic+deck_a38e3d067668",
+      "pilot": [
+        "generic",
+        "data/league/decks/a38e3d067668a67f37d989571ad4a2c49a602018.csv"
+      ],
+      "deck_hash": "a38e3d067668a67f37d989571ad4a2c49a602018",
+      "mu": 23.262329845004956,
+      "sigma": 1.7314479962673133,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_a4d6938c1d4a": {
+      "entry_id": "generic+deck_a4d6938c1d4a",
+      "pilot": [
+        "generic",
+        "data/league/decks/a4d6938c1d4afa2e56bd241dbba6ca8db82bbc5d.csv"
+      ],
+      "deck_hash": "a4d6938c1d4afa2e56bd241dbba6ca8db82bbc5d",
+      "mu": 29.647247398023357,
+      "sigma": 1.602421909959477,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_a8e1b64366e6": {
+      "entry_id": "generic+deck_a8e1b64366e6",
+      "pilot": [
+        "generic",
+        "data/league/decks/a8e1b64366e6311f1b35c093ea31ad8212137c93.csv"
+      ],
+      "deck_hash": "a8e1b64366e6311f1b35c093ea31ad8212137c93",
+      "mu": 21.170015121774473,
+      "sigma": 1.7998753755923864,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_b9fb48f190d7": {
+      "entry_id": "generic+deck_b9fb48f190d7",
+      "pilot": [
+        "generic",
+        "data/league/decks/b9fb48f190d7e4d2fd5843e6c6d3e706ff515090.csv"
+      ],
+      "deck_hash": "b9fb48f190d7e4d2fd5843e6c6d3e706ff515090",
+      "mu": 18.18347234797559,
+      "sigma": 2.000043898739218,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_c47ee692f7cf": {
+      "entry_id": "generic+deck_c47ee692f7cf",
+      "pilot": [
+        "generic",
+        "data/league/decks/c47ee692f7cf00d1a7d6ce0dad74994f46e8fbab.csv"
+      ],
+      "deck_hash": "c47ee692f7cf00d1a7d6ce0dad74994f46e8fbab",
+      "mu": 17.982634651657207,
+      "sigma": 1.8540207306734933,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_cc1cce15c5f4": {
+      "entry_id": "generic+deck_cc1cce15c5f4",
+      "pilot": [
+        "generic",
+        "data/league/decks/cc1cce15c5f4039897f6617aecf21b35732651ce.csv"
+      ],
+      "deck_hash": "cc1cce15c5f4039897f6617aecf21b35732651ce",
+      "mu": 33.076326619760486,
+      "sigma": 1.6024184779830186,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_cdc0d43fef4d": {
+      "entry_id": "generic+deck_cdc0d43fef4d",
+      "pilot": [
+        "generic",
+        "data/league/decks/cdc0d43fef4de93c282c21677b3687e1d7d7d376.csv"
+      ],
+      "deck_hash": "cdc0d43fef4de93c282c21677b3687e1d7d7d376",
+      "mu": 26.971724550837553,
+      "sigma": 1.6404042105662078,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_da27993b0ec0": {
+      "entry_id": "generic+deck_da27993b0ec0",
+      "pilot": [
+        "generic",
+        "data/league/decks/da27993b0ec0159791c7de909027543e9555f30f.csv"
+      ],
+      "deck_hash": "da27993b0ec0159791c7de909027543e9555f30f",
+      "mu": 23.91131597323772,
+      "sigma": 1.68575447823948,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_e5a151f3b078": {
+      "entry_id": "generic+deck_e5a151f3b078",
+      "pilot": [
+        "generic",
+        "data/league/decks/e5a151f3b07886e917441cd88282468c68913310.csv"
+      ],
+      "deck_hash": "e5a151f3b07886e917441cd88282468c68913310",
+      "mu": 21.93605042401046,
+      "sigma": 1.743002945063941,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_e5d6d35a07a5": {
+      "entry_id": "generic+deck_e5d6d35a07a5",
+      "pilot": [
+        "generic",
+        "data/league/decks/e5d6d35a07a5e27a81ad15b94cfd83629eaec916.csv"
+      ],
+      "deck_hash": "e5d6d35a07a5e27a81ad15b94cfd83629eaec916",
+      "mu": 31.609092626154236,
+      "sigma": 1.5836840637254594,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_e71ec0569194": {
+      "entry_id": "generic+deck_e71ec0569194",
+      "pilot": [
+        "generic",
+        "data/league/decks/e71ec0569194134aae0ba3aafed7d8517987e54c.csv"
+      ],
+      "deck_hash": "e71ec0569194134aae0ba3aafed7d8517987e54c",
+      "mu": 23.964748475054805,
+      "sigma": 1.6918605976775558,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_ed41624f982c": {
+      "entry_id": "generic+deck_ed41624f982c",
+      "pilot": [
+        "generic",
+        "data/league/decks/ed41624f982c7c7972f1289bfd7923ad8d874afc.csv"
+      ],
+      "deck_hash": "ed41624f982c7c7972f1289bfd7923ad8d874afc",
+      "mu": 22.53079628433331,
+      "sigma": 1.7123281792740435,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_f2226deb8780": {
+      "entry_id": "generic+deck_f2226deb8780",
+      "pilot": [
+        "generic",
+        "data/league/decks/f2226deb87808e6d125810ea104e7e38b861b1a4.csv"
+      ],
+      "deck_hash": "f2226deb87808e6d125810ea104e7e38b861b1a4",
+      "mu": 22.4798230983023,
+      "sigma": 1.7449325971107348,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_f24525988a34": {
+      "entry_id": "generic+deck_f24525988a34",
+      "pilot": [
+        "generic",
+        "data/league/decks/f24525988a34932790ecf196ef3ef834cd0f677d.csv"
+      ],
+      "deck_hash": "f24525988a34932790ecf196ef3ef834cd0f677d",
+      "mu": 23.285207473645073,
+      "sigma": 1.666315290508621,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "generic+deck_fbd816e62721": {
+      "entry_id": "generic+deck_fbd816e62721",
+      "pilot": [
+        "generic",
+        "data/league/decks/fbd816e62721d4ffa8c91d622c7fd098ad80d66a.csv"
+      ],
+      "deck_hash": "fbd816e62721d4ffa8c91d622c7fd098ad80d66a",
+      "mu": 23.90540816346801,
+      "sigma": 1.8757565934547054,
+      "games": 480,
+      "frozen": false,
+      "origin": "template"
+    },
+    "osv2_bc+lucario": {
+      "entry_id": "osv2_bc+lucario",
+      "pilot": [
+        "model",
+        "checkpoints/osv2_bc.pt",
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+      ],
+      "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "mu": 25.0,
+      "sigma": 8.333333333333334,
+      "games": 0,
+      "frozen": false,
+      "origin": "bc_v2"
+    },
+    "solver+lucario": {
+      "entry_id": "solver+lucario",
+      "pilot": [
+        "solver",
+        "data/league/decks/20dcd3130bc0b81d865aaf1475caf4438ab2d194.csv"
+      ],
+      "deck_hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "mu": 25.0,
+      "sigma": 8.333333333333334,
+      "games": 0,
+      "frozen": false,
+      "origin": "ship"
+    }
+  },
+  "meta": {
+    "field_version": "meta_v1",
+    "champion_deck": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+    "shipped_entry": null,
+    "updated_at": "2026-07-11T22:12:12Z"
+  }
+}

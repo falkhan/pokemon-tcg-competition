@@ -1,6 +1,6 @@
 # M7 Plan — The Deck Factory Loop: deck building + pilot training + real-meta ingestion
 
-**Status:** 📋 Planned (2026-07-09). Implementation diary will live in `docs/M7.md`.
+**Status:** 🚧 Active (2026-07-09) — M7.0 infrastructure landed. Implementation diary: [M7.md](M7.md).
 
 ## Context
 
@@ -455,30 +455,63 @@ honest n everywhere, few precious training runs.
 
 ## 7. Milestones
 
-- **M7.0 — Ingestion spike (2d).** Fetch episodes for 54474043 (+ bc_v1's old sub);
-  verify the JSON schema; extract ≥20 opponent decks + outcomes. **Go/no-go:** decklists
-  extractable → full plan; only outcomes → keep forensics, drop meta-field/BC edges,
-  recalibrate gates to the old anchor field. Also settles: are opponent observations
-  present (unlocks BC-on-winners)?
-- **M7.1 — Deck factory (2–3d).** `deck_build.py` + shells v1; 40 candidates
-  league-rated under the generic pilot. **Gate:** ≥1 generated deck ≥50% vs the Lucario
-  deck same-pilot (n=400) — factory reaches parity with the human-tuned seed; ≥3
-  distinct archetypes above the anchor-field median.
-- **M7.2 — League + gates (1–2d, overlaps).** `league.py`, `matchrunner.py`, persistent
-  standings, gates-as-data. **Gate (self-test):** anchors reproduce the known ordering
-  (Lucario expert > tuned > generic+Lucario > bc_v1 > random).
-- **M7.2b — Race-math lookahead L1 (1–2d, parallel).** Prize-race table on
-  `rl/combat.py` → generic-pilot scorers + k-turn state features. **Gate:** floor test
-  (vs zero-damage deck) ≥90% (currently 75% — the self-deck/setup weakness is a
-  lookahead failure) and vs-Lucario-expert above 30%.
-- **M7.3 — Deck-conditioned pilot v1 (3–5d).** Encoders v2 (+embeddings, +deck pools),
-  `OptionScorerV2`, BC from the L1-improved generic pilot across the M7.1 population.
-  **Gate:** G5 pass and G3 ≥50% (parity with teacher — BC alone should *match*, not beat).
-- **M7.4a — Within-turn combo solver L2 (3–4d incl. research).** Forward-model turn
+- **M7.0 — Ingestion spike (2d).** *Status 2026-07-09: infrastructure + 21 offline
+  tests landed (`rl/kaggle_ingest.py`); the [NET] verification runs via the runbook in
+  [M7.md](M7.md) — this sandbox has no Kaggle access (risk 8).* Fetch episodes for
+  54474043 (+ bc_v1's old sub); verify the JSON schema; extract ≥20 opponent decks +
+  outcomes. **Go/no-go:** decklists extractable → full plan; only outcomes → keep
+  forensics, drop meta-field/BC edges, recalibrate gates to the old anchor field. Also
+  settles: are opponent observations present (unlocks BC-on-winners)?
+- **M7.1 — Deck factory (2–3d).** *Status 2026-07-10: infrastructure landed; first
+  league rating (n=280/deck) says template-only decks do NOT reach the gate — best
+  (Diggersby+iono_engine) rates at bc_v1's level, ~9 mu below generic+lucario, 0 of 40
+  above the anchor-field median. Refinement lever added: `python -m rl.deck_search
+  climb` (field-fitness hill-climb on the anchor field); harvested-meta targeting
+  waits on M7.0 [NET].* `deck_build.py` + shells v1;
+  40 candidates league-rated under the generic pilot. **Gate:** ≥1 generated deck ≥50%
+  vs the Lucario deck same-pilot (n=400) — factory reaches parity with the human-tuned
+  seed; ≥3 distinct archetypes above the anchor-field median.
+- **M7.2 — League + gates (1–2d, overlaps).** *Status 2026-07-10: ✅ COMPLETE —
+  self-test gate PASSED on the real engine (n=1600/anchor): lucario_expert 48.61 ≈
+  iono 48.42 > tuned 45.82 > generic+lucario 35.23 > bc_v1 26.97 > random 22.55;
+  every M6 relationship replicates under the shared runner (see M7.md results log).*
+  `league.py`, `matchrunner.py`, persistent standings, gates-as-data. **Gate
+  (self-test):** anchors reproduce the known ordering (Lucario expert > tuned >
+  generic+Lucario > bc_v1 > random).
+- **M7.2b — Race-math lookahead L1 (1–2d, parallel).** *Status 2026-07-09: race
+  primitives + scorer rewiring landed in both rl/ and tcg/ (parity-pinned, 294 tests);
+  `decks/floor_zero_damage.csv` committed; the [ENGINE] gates run via the runbook in
+  [M7.md](M7.md); the k-turn `encode_state` features are deferred to M7.3 encoders-v2
+  per risk 4 (v1 must stay byte-identical).* Prize-race table on `rl/combat.py` →
+  generic-pilot scorers + k-turn state features. **Gate:** floor test (vs zero-damage
+  deck) ≥90% (currently 75% — the self-deck/setup weakness is a lookahead failure) and
+  vs-Lucario-expert above 30%.
+- **M7.3 — Deck-conditioned pilot v1 (3–5d).** *Status 2026-07-10: infrastructure
+  landed — encoders v2 (side-by-side, v1 byte-identical) with id-embedding sites +
+  deck-context pools + the k-turn race block, `OptionScorerV2`, `bc collect --teacher
+  generic --decks` + `train --arch v2` with per-deck fidelity, `league population`
+  export, v2-aware model loading; the [ENGINE] collect/train/gate loop runs via the
+  runbook in [M7.md](M7.md). Collector/PPO deck sampling deferred to M7.4b.* Encoders
+  v2 (+embeddings, +deck pools), `OptionScorerV2`, BC from the L1-improved generic
+  pilot across the M7.1 population. **Gate:** G5 pass and G3 ≥50% (parity with
+  teacher — BC alone should *match*, not beat).
+- **M7.4a — Within-turn combo solver L2 (3–4d incl. research).** *Status 2026-07-11:
+  infrastructure landed — `rl/turn_solver.py` (rl/-only, bundle-pure, wraps the
+  parity-pinned pilot untouched), `solver:` matchrunner spec, `--latency` p99
+  machinery, 20+ offline tests. The curated suite is hand-authored scripted-tree
+  fixtures in `tests/test_turn_solver.py` (forensics emits aggregates, not
+  positions — a forensics-derived suite stays [NET]-deferred); the [ENGINE] A/B +
+  latency gates run via [M7-manual-tests.md](M7-manual-tests.md) §7; submission
+  wiring deferred to M7.5 behind that gate.* Forward-model turn
   search, lethal-first. **Gate:** on the curated combo-position suite (from forensics),
   finds the multi-prize lethal the greedy pilot misses; end-to-end ≥55% vs the same
   pilot without L2; p99 time within budget.
-- **M7.4b — Improvement pass (1wk, decision-gated).** Fix the PPO loss in `rl/ppo.py` +
+- **M7.4b — Improvement pass (1wk, decision-gated).** *Status 2026-07-10: offline half
+  landed — loss bug CONFIRMED and fixed in both twins (+ a literal corrected-form test),
+  critic warm-start (`--value-ckpt`), collector on matchrunner with per-game deck
+  sampling + generic pool + optional race shaping, PPO v2-aware; the [ENGINE] smoke and
+  run are [M7-manual-tests.md](M7-manual-tests.md) §6. L3 determinization waits on
+  M7.0's harvest.* Fix the PPO loss in `rl/ppo.py` +
   `tcg/ppo.py` (+ flip the pin test); critic warm-start via `rl/value_train.py`; PPO vs
   the meta_v1 field with multi-deck self-play + setup shaping. In parallel: L3
   archetype determinization. **Gate:** G3 ≥55%, G4 ≥35%. Two failed honest PPO attempts

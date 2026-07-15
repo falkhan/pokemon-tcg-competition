@@ -70,6 +70,29 @@ def test_best_damage_parity():
         == new_combat.best_damage(b.pokemon(1), None) == 0
 
 
+def test_race_math_parity():
+    """M7.2b primitives: rl and tcg agree on every (attacker, loadout, target)."""
+    from tcg import constants
+    assert old_combat.UNREACHABLE == constants.UNREACHABLE_TURNS
+    loadouts = [(), (FIGHTING,), (FIGHTING, FIGHTING), (WATER,), (FIGHTING, WATER)]
+    ids = POKEMON_IDS + [12345]
+    targets = [b.pokemon(i, hp=hp) for i in ids for hp in (60, 300)] \
+        + [None, b.hand_card(1)]
+    for attacker_id, energies in itertools.product(ids, loadouts):
+        attacker = b.pokemon(attacker_id, energies=energies)
+        for target in targets:
+            key = (attacker_id, energies, getattr(target, "id", None))
+            assert old_combat._charged_best(attacker, target) \
+                == new_combat.charged_best(attacker, target), key
+            assert old_combat._turns_to_ready(attacker, target) \
+                == new_combat.turns_to_ready(attacker, target), key
+            if target is not None and hasattr(target, "hp"):
+                assert old_combat._hits_to_ko(attacker, target) \
+                    == new_combat.hits_to_ko(attacker, target), key
+                assert old_combat._turns_to_first_ko(attacker, target) \
+                    == new_combat.turns_to_first_ko(attacker, target), key
+
+
 def _attack_scenarios():
     """(option, observation) pairs covering score_attack's branches."""
     attackers = [b.pokemon(1, energies=[FIGHTING]),
@@ -78,11 +101,14 @@ def _attack_scenarios():
                  b.pokemon(4, energies=[PSYCHIC])]
     defenders = [b.pokemon(2, hp=30), b.pokemon(2, hp=200), b.pokemon(5, hp=50),
                  b.pokemon(3, hp=100), b.pokemon(1, hp=25), None]
+    # Opponent benches drive close mode (M7.2b): empty / harmless / threatening /
+    # unknown-id benches must score identically in both pilots.
+    benches = [[], [b.pokemon(5)], [b.pokemon(1)], [b.pokemon(12345)], [None, b.pokemon(5)]]
     attack_ids = [101, 102, 103, 104, 105, 106, 107, 999]  # 999: unknown attack
-    for attacker, defender, attack_id in itertools.product(
-            attackers, defenders, attack_ids):
+    for attacker, defender, bench, attack_id in itertools.product(
+            attackers, defenders, benches, attack_ids):
         obs = b.observation(me=b.player(active=attacker),
-                            opponent=b.player(active=defender))
+                            opponent=b.player(active=defender, bench=bench))
         yield b.option(OptionType.ATTACK, attack_id=attack_id), obs
 
 
@@ -90,17 +116,29 @@ def _attach_scenarios():
     targets = [
         b.pokemon(3, energies=[FIGHTING]),  # attach unblocks the 270 KO
         b.pokemon(1),                        # real attacker, needs energy
-        b.pokemon(1, energies=[FIGHTING]),   # already loaded
+        b.pokemon(1, energies=[FIGHTING]),   # best attack still one short (M7.2b)
+        b.pokemon(1, energies=[FIGHTING, WATER]),  # best attack charged -> loaded
         b.pokemon(5),                        # no damaging attack
         b.pokemon(9),                        # attacks missing from the table
     ]
-    defenders = [b.pokemon(5, hp=100), b.pokemon(2, hp=300), None]
+    defenders = [b.pokemon(5, hp=100), b.pokemon(5, hp=999), b.pokemon(2, hp=300), None]
     for target, defender, area in itertools.product(
             targets, defenders, (AreaType.ACTIVE, AreaType.BENCH)):
         me = (b.player(active=target) if area == AreaType.ACTIVE
               else b.player(active=b.pokemon(5), bench=[target]))
         obs = b.observation(me=me, opponent=b.player(active=defender))
         yield b.option(OptionType.ATTACH, in_play_area=area, in_play_index=0), obs
+    # Race-winner grid (M7.2b): two-attacker boards at varying charge levels —
+    # the closer choice (active vs bench, ties, unreachable) must stay identical.
+    charge_levels = [(), (FIGHTING,), (FIGHTING, FIGHTING)]
+    for active_e, bench_e, defender in itertools.product(
+            charge_levels, charge_levels,
+            (b.pokemon(5, hp=999), b.pokemon(2, hp=300), None)):
+        me = b.player(active=b.pokemon(1, energies=active_e),
+                      bench=[b.pokemon(3, energies=bench_e)])
+        obs = b.observation(me=me, opponent=b.player(active=defender))
+        for area in (AreaType.ACTIVE, AreaType.BENCH):
+            yield b.option(OptionType.ATTACH, in_play_area=area, in_play_index=0), obs
     # unresolvable target
     obs = b.observation(me=b.player(active=b.pokemon(1)))
     yield b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
@@ -158,6 +196,17 @@ def _card_scenarios():
     ]
     for context, pick in itertools.product(contexts, picks):
         yield pick, b.observation(me=me, opponent=opponent, context=context)
+    # Promote race term (M7.2b): charged vs uncharged bench copies, and the
+    # UNREACHABLE cap with no opponent active.
+    race_me = b.player(bench=[b.pokemon(3, energies=[FIGHTING, FIGHTING]),
+                              b.pokemon(3), b.pokemon(5)],
+                       hand=[b.hand_card(1)])
+    for opp in (b.player(active=b.pokemon(5, hp=999)), b.player()):
+        for index in (0, 1, 2):
+            yield (b.option(OptionType.CARD, area=AreaType.BENCH, index=index),
+                   b.observation(me=race_me, opponent=opp, context=SelectContext.SWITCH))
+        yield (b.option(OptionType.CARD, area=AreaType.HAND, index=0),
+               b.observation(me=race_me, opponent=opp, context=SelectContext.SWITCH))
 
 
 def _misc_scenarios():

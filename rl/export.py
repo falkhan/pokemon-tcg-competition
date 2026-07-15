@@ -48,7 +48,7 @@ def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:
 
     rl_pkg = SUBMISSION_RULES / "rl"
     rl_pkg.mkdir(exist_ok=True)
-    for name in ("__init__.py", "combat.py", "generic_pilot.py"):
+    for name in ("__init__.py", "combat.py", "generic_pilot.py", "turn_solver.py"):
         shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
 
     shutil.copy(str(_deck_src(deck)), str(SUBMISSION_RULES / "deck.csv"))

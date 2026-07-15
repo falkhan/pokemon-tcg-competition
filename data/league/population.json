@@ -1,0 +1,19 @@
+{
+  "decks": [
+    "lucario",
+    "iono",
+    "kyogre",
+    "data/league/decks/cc1cce15c5f4039897f6617aecf21b35732651ce.csv",
+    "data/league/decks/e5d6d35a07a5e27a81ad15b94cfd83629eaec916.csv",
+    "data/league/decks/a4d6938c1d4afa2e56bd241dbba6ca8db82bbc5d.csv",
+    "data/league/decks/89f0c0aeeb8df425eae088657e1c5e3aa5609fc5.csv",
+    "data/league/decks/cdc0d43fef4de93c282c21677b3687e1d7d7d376.csv",
+    "data/league/decks/96287f54429a86ad303617aaf71523aa3094ab68.csv",
+    "data/league/decks/5df6773b8be46f455df783e89bbac4a65e0b8d8d.csv",
+    "data/league/decks/9f2070745fa9e161c004c0e380d75a7f10af9450.csv",
+    "data/league/decks/77fbceb7d99d0167cf39fe50560e156c81a59190.csv",
+    "data/league/decks/702a84ed48218f5f8a37847e82c95f6e69ef76d5.csv"
+  ],
+  "source": "league top 10 candidates",
+  "created_at": "2026-07-11T20:11:23Z"
+}

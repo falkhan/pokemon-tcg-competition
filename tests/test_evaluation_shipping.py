@@ -198,4 +198,55 @@ def test_export_constants_parity():
            (new_shipping.DEFAULT_CHECKPOINT, new_shipping.DEFAULT_DECK,
             new_shipping.DEFAULT_RULES_DECK)
     assert old_gate.SUBMISSION_MAIN == new_shipping.SUBMISSION_MAIN
+
+
+# --- v2 neural submission (M7.5): numpy forward vs torch OptionScorerV2 -------
+
+def test_neural_v2_numpy_forward_parity(tmp_path):
+    """The shipped main.py's score_options_v2 replays tcg.network.OptionScorerV2
+    exactly — the ship-time parity_check's offline twin (random weights, so it
+    runs without a trained checkpoint)."""
+    import shutil
+
+    torch = pytest.importorskip("torch")
+    from tcg import encoders
+    from tcg.network import OptionScorerV2, save_npz
+
+    torch.manual_seed(0)
+    model = OptionScorerV2()
+    save_npz(model, str(tmp_path / "policy_weights.npz"))
+    (tmp_path / "deck.csv").write_text("1\n" * 60)
+    shutil.copy("submission/main.py", tmp_path / "main.py")
+    sub = new_shipping.load_submission_module(str(tmp_path / "main.py"))
+
+    rng = np.random.default_rng(7)
+    state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS,
+                           dtype=np.float32)
+    state_ids = rng.integers(0, encoders.N_CARD_IDS, size=encoders.N_STATE_IDS)
+    options = rng.random((7, encoders.OPTION_V2_DIM), dtype=np.float32)
+    option_ids = rng.integers(0, encoders.N_CARD_IDS,
+                              size=(7, encoders.N_OPTION_IDS))
+
+    ours = sub.score_options_v2(state_ctx, state_ids, options, option_ids)
+    with torch.no_grad():
+        ref, _ = model(torch.from_numpy(state_ctx).unsqueeze(0),
+                       torch.from_numpy(state_ids).long().unsqueeze(0),
+                       torch.from_numpy(options).unsqueeze(0),
+                       torch.from_numpy(option_ids).long().unsqueeze(0))
+    assert np.allclose(ours, ref.squeeze(0).numpy(), rtol=1e-4, atol=1e-4)
+
+
+def test_neural_v2_main_rejects_v1_weights(tmp_path):
+    """A v1 npz behind the v2 main.py must fail LOUDLY at import, not play."""
+    import shutil
+
+    torch = pytest.importorskip("torch")
+    from tcg.network import OptionScorer, save_npz
+
+    torch.manual_seed(0)
+    save_npz(OptionScorer(), str(tmp_path / "policy_weights.npz"))
+    (tmp_path / "deck.csv").write_text("1\n" * 60)
+    shutil.copy("submission/main.py", tmp_path / "main.py")
+    with pytest.raises(ValueError, match="v1"):
+        new_shipping.load_submission_module(str(tmp_path / "main.py"))
     assert old_gate.SUBMISSION_RULES_MAIN == new_shipping.SUBMISSION_RULES_MAIN

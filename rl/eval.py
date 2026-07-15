@@ -3,6 +3,9 @@
 Note: the cg engine keeps ONE global battle per process (cg.sim.Battle), so
 parallel evaluation must use multiprocessing with one environment per worker.
 """
+import json
+from pathlib import Path
+
 from kaggle_environments import make
 
 from .replay import save_replay
@@ -16,7 +19,8 @@ def _agent_name(agent) -> str:
 
 def play_games(agent_a, agent_b, n_games: int, replay_prefix: str | None = None,
                names: tuple[str, str] | None = None,
-               swap_slots: bool = True) -> tuple[float, list[list[int]]]:
+               swap_slots: bool = True,
+               json_prefix: str | None = None) -> tuple[float, list[list[int]]]:
     """Run n_games of agent_a vs agent_b. Returns (win_rate_a, per-game rewards).
 
     Agents may be callables or file paths / built-in names ("random", "first") —
@@ -32,6 +36,11 @@ def play_games(agent_a, agent_b, n_games: int, replay_prefix: str | None = None,
     If replay_prefix is set, EVERY game is saved to replays/ as a self-contained
     HTML page (embedded visualize JSON + button opening the official ptcgvis
     viewer), and replays/index.html is regenerated with win-rate stats.
+
+    If json_prefix is set (M8.0), every game's env.toJSON() is written to
+    <json_prefix>_g<NNN>_a<slot>.json — the same shape as a cached Kaggle
+    episode, so rl/postmortem.py (incl. `--batch`) reads it directly; the
+    `_a<slot>` suffix records which seat agent_a occupied that game.
     """
     names = names or (_agent_name(agent_a), _agent_name(agent_b))
     results = []
@@ -46,6 +55,10 @@ def play_games(agent_a, agent_b, n_games: int, replay_prefix: str | None = None,
         if replay_prefix:
             slot_names = names if a_slot == 0 else (names[1], names[0])
             save_replay(env, f"{replay_prefix}_{g:03d}", slot_names)
+        if json_prefix:
+            path = Path(f"{json_prefix}_g{g:03d}_a{a_slot}.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(env.toJSON()))
 
     wins = sum((r[0] or 0) > (r[1] or 0) for r in results)
     return wins / n_games, results

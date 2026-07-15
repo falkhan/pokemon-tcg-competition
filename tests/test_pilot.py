@@ -1,4 +1,6 @@
 """The pilot's agent contract and each scorer's branches."""
+import pytest
+
 from tests import builders as b
 from tests.fake_cg import AreaType, OptionType, SelectContext
 
@@ -57,9 +59,21 @@ class TestScoreAttack:
         assert ko_basic == constants.SCORE_KO_BASE + constants.KO_PRIZE_BONUS
         assert ko_mega == constants.SCORE_KO_BASE + 3 * constants.KO_PRIZE_BONUS
 
-    def test_chip_damage_scores_low(self):
+    def test_chip_vs_harmless_board_enters_close_mode(self):
+        # M7.2b: card 5 has no damaging attack -> the race is won; chip jumps
+        # above trainers so the pilot attacks every turn instead of milling.
         score = score_attack(b.option(attack_id=101), b.pokemon(1), b.pokemon(5, hp=200))
+        assert score == constants.SCORE_CHIP_CLOSE_BASE + 5.0  # 2300 + 50/10
+
+    def test_chip_damage_scores_low_when_opponent_threatens(self):
+        # A real attacker on the opponent's bench keeps close mode OFF.
+        score = score_attack(b.option(attack_id=101), b.pokemon(1),
+                             b.pokemon(5, hp=200), opponent_bench=(b.pokemon(1),))
         assert score == constants.SCORE_CHIP_BASE + 5.0  # 1000 + 50/10
+
+    def test_close_mode_never_touches_the_ko_tier(self):
+        score = score_attack(b.option(attack_id=101), b.pokemon(1), b.pokemon(5, hp=40))
+        assert score == constants.SCORE_KO_BASE + constants.KO_PRIZE_BONUS
 
     def test_resistance_goes_negative_unlike_best_damage(self):
         # The pinned asymmetry: score_attack does NOT floor resisted damage at 0.
@@ -96,9 +110,14 @@ class TestScoreAttach:
         assert score_attach(self._attach_option(), obs) \
             == constants.SCORE_ATTACH_NON_ATTACKER
 
-    def test_already_loaded_attacker(self):
-        obs = self._obs(b.pokemon(1, energies=[FIGHTING]))  # cheapest attack costs 1
-        assert score_attach(self._attach_option(), obs) \
+    def test_already_loaded_means_the_best_attack_charged(self):
+        # M7.2b: card 1's cheapest attack costs 1 but its BEST (120) costs 2 —
+        # one energy is no longer "loaded"; two are.
+        needs_more = self._obs(b.pokemon(1, energies=[FIGHTING]))
+        assert score_attach(self._attach_option(), needs_more) \
+            == constants.SCORE_ATTACH_ACTIVE_BASE + 1
+        loaded = self._obs(b.pokemon(1, energies=[FIGHTING, WATER]))
+        assert score_attach(self._attach_option(), loaded) \
             == constants.SCORE_ATTACH_ALREADY_LOADED
 
     def test_loading_an_attacker_that_needs_energy(self):
@@ -108,17 +127,45 @@ class TestScoreAttach:
 
 
 class TestScorePlay:
-    def _obs(self, hand, active=None, hand_count=None, deck_count=30):
-        me = b.player(active=active, hand=hand, hand_count=hand_count,
-                      deck_count=deck_count)
+    def _obs(self, hand, active=None, bench=(), hand_count=None, deck_count=30):
+        me = b.player(active=active, bench=bench, hand=hand,
+                      hand_count=hand_count, deck_count=deck_count)
         return b.observation(me=me)
 
     def _play_option(self, index=0):
         return b.option(OptionType.PLAY, area=AreaType.HAND, index=index)
 
     def test_pokemon_always_worth_playing(self):
-        obs = self._obs(hand=[b.hand_card(1)])
+        obs = self._obs(hand=[b.hand_card(1)], bench=[b.pokemon(5)])
         assert score_play(self._play_option(), obs) == constants.SCORE_PLAY_POKEMON
+
+    def test_play_options_resolve_without_area(self):
+        # Engine quirk pin (2026-07-12): real PLAY options carry NO `area` —
+        # the index is a hand index. Before the default-to-HAND fix every real
+        # play scored SCORE_PLAY_UNRESOLVED_CARD (2000) and the entire play
+        # tier was dead outside tests (kaggle ep 85467275 + local repro).
+        areless = b.option(OptionType.PLAY, index=0)
+        assert areless.area is None
+        pokemon_obs = self._obs(hand=[b.hand_card(1)], bench=[b.pokemon(5)])
+        trainer_obs = self._obs(hand=[b.hand_card(7)], active=b.pokemon(1))
+        assert score_play(areless, pokemon_obs) == constants.SCORE_PLAY_POKEMON
+        assert score_play(areless, trainer_obs) == constants.SCORE_TRAINER_BASE
+
+    def test_pokemon_onto_an_empty_bench_outranks_the_ko_tier(self):
+        # The M7.5 empty-bench loss: benching never ends the turn but attacking
+        # does, so with the bench empty the play must beat even a 3-prize KO —
+        # the KO still fires on the re-prompt after it.
+        obs = self._obs(hand=[b.hand_card(1)])
+        score = score_play(self._play_option(), obs)
+        assert score == constants.SCORE_PLAY_POKEMON_EMPTY_BENCH
+        assert score > constants.SCORE_KO_BASE + 3 * constants.KO_PRIZE_BONUS
+        # ... but stays below the free-setup tiers (they don't end the turn).
+        assert score < constants.SCORE_ATTACH_RACE_CLOSER_ACTIVE
+
+    def test_empty_bench_slots_still_count_as_empty(self):
+        obs = self._obs(hand=[b.hand_card(1)], bench=[None, None])
+        assert score_play(self._play_option(), obs) \
+            == constants.SCORE_PLAY_POKEMON_EMPTY_BENCH
 
     def test_trainer_useless_without_a_board(self):
         obs = self._obs(hand=[b.hand_card(7)])
@@ -168,7 +215,10 @@ class TestScoreCard:
         obs = b.observation(me=me, opponent=opponent, context=SelectContext.SWITCH)
         on_bench = score_card(b.option(OptionType.CARD, area=AreaType.BENCH, index=0), obs)
         in_hand = score_card(b.option(OptionType.CARD, area=AreaType.HAND, index=0), obs)
-        assert on_bench == in_hand + constants.PROMOTE_READY_BONUS
+        # M7.2b race term: the benched copy holds 1 of the 2 energies its best
+        # attack needs (one attach closer than the hand copy) + can hit now.
+        assert on_bench == in_hand + constants.PROMOTE_READY_BONUS \
+            + constants.PROMOTE_TURN_PENALTY
 
     def test_keep_and_discard_mirror_usefulness(self):
         me = b.player(hand=[b.hand_card(6)])  # energy: usefulness 250
@@ -203,3 +253,226 @@ def test_score_option_dispatches_flat_tiers_and_fallbacks():
     assert score_option(b.option(OptionType.EVOLVE), obs) == constants.SCORE_EVOLVE
     assert score_option(b.option(OptionType.YES), obs) == 40
     assert score_option(b.option(OptionType.TOOL_CARD), obs) == 0  # not in the dict
+
+
+class TestRaceScoring:
+    """M7.2b: charge the attacker that wins the race; attack when the race is won."""
+
+    def _attach_obs(self, active, bench, opponent_active):
+        me = b.player(active=active, bench=list(bench))
+        return b.observation(me=me, opponent=b.player(active=opponent_active))
+
+    def test_attach_prefers_the_race_winning_active(self):
+        # card 3 (270, needs FF) closes vs a 999hp wall in 5 turns; card 1 (120)
+        # needs 10 — the active is the closer, the bench copy is not.
+        obs = self._attach_obs(b.pokemon(3), [b.pokemon(1)], b.pokemon(5, hp=999))
+        active_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                                 in_play_index=0)
+        bench_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.BENCH,
+                                in_play_index=0)
+        assert score_attach(active_attach, obs) \
+            == constants.SCORE_ATTACH_RACE_CLOSER_ACTIVE + 2
+        assert score_attach(bench_attach, obs) == constants.SCORE_ATTACH_BENCH_BASE + 1
+
+    def test_attach_prefers_the_race_winning_bench_once_the_active_is_ready(self):
+        # With an attack-READY active (card 1 at [F,F]: its best attack is
+        # charged), the benched closer outranks further active investment:
+        # keep charging THE ONE attacker (the attach doesn't end the turn).
+        obs = self._attach_obs(b.pokemon(1, energies=[FIGHTING, FIGHTING]),
+                               [b.pokemon(3)], b.pokemon(5, hp=999))
+        bench_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.BENCH,
+                                in_play_index=0)
+        assert score_attach(bench_attach, obs) \
+            == constants.SCORE_ATTACH_RACE_CLOSER_BENCH + 2
+
+    def test_bench_closer_suppressed_while_the_active_starves(self):
+        # The measured floor-test failure (0.715): an uncharged active can
+        # neither attack nor pay retreat, so the bench tier must wait — the
+        # active gets fed first.
+        obs = self._attach_obs(b.pokemon(1), [b.pokemon(3)], b.pokemon(5, hp=999))
+        active_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                                 in_play_index=0)
+        bench_attach = b.option(OptionType.ATTACH, in_play_area=AreaType.BENCH,
+                                in_play_index=0)
+        assert score_attach(bench_attach, obs) == constants.SCORE_ATTACH_BENCH_BASE + 2
+        assert score_attach(active_attach, obs) == constants.SCORE_ATTACH_ACTIVE_BASE + 1
+        assert score_attach(active_attach, obs) > score_attach(bench_attach, obs)
+
+    def test_promote_ranks_by_attaches_still_needed(self):
+        charged = b.pokemon(3, energies=[FIGHTING, FIGHTING])
+        uncharged = b.pokemon(3)
+        me = b.player(bench=[charged, uncharged])
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=999)),
+                            context=SelectContext.SWITCH)
+        pick = lambda i: score_card(  # noqa: E731
+            b.option(OptionType.CARD, area=AreaType.BENCH, index=i), obs)
+        assert pick(0) == 270 + constants.PROMOTE_READY_BONUS  # q + ready, gap 0
+        assert pick(1) == 270 - 2 * constants.PROMOTE_TURN_PENALTY  # gap 2
+
+    def test_close_mode_attacks_instead_of_milling(self):
+        # Agent-level: vs an all-harmless board, the chip attack outranks the
+        # draw trainer that used to mill the deck (the M6 floor-test loss).
+        me = b.player(active=b.pokemon(1, energies=[FIGHTING]),
+                      hand=[b.hand_card(7)], hand_count=5, deck_count=20)
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=200)))
+        attack = score_option(b.option(OptionType.ATTACK, attack_id=101), obs)
+        trainer = score_option(b.option(OptionType.PLAY, area=AreaType.HAND, index=0), obs)
+        assert attack == constants.SCORE_CHIP_CLOSE_BASE + 5.0
+        assert attack > trainer
+
+
+class TestM75Guards:
+    """The three post-mortem guards (docs/M7.md 2026-07-12): fetch-target
+    priority, the hand-discard (Carmine) block, and their rl↔tcg parity.
+    The fake_cg pool has no names/evolution lines, so both twins' card tables
+    are monkeypatched module-bound (the documented fake_cg pattern):
+      4, 10 -> basics "Basic4"/"Basic10"; 3 -> "Evo3" from "Basic4" (270 dmg,
+      premium); 9 -> "Evo9" from "Ghost" (0 dmg, basis never in the game);
+      7 -> the hand-discard trainer.
+    """
+
+    LINES = {3: ("Evo3", "Basic4"), 9: ("Evo9", "Ghost")}
+    NAMES = {3: "Evo3", 9: "Evo9", 4: "Basic4", 10: "Basic10", 7: "Carmine"}
+
+    @pytest.fixture(autouse=True)
+    def _lines(self, monkeypatch):
+        # Patch through the captured functions' __globals__, NOT a fresh
+        # import: test_imports.py deletes tcg* from sys.modules, so a new
+        # `import tcg.pilot` may be a DIFFERENT module than the one whose
+        # functions this file holds.
+        import dataclasses
+
+        import rl.generic_pilot as rlp
+
+        tcg_globals = score_card.__globals__
+        cards = dict(tcg_globals["CARDS"])
+        for cid, name in self.NAMES.items():
+            evo = self.LINES.get(cid)
+            cards[cid] = dataclasses.replace(
+                cards[cid], name=name, basic=evo is None,
+                evolves_from=evo[1] if evo else None)
+        monkeypatch.setitem(tcg_globals, "CARDS", cards)
+        monkeypatch.setitem(tcg_globals, "HAND_DISCARD_TRAINER_IDS",
+                            frozenset({7}))
+
+        monkeypatch.setattr(rlp, "_NAME", dict(self.NAMES))
+        monkeypatch.setattr(rlp, "_IS_BASIC",
+                            {cid for cid in rlp._IS_POKEMON if cid not in self.LINES})
+        monkeypatch.setattr(rlp, "_EVOLVES_FROM",
+                            {cid: line[1] for cid, line in self.LINES.items()})
+        monkeypatch.setattr(rlp, "_HAND_DISCARD_IDS", {7})
+
+    def _keep(self, me, index=0):
+        obs = b.observation(me=me, context=SelectContext.TO_HAND)
+        return obs, b.option(OptionType.CARD, area=AreaType.HAND, index=index)
+
+    def test_dead_evolution_sinks_below_everything_useful(self):
+        # Evo9's basis "Ghost" is nowhere: fetching it is near-worthless.
+        obs, option = self._keep(b.player(hand=[b.hand_card(9)]))
+        assert score_card(option, obs) == constants.FETCH_DEAD_EVOLUTION
+        assert score_card(option, obs) < constants.USEFULNESS_OTHER
+
+    def test_live_evolution_keeps_its_usefulness(self):
+        me = b.player(hand=[b.hand_card(3)], bench=[b.pokemon(4)])
+        obs, option = self._keep(me)
+        assert score_card(option, obs) == constants.USEFULNESS_POKEMON_BASE + 270
+
+    def test_empty_bench_basic_beats_any_dead_attacker(self):
+        # The ep-85469339 decision: weak basic vs premium basis-less evolution.
+        me = b.player(hand=[b.hand_card(10), b.hand_card(3)])
+        obs, basic_opt = self._keep(me, index=0)
+        _, evo_opt = self._keep(me, index=1)
+        basic, evo = score_card(basic_opt, obs), score_card(evo_opt, obs)
+        assert evo == constants.FETCH_DEAD_EVOLUTION
+        assert basic > evo
+        assert basic == constants.USEFULNESS_POKEMON_BASE + 20 \
+            + constants.FETCH_EMPTY_BENCH_BASIC_BONUS
+
+    def test_basic_enabling_a_hand_evolution_outranks_other_basics(self):
+        me = b.player(hand=[b.hand_card(4), b.hand_card(10), b.hand_card(3)],
+                      bench=[b.pokemon(10)])          # bench occupied: no empty bonus
+        obs, enabler_opt = self._keep(me, index=0)    # Basic4 -> Evo3 waits in hand
+        _, other_opt = self._keep(me, index=1)
+        # Basic4 hits 10 harder than Basic10 (+10) and enables Evo3 (+300).
+        assert score_card(enabler_opt, obs) \
+            == score_card(other_opt, obs) + 10 + constants.FETCH_ENABLES_EVOLUTION_BONUS
+
+    def test_hand_discard_blocked_by_premium_dead_evolution(self):
+        # The ep-85467275 loss: Carmine with Mega Lucario ex (dead, 270 dmg) in hand.
+        me = b.player(active=b.pokemon(1), hand=[b.hand_card(7), b.hand_card(3)])
+        obs = b.observation(me=me)
+        option = b.option(OptionType.PLAY, area=AreaType.HAND, index=0)
+        assert score_play(option, obs) == constants.SCORE_HAND_DISCARD_BLOCKED
+        assert score_play(option, obs) < constants.SCORE_PLAY_NEAR_DECKOUT
+
+    def test_hand_discard_allowed_when_hand_pokemon_are_chaff(self):
+        # Only a weak, basis-less evolution in hand: pitching it is fine.
+        me = b.player(active=b.pokemon(1), hand=[b.hand_card(7), b.hand_card(9)])
+        obs = b.observation(me=me)
+        option = b.option(OptionType.PLAY, area=AreaType.HAND, index=0)
+        assert score_play(option, obs) == constants.SCORE_TRAINER_BASE
+
+    def test_guards_hold_rl_tcg_parity(self):
+        from rl.generic_pilot import score_card as rl_score_card
+        from rl.generic_pilot import score_play as rl_score_play
+
+        me = b.player(active=b.pokemon(1),
+                      hand=[b.hand_card(7), b.hand_card(3), b.hand_card(10)])
+        keep_obs, keep_opt = self._keep(me, index=1)
+        play_opt = b.option(OptionType.PLAY, area=AreaType.HAND, index=0)
+        play_obs = b.observation(me=me)
+        assert rl_score_card(keep_opt, keep_obs) == score_card(keep_opt, keep_obs)
+        assert rl_score_play(play_opt, play_obs) == score_play(play_opt, play_obs)
+
+    # --- ATTACH_FROM recipient scoring (ep 85607769: 5 energies on a 1-cost
+    # Solrock while Riolu/Hariyama sat empty) --------------------------------
+
+    def _recipient(self, bench, opponent_active=None, hand=()):
+        me = b.player(active=b.pokemon(1, energies=[FIGHTING]), bench=list(bench),
+                      hand=list(hand))
+        opp = b.player(active=opponent_active)
+        obs = b.observation(me=me, opponent=opp,
+                            context=SelectContext.ATTACH_FROM)
+        return obs, [b.option(OptionType.CARD, area=AreaType.BENCH, index=i)
+                     for i in range(len(bench))]
+
+    def test_charged_recipient_is_near_worthless(self):
+        # card 10's only damaging attack costs 1 (attack 107, colorless): with
+        # an energy attached its best attack is paid — another energy is waste.
+        obs, opts = self._recipient([b.pokemon(10, energies=[FIGHTING]),
+                                     b.pokemon(3)])
+        charged, needy = score_card(opts[0], obs), score_card(opts[1], obs)
+        assert charged == constants.ATTACH_RECIPIENT_CHARGED
+        assert needy > charged
+
+    def test_needy_strong_attacker_outranks_charged_weak_one(self):
+        # The s87 decision: card 3 (270 dmg, 2-energy best attack) at 0 energy
+        # vs the already-charged 1-cost card 10.
+        obs, opts = self._recipient([b.pokemon(10, energies=[FIGHTING]),
+                                     b.pokemon(3)])
+        assert score_card(opts[1], obs) == constants.ATTACH_RECIPIENT_BASE \
+            + 270 - constants.PROMOTE_TURN_PENALTY  # gap 2 -> one penalty step
+        assert score_card(opts[1], obs) > score_card(opts[0], obs)
+
+    def test_basic_with_evolution_in_hand_charges_for_the_evolution(self):
+        # Riolu+Mega case: Basic4 (30 dmg, cheap) with Evo3 (270, 2-energy) in
+        # hand scores with the EVOLUTION's profile — energy survives evolving.
+        obs, opts = self._recipient([b.pokemon(4), b.pokemon(10)],
+                                    hand=[b.hand_card(3)])
+        enabler, plain = score_card(opts[0], obs), score_card(opts[1], obs)
+        assert enabler == constants.ATTACH_RECIPIENT_BASE + 270 \
+            - constants.PROMOTE_TURN_PENALTY
+        assert enabler > plain
+
+    def test_recipient_scoring_handles_no_opponent_active(self):
+        # The prompts fire right after a KO, opponent active empty (s51/s149).
+        obs, opts = self._recipient([b.pokemon(3)], opponent_active=None)
+        assert score_card(opts[0], obs) > constants.ATTACH_RECIPIENT_CHARGED
+
+    def test_recipient_scoring_rl_tcg_parity(self):
+        from rl.generic_pilot import score_card as rl_score_card
+        obs, opts = self._recipient(
+            [b.pokemon(10, energies=[FIGHTING]), b.pokemon(3), b.pokemon(4)],
+            hand=[b.hand_card(3)])
+        for opt in opts:
+            assert rl_score_card(opt, obs) == score_card(opt, obs)

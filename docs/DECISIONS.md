@@ -7,6 +7,85 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-11 · The turn solver is a WRAPPER around the pilot, not a scorer hook — and boost items are detected empirically, not classified
+**Decisions (M7.4a):** (1) `rl/turn_solver.py` wraps `make_generic_pilot` (the rl/hybrid.py
+shape) instead of hooking `score_option`: the shipping pilot and its `tcg/pilot.py` twin stay
+byte-identical under the >400-scenario parity pins, and the solver follows the M7 rl/-only,
+no-twin rule. Submission wiring waits for the §7 A/B gate (M7.5 flip is two lines; a new
+import-tier test keeps the module bundle-pure meanwhile). (2) No effect text exists anywhere
+in the repo, so "is this trainer a damage boost?" is answered by PLAYING it in the forward
+model and observing the prize delta — the search subsumes classification. (3) Within my own
+turn the opponent never acts, so the search needs NO opponent determinization, and my own
+draw reveals are handled by recomputing at every prompt instead of caching a plan. (4) The
+milestone's "curated combo suite from forensics" cannot exist offline (forensics emits
+aggregate W/L tables, not positions, and is [NET]-gated) — substituted with hand-authored
+scripted-tree fixtures in `tests/test_turn_solver.py`; a real forensics-derived suite stays
+deferred behind M7.0 [NET].
+
+### 2026-07-10 · The PPO loss bug was real — every "PPO failed" conclusion was trained on a corrupted objective
+**Confirmed and fixed (M7.4b):** `rl/ppo.py` and `tcg/ppo.py` both computed
+`loss = policy_loss * VALUE_COEF * value_loss − ENTROPY_COEF * entropy` — MULTIPLYING the
+policy loss by the value error where the docstring (and PPO) say ADD. Consequences: the policy
+gradient was scaled by an arbitrary positive factor that shrank exactly as the critic improved,
+and flipped sign whenever policy_loss and value_loss disagreed in sign — a corrupted objective,
+not a hard optimization problem. All three stalled PPO attempts (M2–M4, DECISIONS 2026-07-08)
+trained on this form, so "PPO doesn't work here" was never honestly measured. Fixed to the
+additive objective in both twins; `tests/test_ppo.py::test_loss_is_the_additive_ppo_objective`
+pins the corrected form literally (the old cross-module pin only guaranteed the twins matched).
+The M7.4b [ENGINE] retry (fixed loss + critic warm-start + multi-deck self-play + generic-pilot
+opponents) is the first honest PPO measurement this project will have.
+
+### 2026-07-09 · Measured: prioritizing the bench closer above attach-active STARVES the active — race charging must be gated on an attack-ready active
+**Measurement (M7.2b gates, real engine):** vs-expert 0.329 (PASS, up from ~0.25–0.30) but
+floor 0.715 (FAIL, need ≥0.90; 57/200 losses, 0 draws — all self-deck-outs) and vs-random
+0.795. **Root cause:** `SCORE_ATTACH_RACE_CLOSER_BENCH` (2680) > attach-active (2600) sent
+*every* energy to the benched closer; the active (Riolu: attack needs 1 energy, retreat 2)
+could then neither attack nor retreat, so no ATTACK option existed for close mode to boost,
+trainers fired every turn, and the pilot milled itself — the exact M6 failure the change was
+meant to fix, resurrected by the fix. **Lesson:** "keep charging THE ONE attacker" is only
+safe once the active is functional; the bench tier now requires `turns_to_ready(active) == 0`
+(feed the active first, then bank the closer). The vs-expert gain came from the other race
+terms (promote, best-attack loading), which survive unchanged.
+
+### 2026-07-09 · The expert's AttackPlan is a SINGLE-TURN commitment; race math ports it deck-agnostically, with a conservative close mode
+**Discovery (M7.2b):** sample-agent/main.py's `AttackPlan` — the experts' documented multi-turn
+edge — is actually a per-turn, single-target attack commitment (reset every turn, commits only
+when ≤1 attach from firing). The *multi-turn* behavior emerges from re-committing each turn plus
+`energy_score` banking energy on under-charged attackers. So L1 (rl/combat.py + both pilots)
+ports a **race table** (`charged_best` / `turns_to_ready` / `hits_to_ko` / `turns_to_first_ko =
+max(gap,1)+hits−1`), not a plan object: attach bonuses my fastest closer (bench closer outranks
+even the KO tier — attaching doesn't end the turn), "loaded" now means the BEST attack charged
+(the old cheapest-attack check stopped charging Mega Lucario after 1 of 2 energies), promote
+subtracts attaches-still-needed. **Decision:** close mode v1 (chip attacks jump above trainers,
+the floor-test self-deck fix) triggers only when the opponent board is *harmless* (all known ids,
+zero printed damage) — deliberately conservative so the >30% vs-expert gate can't regress through
+it; the full prize-race comparison is deferred until the [ENGINE] gates are measured.
+
+### 2026-07-09 · Evolution chains link by NAME, and attackId maps to cards by cumulative n_attacks
+**Two data discoveries while building the deck factory (rl/deck_build.py, M7.1):**
+(a) `evolves_from_id` points at one specific printing, but decks legally play any same-named
+card — the tuned Lucario deck runs Riolu #677 (80 HP) while Mega Lucario ex's id points at
+Riolu #974 (70 HP). Naive id-walking misses real lines; walk by NAME, take the best printing.
+(b) `attacks_features.parquet` has no card_id column, but attack ids are consecutive in
+card_id order — cumulative `n_attacks` assigns all 1,556 attacks with zero max_damage
+mismatches. That unlocks true damage-per-energy (best attack's cost) engine-free;
+`min_attack_cost` alone is the *cheapest* attack and mis-ranks attackers (Mega Lucario:
+min cost 1 = 130 dmg Aura Jab, best = 270 dmg Mega Brave at cost 2). Both facts are pinned
+in tests/test_deck_build.py. **Consequence:** the whole M7.1 factory (lines → scoring →
+templates) runs without the engine; only the fitness gate is [ENGINE].
+
+### 2026-07-09 · Kaggle ingestion built offline-first; the schema is an assumption until the [NET] spike
+**Built (rl/kaggle_ingest.py, M7.0):** injectable fetch layer (immutable gzip cache, ~1 req/s
+throttle) over `EpisodeService/{ListEpisodes,GetEpisodeReplay}`, a schema-tolerant
+`parse_episode`, deck harvesting with exact-hash + pooled-FEAT-cosine archetype clustering,
+frozen `meta_v<N>` snapshots, per-archetype forensics, and a BC-on-winners audit. 21 offline
+tests on canned env.toJSON()-shaped fixtures; full suite green. **Decision:** fetch and parse
+were split so the sandbox's lack of kaggle.com access blocks nothing except the final
+verification — the three schema bets (deck at first action, endpoint reachable, opponent obs
+present) are tracked in docs/M7.md with a runbook; `python -m rl.kaggle_ingest verify` is the
+go/no-go command. Hard asserts live in `verify`, not the parser, so `refresh` stays resumable
+over a mixed-quality episode set.
+
 ### 2026-07-08 · Deck search: robust + honest, but the tuned deck can't be improved against a small field
 **Built (rl/deck_search.py):** matchup evaluator, openskill rating, `evolve()`, `hill_climb()`,
 `mutate_flex()`. **Findings:** (a) noisy population openskill *regressed* (picked a deck that lost

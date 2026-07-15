@@ -1,5 +1,7 @@
-"""Damage math: can_afford / best_damage."""
-from tcg.combat import best_damage, can_afford
+"""Damage math: can_afford / best_damage, and the M7.2b race primitives."""
+from tcg.combat import (best_damage, can_afford, charged_best, hits_to_ko,
+                        turns_to_first_ko, turns_to_ready)
+from tcg.constants import UNREACHABLE_TURNS
 from tests import builders as b
 
 FIGHTING, WATER, PSYCHIC, COLORLESS = 6, 3, 5, 0
@@ -68,3 +70,49 @@ class TestBestDamage:
     def test_unknown_target_takes_plain_damage(self):
         attacker = b.pokemon(1, energies=[FIGHTING])
         assert best_damage(attacker, b.pokemon(12345)) == 50
+
+
+class TestRaceMath:
+    """M7.2b primitives: what a Pokémon is worth at full charge, and how many
+    turns until it takes its first KO (attach-1/turn model)."""
+
+    def test_charged_best_ignores_affordability(self):
+        assert charged_best(b.pokemon(3), b.pokemon(5)) == (270, 2)  # no energy attached
+        assert charged_best(b.pokemon(3), b.pokemon(2)) == (240, 2)  # resisted -30
+
+    def test_charged_best_applies_weakness_and_prefers_best_not_cheapest(self):
+        assert charged_best(b.pokemon(4), b.pokemon(1)) == (60, 1)   # 30 x2 weakness
+        assert charged_best(b.pokemon(1), None) == (120, 2)          # raw printed, best attack
+
+    def test_charged_best_degenerate_cases(self):
+        assert charged_best(b.pokemon(5), b.pokemon(1)) == (0, 0)    # zero-damage only
+        assert charged_best(b.pokemon(9), b.pokemon(1)) == (0, 0)    # attacks missing from table
+        assert charged_best(b.pokemon(12345), b.pokemon(1)) == (0, 0)
+        assert charged_best(None, b.pokemon(1)) == (0, 0)
+
+    def test_turns_to_ready_counts_missing_attaches(self):
+        assert turns_to_ready(b.pokemon(3)) == 2                     # 270 needs FF
+        assert turns_to_ready(b.pokemon(3, energies=[FIGHTING])) == 1
+        assert turns_to_ready(b.pokemon(3, energies=[FIGHTING] * 2)) == 0
+        assert turns_to_ready(b.pokemon(3, energies=[FIGHTING] * 3)) == 0
+
+    def test_turns_to_ready_sentinel_and_hand_cards(self):
+        assert turns_to_ready(b.pokemon(5)) == UNREACHABLE_TURNS     # can never damage
+        assert turns_to_ready(b.hand_card(1)) == 2                   # no .energies -> 0 attached
+
+    def test_hits_to_ko_ceils(self):
+        assert hits_to_ko(b.pokemon(3), b.pokemon(1, hp=100)) == 1
+        assert hits_to_ko(b.pokemon(3), b.pokemon(1, hp=300)) == 2   # ceil(300/270)
+        assert hits_to_ko(b.pokemon(1), b.pokemon(2, hp=200)) == 3   # ceil(200/90) resisted
+
+    def test_hits_to_ko_sentinel(self):
+        assert hits_to_ko(b.pokemon(10), b.pokemon(2, hp=50)) == UNREACHABLE_TURNS  # 20-30 -> 0
+        assert hits_to_ko(b.pokemon(5), b.pokemon(1, hp=10)) == UNREACHABLE_TURNS
+
+    def test_turns_to_first_ko_attach_fires_same_turn(self):
+        # One energy short still fires THIS turn (attach happens before the
+        # attack) — the same semantics as the pilot's 4000 unblock tier.
+        assert turns_to_first_ko(b.pokemon(3, energies=[FIGHTING]), b.pokemon(1, hp=100)) == 1
+        assert turns_to_first_ko(b.pokemon(3), b.pokemon(1, hp=100)) == 2          # gap 2
+        assert turns_to_first_ko(b.pokemon(1), b.pokemon(5, hp=240)) == 3          # g=2,h=2
+        assert turns_to_first_ko(b.pokemon(5), b.pokemon(1, hp=10)) == UNREACHABLE_TURNS

@@ -1,5 +1,6 @@
 from cg.api import to_observation_class, OptionType, SelectContext, AreaType, CardType, all_card_data
-from rl.combat import _CARD, _ATK, _can_afford, _best_damage  # pure-Python combat core (ships in submission)
+from rl.combat import (_CARD, _ATK, _can_afford, _best_damage,  # pure-Python combat core (ships in submission)
+                       _turns_to_first_ko, _turns_to_ready, UNREACHABLE)
 
 # Rough priority so it develops, attacks, and doesn't just pass
 
@@ -14,10 +15,19 @@ _IS_POKEMON = {c.cardId for c in all_card_data() if c.cardType == CardType.POKEM
 _IS_ENERGY = {c.cardId for c in all_card_data()
               if c.cardType in (CardType.BASIC_ENERGY, CardType.SPECIAL_ENERGY)}
 
+# Evolution-line tables (M7.5 guards). getattr: the fake_cg test stub predates
+# these card fields. Constants mirrored from tcg/constants.py — change BOTH.
+_NAME = {c.cardId: getattr(c, "name", None) for c in all_card_data()}
+_IS_BASIC = {c.cardId for c in all_card_data() if getattr(c, "basic", True)}
+_EVOLVES_FROM = {c.cardId: getattr(c, "evolvesFrom", None) for c in all_card_data()}
+_HAND_DISCARD_TRAINER_NAMES = ("Carmine",)   # HAND_DISCARD_TRAINER_NAMES
+_HAND_DISCARD_IDS = {cid for cid, n in _NAME.items()
+                     if n in _HAND_DISCARD_TRAINER_NAMES}
+
 # --- card-selection context categories (for score_card) ---
 _PROMOTE_CTX = {SelectContext.SETUP_ACTIVE_POKEMON, SelectContext.SETUP_BENCH_POKEMON,
                 SelectContext.TO_ACTIVE, SelectContext.SWITCH, SelectContext.TO_FIELD,
-                SelectContext.TO_BENCH, SelectContext.ATTACH_FROM}   # pick MY best Pokemon
+                SelectContext.TO_BENCH}   # pick MY best Pokemon
 _KEEP_CTX    = {SelectContext.TO_HAND, SelectContext.LOOK, SelectContext.NOT_MOVE}  # fetch useful
 _DISCARD_CTX = {SelectContext.DISCARD, SelectContext.TO_DECK, SelectContext.TO_DECK_BOTTOM,
                 SelectContext.DISCARD_CARD_OR_ATTACHED_CARD}          # lose the worst
@@ -37,6 +47,86 @@ def _card_usefulness(cid):
     if cid in _IS_ENERGY:
         return 250
     return 120
+
+
+def _pokemon_in_hand(me):
+    return [c for c in (me.hand or []) if c is not None and c.id in _IS_POKEMON]
+
+
+def _my_pokemon_names(me, hand_pokemon):
+    """Names of my Pokémon in play and in hand — the evolution-basis pool."""
+    in_play = [p for p in (list(me.active or []) + list(me.bench or []))
+               if p is not None]
+    return ({_NAME.get(p.id) for p in in_play}
+            | {_NAME.get(c.id) for c in hand_pokemon}) - {None}
+
+
+def _hand_holds_keepers(me):
+    """Any hand Pokémon worth protecting from a hand-discard trainer: a basic,
+    an evolution whose basis is in play or hand, or a hard hitter even while
+    momentarily dead (the deck's win-condition class — kaggle ep 85467275
+    lost to Carmine discarding Mega Lucario ex twice)."""
+    hand_pokemon = _pokemon_in_hand(me)
+    basis_names = _my_pokemon_names(me, hand_pokemon)
+    for c in hand_pokemon:
+        if c.id in _IS_BASIC:
+            return True
+        basis = _EVOLVES_FROM.get(c.id)
+        if basis is not None and basis in basis_names:
+            return True
+        if _attacker_quality(c.id) >= 100:   # HAND_DISCARD_PROTECT_QUALITY
+            return True
+    return False
+
+
+def _fetch_value(card, me):
+    """KEEP/fetch value with evolution-line awareness (M7.5): dead evolutions
+    sink, basics rise while the bench is empty or their evolution waits in
+    hand (kaggle ep 85469339: Poké Pad fetched a basis-less Hariyama twice
+    over live basics; the benched-out loss followed)."""
+    base = _card_usefulness(card.id)
+    if card.id not in _IS_POKEMON:
+        return base
+    hand_pokemon = _pokemon_in_hand(me)
+    basis = _EVOLVES_FROM.get(card.id)
+    if basis is not None:                                 # evolution card
+        if basis not in _my_pokemon_names(me, hand_pokemon):
+            return 60                                     # FETCH_DEAD_EVOLUTION
+        return base
+    bonus = 0                                             # basic Pokémon
+    if not any(p is not None for p in me.bench):
+        bonus += 400                       # FETCH_EMPTY_BENCH_BASIC_BONUS
+    my_name = _NAME.get(card.id)
+    if my_name is not None and any(_EVOLVES_FROM.get(c.id) == my_name
+                                   for c in hand_pokemon):
+        bonus += 300                       # FETCH_ENABLES_EVOLUTION_BONUS
+    return base + bonus
+
+
+def _attach_recipient_value(card, me, op_active):
+    """ATTACH_FROM: which of MY (usually benched) Pokémon receives an energy.
+
+    Marginal value — the opposite of the promote ladder: a Pokémon whose best
+    attack is already paid gains nothing from another energy (kaggle ep
+    85607769: 5 energies on a 1-cost Solrock). A basic whose evolution waits
+    in hand is charged FOR the evolution — attached energy survives evolving,
+    so Riolu carrying 2 is a pre-charged Mega Brave.
+    Constants mirrored from tcg/constants.py — change BOTH."""
+    from types import SimpleNamespace
+    my_name = _NAME.get(card.id)
+    evolution = next(
+        (c for c in _pokemon_in_hand(me)
+         if my_name is not None and _EVOLVES_FROM.get(c.id) == my_name),
+        None)
+    profile = (SimpleNamespace(id=evolution.id,
+                               energies=list(getattr(card, "energies", ()) or ()))
+               if evolution is not None else card)
+    energy_gap = _turns_to_ready(profile, op_active)
+    if energy_gap == 0:
+        return 50                          # ATTACH_RECIPIENT_CHARGED
+    quality = min(_attacker_quality(profile.id), 300)   # ATTACKER_QUALITY_CAP
+    return 300 + quality - 50 * min(energy_gap - 1, 4)  # BASE - PENALTY*min(gap-1, CAP)
+
 
 def make_generic_pilot(deck):
     def agent(obs_dict):
@@ -61,7 +151,7 @@ def score_option(o, obs):
     op_active = op.active[0] if op.active else None
 
     t = o.type
-    if t == OptionType.ATTACK: return score_attack(o, my_active, op_active)
+    if t == OptionType.ATTACK: return score_attack(o, my_active, op_active, op.bench)
     if t == OptionType.ATTACH: return score_attach(o, obs, me)
     if t == OptionType.ABILITY: return 3000
     if t == OptionType.EVOLVE: return 2800
@@ -82,14 +172,18 @@ def score_card(o, obs):
     if card is None:
         return 0
 
+    if ctx == SelectContext.ATTACH_FROM:          # energy recipient: marginal value
+        return _attach_recipient_value(card, st.players[st.yourIndex], op_active)
     if ctx in _PROMOTE_CTX:                       # start / promote / bench MY best attacker
         q = _attacker_quality(card.id)
         ready = 0                                 # bonus if it can attack right now
         if op_active is not None and hasattr(card, "energies") and _best_damage(card, op_active) > 0:
             ready = 500
-        return q + ready
+        # Race term (M7.2b): -50 per attach still needed (capped) — a charged
+        # attacker beats an equal-damage uncharged one, non-attackers sink.
+        return q + ready - 50 * min(_turns_to_ready(card, op_active), 4)
     if ctx in _KEEP_CTX:                          # fetch/keep the most useful card
-        return _card_usefulness(card.id)
+        return _fetch_value(card, st.players[st.yourIndex])
     if ctx in _DISCARD_CTX:                       # discard the LEAST useful
         return -_card_usefulness(card.id)
     if ctx in _TARGET_CTX:                        # damage the highest-prize opponent Pokémon
@@ -97,7 +191,16 @@ def score_card(o, obs):
     return 50                                     # unknown card context: neutral
 
 
-def score_attack(o, my_active, op_active):
+def _op_board_harmless(op_active, op_bench=()):
+    """CLOSE MODE predicate (M7.2b): every opponent board Pokémon has a KNOWN
+    card id and zero printed attack damage — they can never take a prize by KO.
+    Unknown ids count as threats (conservative: the floor-test case only)."""
+    board = ([op_active] if op_active is not None else [])
+    board += [p for p in op_bench if p is not None]
+    return all(p.id in _CARD and _attacker_quality(p.id) == 0 for p in board)
+
+
+def score_attack(o, my_active, op_active, op_bench=()):
     if op_active is None:
         return 1000
 
@@ -118,6 +221,10 @@ def score_attack(o, my_active, op_active):
         # bench-attach / draw (<=2400) so we take the prize and end the turn instead of
         # over-developing — which draws cards and races us to deck-out (the self-deck bug).
         return 2500 + 50 * prize
+    if _op_board_harmless(op_active, op_bench):
+        ## CLOSE MODE (M7.2b): the race is won — attack every turn instead of milling
+        ## (the M6 floor-test self-deck fix; chip jumps above trainers <=2200).
+        return 2300 + damage / 10
     else:                               ## no KO — chip damage stays low; develop first, attack last
         return 1000 + damage / 10
 
@@ -156,12 +263,26 @@ def score_retreat(obs):
 def score_play(o, obs):
     my_index = obs.current.yourIndex
     me = obs.current.players[my_index]
-    card = _card_at(obs, o.area, o.index, my_index)
+    # Engine quirk (found 2026-07-12, kaggle ep 85467275 + local repro): PLAY
+    # options carry NO `area` field — the index is always a hand index. Without
+    # this default every play resolved to None -> flat 2000, so the whole play
+    # tier below (Pokémon vs trainer, taper, deck-out guard) never fired in a
+    # real game — only in tests, whose synthetic options set area explicitly.
+    area = o.area if o.area is not None else AreaType.HAND
+    card = _card_at(obs, area, o.index, my_index)
 
     if card is None:
         return 2000
     if card.id in _IS_POKEMON:
+        if not any(p is not None for p in me.bench):
+            return 2700                   # EMPTY bench: above the whole KO tier (max
+                                          # 2650) — benching never ends the turn, but
+                                          # attacking does; KO-first with no bench let
+                                          # one return-KO end the game (basics in hand)
         return 2400                       # developing the board is always good
+
+    if card.id in _HAND_DISCARD_IDS and _hand_holds_keepers(me):
+        return 150                        # SCORE_HAND_DISCARD_BLOCKED: below near-deckout
 
     has_board = (bool(me.active) and me.active[0] is not None) or any(p for p in me.bench)
     if not has_board:
@@ -207,12 +328,34 @@ def score_attach(o, obs, me):
     if not damaging:
         return 400
 
-    best_dmg = max(d for d, _ in damaging)
-    cheapest = min(c for _, c in damaging)
-
-    if len(target_pokemon.energies) >= cheapest:
+    if _turns_to_ready(target_pokemon, opponent_active_card) == 0:
+        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
+        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
         return 600
 
-    return (2600 if is_active else 2400) + min(best_dmg, 300) // 100
+    best_dmg = max(d for d, _ in damaging)
+    bonus = min(best_dmg, 300) // 100
+
+    # 3) Race math (M7.2b): charge THE ONE attacker that closes first. The
+    #    target's own turns-to-first-KO must match the board minimum; ties
+    #    bonus every tied target and self-commit after the first attach
+    #    (the winner's energy gap drops, making it strictly unique).
+    #    The BENCH tier additionally requires an attack-ready ACTIVE — banking
+    #    on a benched closer while the active can neither attack nor pay its
+    #    retreat starves the whole board and mills the deck (the measured
+    #    floor-test failure, docs/M7.md 2026-07-09).
+    if opponent_active_card is not None:
+        my_active = me.active[0] if me.active and me.active[0] is not None else None
+        board = ([my_active] if my_active is not None else [])
+        board += [p for p in me.bench if p is not None]
+        mine = _turns_to_first_ko(target_pokemon, opponent_active_card)
+        if mine < UNREACHABLE and board and \
+                mine <= min(_turns_to_first_ko(p, opponent_active_card) for p in board):
+            if is_active:
+                return 2750 + bonus
+            if my_active is not None and _turns_to_ready(my_active, opponent_active_card) == 0:
+                return 2680 + bonus
+
+    return (2600 if is_active else 2400) + bonus
 
 

@@ -18,7 +18,8 @@ import numpy as np
 import torch
 
 from cg.api import search_begin, search_step, search_end, to_observation_class
-from .encoders import encode_context, encode_option, encode_state
+from .encoders import (COMBAT_SLICE, N_COMBAT, encode_context, encode_option,
+                       encode_state)
 from .policy import OptionScorer
 
 # Fillers for hidden opponent cards at determinization (mirrors the official sample).
@@ -85,7 +86,13 @@ def evaluate(state, model: OptionScorer):
         v = 0.0 if st.result == 2 else (1.0 if st.result == to_move else -1.0)
         return v, to_move, [], np.array([])
 
-    sc = np.concatenate([encode_state(st), encode_context(obs.select.context)]).astype(np.float32)
+    sc = np.concatenate([encode_state(st), encode_context(obs.select.context)])
+    # Pre-M3 checkpoints (bc_v1, the M8.4b instrument stack) are exactly
+    # N_COMBAT narrower — derive the cut from the model itself (matchrunner's
+    # shim, signature-free so mcts_search stays untouched).
+    if model.state_enc[0].in_features == sc.size - N_COMBAT:
+        sc = np.delete(sc, np.s_[COMBAT_SLICE[0]:COMBAT_SLICE[1]])
+    sc = sc.astype(np.float32)
     opts = np.stack([encode_option(o, obs) for o in obs.select.option]).astype(np.float32)
     logits, value = model(torch.from_numpy(sc).unsqueeze(0), torch.from_numpy(opts).unsqueeze(0))
     probs = torch.softmax(logits.squeeze(0), dim=0).numpy()
@@ -101,19 +108,30 @@ def make_node(state, model: OptionScorer) -> Node:
                 actions=actions, P=priors)
 
 
-def determinize(obs, deck: list[int], opp_deck: list[int] | None = None):
+def determinize(obs, deck: list[int], opp_deck: list[int] | None = None,
+                meta=None):
     """Guess the opponent's hidden cards and open a concrete search game (root state).
 
-    We know our own deck list, so sample our unseen zones from it. For the opponent:
-    if `opp_deck` is given, sample their hidden zones from that realistic decklist;
-    otherwise fall back to crude placeholders (Snorlax + basic energy). Modelling the
-    opponent with a real deck makes the lookahead reason about the game actually being
-    played. One determinization per real move."""
+    We know our own deck list, so sample our unseen zones from it. For the
+    opponent, in preference order: `meta` (M8.4a — a list of
+    rl.determinize.MetaDeck; the L3 archetype determinizer infers their list
+    from revealed cards and samples the remaining pool), else `opp_deck` (a
+    fixed realistic decklist), else the crude M2 placeholders (Snorlax +
+    basic energy) that measurably misled the search. One determinization per
+    real move."""
     import random
     st = obs.current
     me = st.yourIndex
     mine, opp = st.players[me], st.players[1 - me]
     need_active = len(opp.active) > 0 and opp.active[0] is None
+
+    if meta is not None:
+        from rl.determinize import determinize_kwargs
+        kw = determinize_kwargs(obs, meta, random.Random(random.random()))
+        return search_begin(
+            obs,
+            your_deck=random.sample(deck, mine.deckCount),
+            your_prize=random.sample(deck, len(mine.prize)), **kw)
 
     if opp_deck is None:
         o_deck = [FILLER_POKEMON] * opp.deckCount
@@ -190,11 +208,13 @@ def mcts_search(root: Node, model: OptionScorer, n_sims: int) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def make_mcts_agent(model: OptionScorer, deck: list[int], n_sims: int = 16,
-                    opp_deck: list[int] | None = None):
+                    opp_deck: list[int] | None = None, meta=None):
     """Return an agent(obs_dict)->list[int] that picks moves by MCTS.
 
     opp_deck: assumed opponent decklist for determinization (realistic modelling);
-    None uses crude Snorlax/energy fillers."""
+    meta (M8.4): rl.determinize.load_meta() list — the L3 archetype
+    determinizer infers the opponent's list per decision; None uses crude
+    Snorlax/energy fillers."""
     def agent(obs_dict: dict) -> list[int]:
         obs = to_observation_class(obs_dict)
         if obs.select is None:
@@ -202,7 +222,7 @@ def make_mcts_agent(model: OptionScorer, deck: list[int], n_sims: int = 16,
         if obs.search_begin_input is None:            # no forward model available here
             raise RuntimeError("search_begin_input missing; MCTS needs the forward model")
 
-        root = make_node(determinize(obs, deck, opp_deck), model)
+        root = make_node(determinize(obs, deck, opp_deck, meta=meta), model)
         try:
             if len(root.actions) <= 1:                 # nothing to search
                 pick = root.actions[0] if root.actions else list(range(obs.select.maxCount))

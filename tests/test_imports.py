@@ -15,14 +15,25 @@ def test_import_tcg_is_side_effect_free():
 
 CG_ONLY_MODULES = ["tcg.models", "tcg.constants", "tcg.library", "tcg.combat",
                    "tcg.pilot", "tcg.decks", "tcg.teachers"]
+# The rule-submission bundle ships these rl/ modules verbatim: pure Python on
+# the cg API only (rl/gate.py bundle_isolation_check is the on-engine pin;
+# this import tier is the offline half — M7.4a).
+RL_CG_ONLY_MODULES = ["rl.combat", "rl.generic_pilot", "rl.turn_solver"]
 NUMPY_MODULES = ["tcg.selfplay", "tcg.value_training"]
-POLARS_MODULES = ["tcg.encoders", "tcg.deck_search"]
+# M7 modules live in rl/ only (no tcg twin — M7-plan risk 6)
+M7_MODULES = ["rl.matchrunner", "rl.kaggle_ingest", "rl.deck_build", "rl.league"]
+POLARS_MODULES = ["tcg.encoders", "tcg.deck_search"] + M7_MODULES
 TORCH_MODULES = ["tcg.network", "tcg.behavior_cloning", "tcg.ppo", "tcg.search"]
 KAGGLE_ENV_MODULES = ["tcg.evaluation", "tcg.shipping"]
 
 
 @pytest.mark.parametrize("name", CG_ONLY_MODULES)
 def test_cg_only_modules_import(name):
+    importlib.import_module(name)
+
+
+@pytest.mark.parametrize("name", RL_CG_ONLY_MODULES)
+def test_rl_bundle_modules_import_without_heavy_deps(name):
     importlib.import_module(name)
 
 

@@ -177,3 +177,95 @@ def test_card_id_at_parity_over_all_areas():
 @pytest.mark.parametrize("context", list(SelectContext))
 def test_encode_context_parity(context):
     assert np.array_equal(old.encode_context(context), new.encode_context(context))
+
+
+def test_combat_slice_locates_the_m3_block():
+    """COMBAT_SLICE must point exactly at the combat features inside
+    encode_state's output — the pre-M3 checkpoint compat loader (bc_v1)
+    slices this range out to reconstruct the old encoding."""
+    assert old.COMBAT_SLICE == new.COMBAT_SLICE
+    start, end = old.COMBAT_SLICE
+    assert end - start == old.N_COMBAT
+    assert end + 2 * (1 + old.N_BENCH) * old.SLOT_DIM == old.STATE_DIM
+
+    me = player(active=pokemon(1, energies=[FIGHTING]), bench=[pokemon(3)])
+    opponent = player(active=pokemon(5, hp=80))
+    obs = observation(me=me, opponent=opponent)
+    state = old.encode_state(obs.current)
+    assert np.array_equal(state[start:end], old._combat_features(obs.current))
+
+
+# --- Encoders v2 (M7.3): parity + behavior ------------------------------------
+
+V2_DECK = [1] * 10 + [3] * 4 + [6] * 40 + [7] * 6  # a synthetic legal-ish 60
+
+
+def _v2_boards():
+    yield observation(me=player(), opponent=player())                       # empty
+    yield observation(                                                      # full-ish
+        me=player(active=pokemon(1, energies=[FIGHTING]),
+                  bench=[pokemon(3), pokemon(5)],
+                  hand=[hand_card(6), hand_card(7)],
+                  discard=[hand_card(1)]),
+        opponent=player(active=pokemon(2, hp=150), bench=[pokemon(4)]))
+    yield observation(                                                      # harmless opp
+        me=player(active=pokemon(3, energies=[FIGHTING, FIGHTING])),
+        opponent=player(active=pokemon(5, hp=200)))
+
+
+def test_encode_state_v2_parity_and_shape():
+    assert old.STATE_V2_DIM == new.STATE_V2_DIM
+    assert (old.N_STATE_IDS, old.N_OPTION_IDS, old.EMBED_DIM, old.N_CARD_IDS) \
+        == (new.N_STATE_IDS, new.N_OPTION_IDS, new.EMBED_DIM, new.N_CARD_IDS)
+    for obs in _v2_boards():
+        a_num, a_ids = old.encode_state_v2(obs.current, V2_DECK)
+        b_num, b_ids = new.encode_state_v2(obs.current, V2_DECK)
+        assert np.array_equal(a_num, b_num) and np.array_equal(a_ids, b_ids)
+        assert a_num.shape == (old.STATE_V2_DIM,) and a_ids.shape == (old.N_STATE_IDS,)
+        assert a_num.dtype == np.float32 and a_ids.dtype == np.int32
+        # v1 prefix is byte-identical to encode_state (v2 is additive)
+        assert np.array_equal(a_num[:old.STATE_DIM], old.encode_state(obs.current))
+
+
+def test_encode_option_v2_parity_and_ids():
+    me = player(active=pokemon(1), hand=[hand_card(7)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    attach = option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE, in_play_index=0)
+    play = option(OptionType.PLAY, area=AreaType.HAND, index=0)
+    for opt in (attach, play):
+        a_num, a_ids = old.encode_option_v2(opt, obs)
+        b_num, b_ids = new.encode_option_v2(opt, obs)
+        assert np.array_equal(a_num, b_num) and np.array_equal(a_ids, b_ids)
+        assert np.array_equal(a_num, old.encode_option(opt, obs))  # numeric == v1
+    assert old.encode_option_v2(attach, obs)[1].tolist() == [0, 1]  # target = active card 1
+    assert old.encode_option_v2(play, obs)[1].tolist() == [7, 0]    # acted card 7
+
+
+def test_board_ids_layout_and_padding():
+    me = player(active=pokemon(1), bench=[pokemon(3), None, pokemon(5)])
+    obs = observation(me=me, opponent=player())
+    _, ids = old.encode_state_v2(obs.current, V2_DECK)
+    assert ids.tolist() == [1, 3, 0, 5, 0, 0] + [0] * 6  # my slots then opp's, 0-padded
+
+
+def test_deck_pools_subtract_observed_zones():
+    deck = [1, 1, 6, 6, 7]
+    me = player(active=pokemon(1), hand=[hand_card(6)], discard=[hand_card(7)])
+    obs = observation(me=me, opponent=player())
+    pools = old._deck_pools(obs.current, deck)
+    full, rest = pools[:old.FEAT_DIM], pools[old.FEAT_DIM:]
+    expect_full = (old.FEAT[[1, 1, 6, 6, 7]].sum(axis=0) * 0.1).astype(np.float32)
+    expect_rest = (old.FEAT[[1, 6]].sum(axis=0) * 0.1).astype(np.float32)  # minus seen
+    assert np.allclose(full, expect_full) and np.allclose(rest, expect_rest)
+
+
+def test_race_features_reflect_the_won_race():
+    # my charged card 3 (270 dmg) vs a harmless card 5 wall: race delta positive
+    obs = observation(me=player(active=pokemon(3, energies=[FIGHTING, FIGHTING])),
+                      opponent=player(active=pokemon(5, hp=200)))
+    race = old._race_features(obs.current)
+    assert race.shape == (old.N_RACE,)
+    assert race[0] == 0.0            # my active ready
+    assert race[1] == 0.1            # 1 turn to first KO
+    assert race[6] == 1.0            # opponent can never KO (capped)
+    assert race[7] > 0.8             # race clearly won

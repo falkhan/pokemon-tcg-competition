@@ -8,9 +8,18 @@ change. The overall priority ladder, highest first:
     3000  use an ability            (free, doesn't end the turn)
     2900  attach that unblocks a KO by a benched Pokémon / retreat into a lethal attacker
     2800  evolve                    (free, doesn't end the turn)
+    2750  attach to my fastest closer in the active     (race math, M7.2b)
+    2700  bench a Pokémon while the bench is EMPTY (above the KO tier — benching
+          never ends the turn, so the KO still fires on the re-prompt; skipping
+          it risks the instant benchless loss when the active is KO'd)
+    2680  attach to my fastest closer on the bench      (above the KO tier: the
+          attach doesn't end the turn — the KO fires on the re-prompt after it;
+          ONLY while the active is attack-ready, else the active starves)
     2600  attach energy to the active attacker
     2500+ attack for a KO           (take the prize, then end the turn)
     2400  bench a Pokémon / attach energy on the bench
+    2300+ chip attack in CLOSE MODE (opponent board is harmless: attack every
+          turn instead of milling — the M6 floor-test self-deck fix, M7.2b)
     2200- play a trainer            (tapers with hand size — the anti-deck-out fix)
     1500  retreat to escape a KO
     1000+ chip attack               (develop first, attack last)
@@ -31,6 +40,9 @@ COLORLESS = 0
 
 WEAKNESS_MULTIPLIER = 2
 RESISTANCE_REDUCTION = 30
+UNREACHABLE_TURNS = 99
+"""Race-math sentinel: this Pokémon can never KO (large int keeps min()/
+comparisons in the scorers branch-free)."""
 
 # --- free setup (never ends the turn) ---------------------------------------
 
@@ -44,14 +56,25 @@ SCORE_KO_BASE = 2500           # a KO takes a prize NOW — close the game
 KO_PRIZE_BONUS = 50            # ... and multi-prize KOs (ex / mega-ex) even more so
 SCORE_CHIP_BASE = 1000         # no KO: chip damage stays low; develop first, attack last
 CHIP_DAMAGE_DIVISOR = 10
+SCORE_CHIP_CLOSE_BASE = 2300   # CLOSE MODE (M7.2b): opponent board is harmless -> attack
+                               # every turn instead of milling; above trainers (<=2200),
+                               # below play-pokemon/bench-attach 2400 (max chip ~2354)
 
 # --- attaching energy --------------------------------------------------------
 
 SCORE_ATTACH_UNBLOCKS_KO_ACTIVE = 4000  # active can cash the KO this turn: top priority
 SCORE_ATTACH_UNBLOCKS_KO_BENCH = 2900
+SCORE_ATTACH_RACE_CLOSER_ACTIVE = 2750  # M7.2b: my fastest closer (min turns-to-first-KO)
+SCORE_ATTACH_RACE_CLOSER_BENCH = 2680   # ... on the bench: above attach-active AND the KO
+                                        # tier — keep charging THE ONE attacker (the attach
+                                        # doesn't end the turn; the KO fires on re-prompt).
+                                        # ONLY while the active is attack-ready: otherwise
+                                        # the active starves (can't attack OR retreat) and
+                                        # the pilot mills itself (measured: floor 0.715)
 SCORE_ATTACH_ACTIVE_BASE = 2600         # loading a real attacker that still needs energy
 SCORE_ATTACH_BENCH_BASE = 2400
-SCORE_ATTACH_ALREADY_LOADED = 600       # cheapest damaging attack already affordable
+SCORE_ATTACH_ALREADY_LOADED = 600       # BEST damaging attack already charged (M7.2b: was
+                                        # the cheapest — which stopped charging too early)
 SCORE_ATTACH_NO_TARGET = 500            # couldn't resolve the target Pokémon
 SCORE_ATTACH_NON_ATTACKER = 400         # don't waste energy on benchwarmers
 ATTACH_DAMAGE_BONUS_CAP = 300           # tiny tiebreaker: prefer the harder hitter
@@ -70,6 +93,11 @@ HEALTHY_HP_FRACTION = 0.75
 
 SCORE_PLAY_UNRESOLVED_CARD = 2000  # can't tell what it is: playing is usually fine
 SCORE_PLAY_POKEMON = 2400          # developing the board is always good
+SCORE_PLAY_POKEMON_EMPTY_BENCH = 2700  # EMPTY bench: above the whole KO tier (max
+                                   # 2650 = 2500 + 3x50) — benching never ends the
+                                   # turn, but attacking does, so KO-first meant an
+                                   # active that KO'd every turn NEVER benched and
+                                   # one return-KO ended the game with basics in hand
 SCORE_PLAY_TRAINER_NO_BOARD = 300  # no Pokémon in play yet: trainers can't help
 # Trainers are valued on NEED, not flat — the anti-deck-out fix (docs/M6.md).
 # (Crude: can't yet tell a draw supporter from a gust/Switch — no effect-text
@@ -80,6 +108,13 @@ SCORE_TRAINER_BASE = 2200
 TRAINER_HAND_TAPER = 200           # taper as the hand grows past COMFORTABLE_HAND_SIZE
 COMFORTABLE_HAND_SIZE = 4
 SCORE_TRAINER_FLOOR = 400
+# Hand-discard trainers ("discard your hand and draw 5") burn every Pokémon
+# still in hand — two shipped-game losses traced to Carmine discarding Mega
+# Lucario ex (kaggle eps 85467275/85469339 post-mortems, docs/M7.md
+# 2026-07-12). Identified by NAME: there is no effect-text parsing yet.
+HAND_DISCARD_TRAINER_NAMES = frozenset({"Carmine"})
+SCORE_HAND_DISCARD_BLOCKED = 150    # below near-deckout: effectively never
+HAND_DISCARD_PROTECT_QUALITY = 100  # hand Pokémon hitting this hard are keepers
 
 # --- card-selection contexts (score_card) --------------------------------------
 
@@ -87,7 +122,22 @@ USEFULNESS_POKEMON_BASE = 300  # attackers > energy > other, when fetching/keepi
 ATTACKER_QUALITY_CAP = 300
 USEFULNESS_ENERGY = 250
 USEFULNESS_OTHER = 120
+# Fetch-target priority (kaggle ep 85469339 post-mortem: Poké Pad fetched
+# Hariyama twice — an evolution with no Makuhita anywhere — while the bench
+# sat empty; the benched-out loss followed).
+FETCH_DEAD_EVOLUTION = 60            # evolution with no basis in play or hand
+FETCH_EMPTY_BENCH_BASIC_BONUS = 400  # bench empty: a body beats any attacker fetch
+FETCH_ENABLES_EVOLUTION_BONUS = 300  # basic whose evolution already waits in hand
 PROMOTE_READY_BONUS = 500      # promote a Pokémon that can damage the opponent NOW
+# ATTACH_FROM = "which of MY Pokémon receives an energy" (e.g. Mega Lucario's
+# discard-recharge). Marginal value, NOT promote value: a charged attacker
+# gains nothing from another energy (kaggle ep 85607769: 5 energies on a
+# 1-cost Solrock while Riolu/Hariyama sat empty — the promote ladder's
+# ready bonus made the richest Pokémon keep getting richer).
+ATTACH_RECIPIENT_CHARGED = 50  # best attack already paid: near-worthless
+ATTACH_RECIPIENT_BASE = 300    # scale anchor, mirrors USEFULNESS_POKEMON_BASE
+PROMOTE_TURN_PENALTY = 50      # M7.2b race term: -50 per attach still needed ...
+PROMOTE_TURNS_CAP = 4          # ... capped, so UNREACHABLE costs -200, not -4950
 TARGET_PRIZE_WEIGHT = 100      # damage the highest-prize opponent Pokémon
 SCORE_CARD_NEUTRAL = 50        # unknown card context: neutral
 
@@ -95,7 +145,7 @@ SCORE_CARD_NEUTRAL = 50        # unknown card context: neutral
 PROMOTE_CONTEXTS = frozenset({
     SelectContext.SETUP_ACTIVE_POKEMON, SelectContext.SETUP_BENCH_POKEMON,
     SelectContext.TO_ACTIVE, SelectContext.SWITCH, SelectContext.TO_FIELD,
-    SelectContext.TO_BENCH, SelectContext.ATTACH_FROM,
+    SelectContext.TO_BENCH,
 })  # pick MY best Pokémon
 KEEP_CONTEXTS = frozenset({
     SelectContext.TO_HAND, SelectContext.LOOK, SelectContext.NOT_MOVE,
