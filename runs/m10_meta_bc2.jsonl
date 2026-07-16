@@ -1,0 +1,25 @@
+{"pairs": [[["model", "checkpoints/osv2_bc2.pt", "lucario"], ["solver", "/home/falkhan/Documents/python_projects/pokemon-tcg-competition/data/kaggle/meta_v2/deck_20dcd3130bc0.csv"], 60], [["model", "checkpoints/osv2_bc2.pt", "lucario"], ["solver", "/home/falkhan/Documents/python_projects/pokemon-tcg-competition/data/kaggle/meta_v2/deck_6f87e9d4949a.csv"], 60], [["model", "checkpoints/osv2_bc2.pt", "lucario"], ["solver", "/home/falkhan/Documents/python_projects/pokemon-tcg-competition/data/kaggle/meta_v2/deck_dedf515dc8a4.csv"], 60], [["model", "checkpoints/osv2_bc2.pt", "lucario"], ["solver", "/home/falkhan/Documents/python_projects/pokemon-tcg-competition/data/kaggle/meta_v2/deck_ff8392fb9edb.csv"], 60]], "workers": 12, "seed": 719}
+{"job": 8, "pair": 1, "results": [1, 0, 0, 1, 1, 0, 0, 0, 0, 0]}
+{"job": 9, "pair": 1, "results": [0, 0, 0, 1, 0, 0, 0, 1, 0, 1]}
+{"job": 11, "pair": 1, "results": [0, 0, 0, 0, 1, 0, 1, 0, 0, 0]}
+{"job": 10, "pair": 1, "results": [0, 1, 1, 0, 1, 0, 1, 1, 1, 0]}
+{"job": 7, "pair": 1, "results": [0, 0, 0, 0, 1, 1, 0, 0, 0, 1]}
+{"job": 6, "pair": 1, "results": [1, 0, 1, 1, 0, 0, 0, 1, 1, 1]}
+{"job": 1, "pair": 0, "results": [1, 1, 1, 1, 0, 0, 0, 1, 1, 0]}
+{"job": 4, "pair": 0, "results": [0, 1, 1, 1, 0, 1, 0, 1, 1, 1]}
+{"job": 0, "pair": 0, "results": [1, 1, 0, 1, 1, 0, 1, 0, 0, 1]}
+{"job": 2, "pair": 0, "results": [1, 0, 0, 1, 1, 1, 1, 0, 1, 1]}
+{"job": 18, "pair": 3, "results": [0, 1, 0, 0, 0, 0, 0, 0, 1, 0]}
+{"job": 19, "pair": 3, "results": [1, 0, 0, 0, 0, 1, 1, 0, 1, 0]}
+{"job": 5, "pair": 0, "results": [1, 0, 0, 1, 0, 0, 1, 1, 1, 1]}
+{"job": 3, "pair": 0, "results": [0, 1, 1, 1, 1, 0, 0, 1, 0, 0]}
+{"job": 20, "pair": 3, "results": [1, 1, 1, 0, 1, 0, 1, 0, 0, 1]}
+{"job": 23, "pair": 3, "results": [0, 0, 1, 1, 1, 1, 0, 0, 0, 1]}
+{"job": 21, "pair": 3, "results": [1, 1, 1, 0, 0, 0, 1, 1, 0, 1]}
+{"job": 16, "pair": 2, "results": [0, 0, 1, 1, 1, 0, 1, 1, 0, 1]}
+{"job": 14, "pair": 2, "results": [1, 0, 0, 0, 0, 1, 0, 1, 0, 1]}
+{"job": 12, "pair": 2, "results": [1, 0, 0, 0, 1, 1, 0, 1, 0, 1]}
+{"job": 15, "pair": 2, "results": [1, 0, 1, 0, 0, 1, 1, 1, 0, 1]}
+{"job": 22, "pair": 3, "results": [0, 0, 0, 0, 0, 0, 1, 0, 1, 0]}
+{"job": 17, "pair": 2, "results": [1, 0, 1, 0, 0, 1, 0, 0, 0, 0]}
+{"job": 13, "pair": 2, "results": [1, 1, 0, 0, 1, 0, 1, 1, 0, 0]}

@@ -1,0 +1,39 @@
+{
+  "version": "meta_v2",
+  "created_at": "2026-07-15T23:30:43Z",
+  "params": {
+    "top_k": 10,
+    "dedupe_by": "archetype",
+    "cos_threshold": 0.95
+  },
+  "decks": [
+    {
+      "hash": "20dcd3130bc0b81d865aaf1475caf4438ab2d194",
+      "archetype": "mega_lucario_ex+solrock",
+      "n_games": 3521,
+      "weight": 2550012.1791219916,
+      "csv": "deck_20dcd3130bc0.csv"
+    },
+    {
+      "hash": "6f87e9d4949aeea89834687ce4015230d6bd85ad",
+      "archetype": "mega_kangaskhan_ex+crustle",
+      "n_games": 347,
+      "weight": 232603.7872719529,
+      "csv": "deck_6f87e9d4949a.csv"
+    },
+    {
+      "hash": "dedf515dc8a4e193f29d39e0277384d1ed05ddd1",
+      "archetype": "drakloak+dreepy",
+      "n_games": 82,
+      "weight": 54296.326018439264,
+      "csv": "deck_dedf515dc8a4.csv"
+    },
+    {
+      "hash": "ff8392fb9edbdefd9a714442c891060b357b5230",
+      "archetype": "hop_s_zacian_ex+hop_s_snorlax",
+      "n_games": 1,
+      "weight": 531.8477401031328,
+      "csv": "deck_ff8392fb9edb.csv"
+    }
+  ]
+}
