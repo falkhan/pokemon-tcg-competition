@@ -290,27 +290,58 @@ def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
 
 def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
          dev: bool = False, fixes: frozenset = frozenset()):
-    """Depth-first search over MY remaining turn. Returns (score, line) where
-    line is the action list-of-lists from `state` to the best leaf. Leaves:
-    game over, turn passed to the opponent, or depth cap. The stand-pat floor
+    """Depth-first search over MY remaining turn. Returns (score, line, trail)
+    where line is the action list-of-lists from `state` to the best leaf and
+    trail[i] is the search observation at which line[i] was taken (M11: plan
+    derivation only — these carry determinized hidden zones). Leaves: game
+    over, turn passed to the opponent, or depth cap. The stand-pat floor
     means prizes already taken along the way are never given back by a worse
-    continuation."""
+    continuation. Depth/node caps read from `budget` (defaults = module
+    constants) so widened data-gen never mutates globals shared across seats."""
     obs = state.observation
+    max_depth = budget.get("max_depth", MAX_DEPTH)
+    max_nodes = budget.get("max_nodes", MAX_NODES)
     if obs.current.result >= 0 or obs.current.yourIndex != snap.me \
-            or depth >= MAX_DEPTH:
-        return score_leaf(snap, obs, dev), []
-    best_score, best_line = score_leaf(snap, obs, dev), []   # stand-pat floor
+            or depth >= max_depth:
+        return score_leaf(snap, obs, dev), [], []
+    best_score, best_line, best_trail = score_leaf(snap, obs, dev), [], []
     for action in _candidate_actions(obs, fixes):
-        if budget["nodes"] >= MAX_NODES or perf_counter() >= deadline:
+        if budget["nodes"] >= max_nodes or perf_counter() >= deadline:
             break
         budget["nodes"] += 1
         child = search_step(state.searchId, action)
-        score, line = _dfs(child, snap, depth + 1, deadline, budget, dev, fixes)
+        score, line, trail = _dfs(child, snap, depth + 1, deadline, budget,
+                                  dev, fixes)
         if score > best_score:
-            best_score, best_line = score, [action] + line
+            best_score, best_line, best_trail = \
+                score, [action] + line, [obs] + trail
         if best_score >= W_WIN:                          # win short-circuit
             break
-    return best_score, best_line
+    return best_score, best_line, best_trail
+
+
+def solve_turn_line(obs, deck: list[int], deadline_s: float | None = None,
+                    dev: bool = False, fixes: frozenset = frozenset(),
+                    max_depth: int | None = None, max_nodes: int | None = None,
+                    ) -> tuple[float, list[list[int]], list]:
+    """Full-line variant for offline data generation (M11 expert iteration):
+    returns (best_score, line, per_step_obs) with NO first-action truncation
+    and NO override gate. per_step_obs[i] is the search observation at which
+    line[i] was chosen — a determinized snapshot: use it for plan derivation
+    ONLY, never as a training state."""
+    if deadline_s is None:
+        deadline_s = DEV_DEADLINE_S if dev else SOLVE_DEADLINE_S
+    snap = _root_snapshot(obs)
+    deadline = perf_counter() + deadline_s
+    # Resolve None at call time so monkeypatched module constants still bite.
+    budget = {"nodes": 0,
+              "max_depth": MAX_DEPTH if max_depth is None else max_depth,
+              "max_nodes": MAX_NODES if max_nodes is None else max_nodes}
+    root = _open_search(obs, deck)
+    try:
+        return _dfs(root, snap, 0, deadline, budget, dev, fixes)
+    finally:
+        search_end()
 
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
@@ -324,19 +355,11 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     (MIN_OVERRIDE_SCORE); dev overrides only when the best line beats the
     stand-pat leaf by DEV_OVERRIDE_MARGIN — a real development gain, not
     line-vs-line noise — under the shorter DEV_DEADLINE_S."""
-    if deadline_s is None:
-        deadline_s = DEV_DEADLINE_S if dev else SOLVE_DEADLINE_S
-    snap = _root_snapshot(obs)
-    deadline = perf_counter() + deadline_s
-    budget = {"nodes": 0}
-    root = _open_search(obs, deck)
-    try:
-        best_score, best_line = _dfs(root, snap, 0, deadline, budget, dev, fixes)
-    finally:
-        search_end()
+    best_score, best_line, _ = solve_turn_line(obs, deck, deadline_s, dev, fixes)
     if not best_line:
         return None
     if dev:
+        snap = _root_snapshot(obs)
         if best_score >= score_leaf(snap, obs, dev=True) + DEV_OVERRIDE_MARGIN:
             return [int(i) for i in best_line[0]]
         return None

@@ -1,0 +1,584 @@
+"""M11 expert iteration — plan-conditioned collection + training.
+
+The loop: the WIDENED turn solver (rl/turn_solver.solve_turn_line at 5x
+deadline / 5x nodes, override gates bypassed) is the improvement operator;
+training is purely supervised (rl/ppo.py untouched). Two collection modes:
+
+  expert  teacher self-play: the solver's line is executed AND labeled —
+          bootstrap data for osv3_plan0 (Rung 0).
+  ei      the STUDENT advances the game (plan sampled at temperature tau,
+          actions Gumbel-sampled conditioned on it — plan-level exploration,
+          annealed over rounds); the teacher labels every visited decision.
+
+THE ANTI-ALIASING INVARIANT (docs/M11-plan.md): a row's plan features always
+come from the same solve that produced that row's label. The student's
+tau-sampled plan shapes execution only — it is never a training input. This
+is what separates M11 from the buddy-DAgger dead end (M9: 0.198).
+
+Collection is multiprocess (spawn pool over game chunks, one live battle per
+process) — the M9 single-process collector's ~5 games/min was the bottleneck.
+
+CLI:
+  python -m rl.plan_iter collect --mode expert --games 600 --out data/plan_ei0
+  python -m rl.plan_iter train --data data/plan_ei0 data/bc_v2b \
+      --init-v2 checkpoints/osv2_bc2.pt --name osv3_plan0
+"""
+import multiprocessing as mp
+from pathlib import Path
+from time import perf_counter
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+from cg.api import SelectContext, to_observation_class
+from cg.game import battle_finish, battle_select, battle_start
+from rl.bc import load_population
+from rl.encoders import (N_CONTEXTS, STATE_V2_DIM, encode_context,
+                         encode_option_v2, encode_state_v2)
+from rl.plan import (PLAN_DIM, derive_plan, encode_plan, enumerate_plans,
+                     match_candidate)
+from rl.policy import OptionScorerV3
+
+ROOT = Path(__file__).resolve().parent.parent
+
+WIDE_NODES = 4000          # widened data-gen budget (inference default: 800)
+WIDE_DEPTH = 10            # (inference default: 8)
+
+
+# ---------------------------------------------------------------- collection
+
+def _solve(obs, deck, deadline_s):
+    """Widened solve_turn_line with the solver-pilot's crash discipline:
+    any exception -> no line (fallback pilot takes over)."""
+    from rl.turn_solver import solve_turn_line
+    if getattr(obs, "search_begin_input", None) is None:
+        return None, [], []
+    try:
+        return solve_turn_line(obs, deck, deadline_s=deadline_s,
+                               max_depth=WIDE_DEPTH, max_nodes=WIDE_NODES)
+    except Exception:
+        return None, [], []
+
+
+def _action_valid(action, obs) -> bool:
+    n = len(obs.select.option)
+    k = obs.select.maxCount
+    if not action or any(not (0 <= int(i) < n) for i in action):
+        return False
+    return len(action) == (1 if k == 1 else min(k, n))
+
+
+def _fresh_seat_state():
+    return {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
+            "line": None, "step": 0, "on": False}
+
+
+def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
+                  deadline, label_deadline, stats):
+    """Teacher's labeled action for this prompt + (cands, plan_label) when a
+    fresh plan row was created. Updates st per the anti-aliasing invariant."""
+    plan_row = None
+    if is_main and st["key"] != key:
+        _, line, trail = _solve(obs, deck, deadline)
+        plan = derive_plan(line, trail, obs) if line else None
+        cands = enumerate_plans(obs)
+        idx = match_candidate(plan, cands)
+        plan_row = (cands, idx)
+        stats["plan_rows"] += 1
+        if idx < 0:
+            stats["plan_missed"] += 1
+        elif idx == 0:
+            stats["plan_null"] += 1
+        elif cands[idx].needs_gust:
+            stats["plan_gust"] += 1
+        st.update(key=key, vec=encode_plan(plan), line=line, step=0,
+                  on=bool(line))
+
+    action = None
+    if st["key"] == key and st["on"] and st["line"] and \
+            st["step"] < len(st["line"]):
+        cand = [int(i) for i in st["line"][st["step"]]]
+        if _action_valid(cand, obs):
+            action = cand
+            st["step"] += 1
+        else:
+            st["on"] = False
+            stats["derails"] += 1
+    if action is None and len(obs.select.option) >= 2:
+        _, line2, trail2 = _solve(obs, deck, label_deadline)
+        if line2 and _action_valid([int(i) for i in line2[0]], obs):
+            action = [int(i) for i in line2[0]]
+            plan2 = derive_plan(line2, trail2, obs)
+            st.update(key=key, vec=encode_plan(plan2), line=line2, step=1,
+                      on=True)
+    if action is None:
+        picks = fallback(obs_dict)
+        action = [int(i) for i in picks[:obs.select.maxCount]]
+    return action, plan_row
+
+
+def _collect_chunk(args):
+    """One worker: play [lo, hi) games, write its own shards. Spawn-safe —
+    everything it needs is re-imported/rebuilt here."""
+    (mode, lo, hi, decks_file, out_dir, checkpoint, tau, dirichlet,
+     deadline, label_deadline, shard_size, seed, worker) = args
+    import random
+
+    from rl.generic_pilot import make_generic_pilot
+
+    out = Path(out_dir)
+    population = load_population(decks_file)
+    rng = random.Random(seed * 10007 + worker)
+    np_rng = np.random.default_rng(seed * 10007 + worker)
+    torch.manual_seed(seed * 10007 + worker)
+
+    student = None
+    if mode == "ei":
+        ckpt = Path(checkpoint)
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt
+        student = OptionScorerV3()
+        student.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        student.eval()
+
+    columns = ("states", "plans", "state_ids", "options", "option_ids",
+               "n_options", "labels", "game_ids", "results", "deck_idx",
+               "plan_cands", "n_plan_cands", "plan_labels")
+    shard = {k: [] for k in columns}
+    shard_idx = sum(1 for _ in out.glob(f"shard_w{worker:02d}_*.npz"))
+    stats = {"games": 0, "decisions": 0, "plan_rows": 0, "plan_missed": 0,
+             "plan_null": 0, "plan_gust": 0, "derails": 0, "wins": [0, 0, 0]}
+    t0 = perf_counter()
+
+    def flush():
+        nonlocal shard_idx
+        if not shard["labels"]:
+            return
+        np.savez_compressed(
+            out / f"shard_w{worker:02d}_{shard_idx:04d}.npz",
+            states=np.stack(shard["states"]),
+            plans=np.stack(shard["plans"]),
+            state_ids=np.stack(shard["state_ids"]),
+            options=np.concatenate(shard["options"]),
+            option_ids=np.concatenate(shard["option_ids"]),
+            n_options=np.array(shard["n_options"], dtype=np.int32),
+            labels=np.array(shard["labels"], dtype=np.int32),
+            game_ids=np.array(shard["game_ids"], dtype=np.int32),
+            results=np.array(shard["results"], dtype=np.float32),
+            deck_idx=np.array(shard["deck_idx"], dtype=np.int32),
+            plan_cands=(np.concatenate(shard["plan_cands"])
+                        if shard["plan_cands"] else
+                        np.zeros((0, PLAN_DIM), np.float32)),
+            n_plan_cands=np.array(shard["n_plan_cands"], dtype=np.int32),
+            plan_labels=np.array(shard["plan_labels"], dtype=np.int32),
+        )
+        shard_idx += 1
+        for v in shard.values():
+            v.clear()
+
+    for game in range(lo, hi):
+        picks_idx = [rng.randrange(len(population)) for _ in range(2)]
+        decks = [population[picks_idx[0]], population[picks_idx[1]]]
+        fallbacks = [make_generic_pilot(d) for d in decks]
+        seat_state = [_fresh_seat_state(), _fresh_seat_state()]
+        student_plan = [np.zeros(PLAN_DIM, np.float32),
+                        np.zeros(PLAN_DIM, np.float32)]
+        student_key = [None, None]
+
+        obs_dict, start_data = battle_start(decks[0], decks[1])
+        if start_data.errorPlayer >= 0:
+            raise ValueError(f"battle_start rejected a deck "
+                             f"(errorType={start_data.errorType})")
+
+        game_rows: list[tuple] = []
+        while obs_dict["current"]["result"] < 0:
+            player = obs_dict["current"]["yourIndex"]
+            obs = to_observation_class(obs_dict)
+            key = (obs.current.turn, player)
+            is_main = obs.select.context == SelectContext.MAIN
+
+            label_action, plan_row = _teacher_step(
+                seat_state[player], obs, obs_dict, decks[player],
+                fallbacks[player], key, is_main, deadline, label_deadline,
+                stats)
+
+            state_num, state_ids = encode_state_v2(obs.current, decks[player])
+            state_ctx = np.concatenate(
+                [state_num, encode_context(obs.select.context)]
+            ).astype(np.float32)
+            pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+            opts = np.stack([num for num, _ in pairs]).astype(np.float32)
+            opt_ids = np.stack([ids for _, ids in pairs])
+
+            cands_mat = np.zeros((0, PLAN_DIM), np.float32)
+            plan_label = -1
+            if plan_row is not None:
+                cands, plan_label = plan_row
+                cands_mat = np.stack([encode_plan(c) for c in cands]
+                                     ).astype(np.float32)
+
+            if mode == "ei":
+                if plan_row is not None:      # student picks ITS OWN plan here
+                    s_idx = student.act_plan(state_ctx, state_ids, cands_mat,
+                                             tau=tau, dirichlet_eps=dirichlet,
+                                             rng=np_rng)
+                    student_plan[player] = cands_mat[s_idx].copy()
+                    student_key[player] = key
+                s_vec = (student_plan[player] if student_key[player] == key
+                         else np.zeros(PLAN_DIM, np.float32))
+                exec_action = student.act(state_ctx, s_vec, state_ids, opts,
+                                          opt_ids, obs.select.maxCount,
+                                          greedy=False)
+                exec_action = [int(i) for i in exec_action]
+                if exec_action != label_action:   # off the teacher's line now
+                    seat_state[player]["on"] = False
+            else:
+                exec_action = label_action
+
+            game_rows.append((state_ctx, seat_state[player]["vec"].copy()
+                              if seat_state[player]["key"] == key
+                              else np.zeros(PLAN_DIM, np.float32),
+                              state_ids, opts, opt_ids, label_action[0],
+                              player, cands_mat, plan_label))
+            stats["decisions"] += 1
+            obs_dict = battle_select(exec_action)
+
+        result = obs_dict["current"]["result"]
+        battle_finish()
+        stats["wins"][result] += 1
+        stats["games"] += 1
+
+        for (state_ctx, plan_vec, state_ids, opts, opt_ids, label, player,
+             cands_mat, plan_label) in game_rows:
+            shard["states"].append(state_ctx)
+            shard["plans"].append(plan_vec)
+            shard["state_ids"].append(state_ids)
+            shard["options"].append(opts)
+            shard["option_ids"].append(opt_ids)
+            shard["n_options"].append(len(opts))
+            shard["labels"].append(label)
+            shard["game_ids"].append(game)
+            shard["results"].append(
+                0.0 if result == 2 else (1.0 if result == player else -1.0))
+            shard["deck_idx"].append(picks_idx[player])
+            shard["plan_cands"].append(cands_mat)
+            shard["n_plan_cands"].append(len(cands_mat))
+            shard["plan_labels"].append(plan_label)
+
+        if (game - lo + 1) % shard_size == 0:
+            flush()
+        if game - lo + 1 == 25:
+            per_game = (perf_counter() - t0) / 25
+            total_min = per_game * (hi - lo) / 60
+            print(f"[w{worker}] game 25: {per_game:.1f}s/game -> "
+                  f"projected {total_min:.0f} min for this worker's "
+                  f"{hi - lo} games", flush=True)
+
+    flush()
+    return stats
+
+
+def collect(mode: str, n_games: int, decks_file, out_dir: Path,
+            checkpoint: str | None = None, tau: float = 1.0,
+            dirichlet: float = 0.0, deadline: float = 2.0,
+            label_deadline: float = 0.5, workers: int = 12,
+            shard_size: int = 200, seed: int = 0) -> dict:
+    assert mode in ("expert", "ei")
+    assert mode != "ei" or checkpoint, "--mode ei needs --checkpoint"
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    chunk = -(-n_games // workers)                    # ceil
+    jobs = []
+    lo = 0
+    for w in range(workers):
+        hi = min(lo + chunk, n_games)
+        if lo >= hi:
+            break
+        jobs.append((mode, lo, hi, str(decks_file), str(out_dir), checkpoint,
+                     tau, dirichlet, deadline, label_deadline, shard_size,
+                     seed, w))
+        lo = hi
+
+    if len(jobs) == 1:                                # tests / smoke path
+        results = [_collect_chunk(jobs[0])]
+    else:
+        with mp.get_context("spawn").Pool(len(jobs)) as pool:
+            results = pool.map(_collect_chunk, jobs)
+
+    agg = {k: sum(r[k] for r in results)
+           for k in ("games", "decisions", "plan_rows", "plan_missed",
+                     "plan_null", "plan_gust", "derails")}
+    agg["wins"] = [sum(r["wins"][i] for r in results) for i in range(3)]
+    rows = max(1, agg["plan_rows"])
+    agg["coverage"] = 1.0 - agg["plan_missed"] / rows
+    print(f"done: {agg['games']} games, {agg['decisions']} decisions, "
+          f"{agg['plan_rows']} plan rows -> {out_dir}", flush=True)
+    print(f"plan coverage {agg['coverage']:.3f}  "
+          f"(missed {agg['plan_missed']})  null {agg['plan_null'] / rows:.2f}  "
+          f"gust {agg['plan_gust'] / rows:.2f}  derails {agg['derails']}",
+          flush=True)
+    return agg
+
+
+# ------------------------------------------------------------------ training
+
+class BCDatasetV3(torch.utils.data.Dataset):
+    """v2 shard rows + plan columns. Old plan-less shards (bc_v2b, ...) load
+    with shaped defaults: plans=zeros (== "no plan"), no plan rows — so the
+    diverse v2 data keeps regularizing the plan=0 fallback policy."""
+
+    def __init__(self, data_dir: Path | list):
+        cols = {k: [] for k in ("states", "state_ids", "options", "option_ids",
+                                "n_options", "labels", "game_ids", "results",
+                                "deck_idx")}
+        plan_cols = {"plans": [], "plan_cands": [], "n_plan_cands": [],
+                     "plan_labels": []}
+        starts_list, cstarts_list = [], []
+        option_base = game_base = cand_base = 0
+        dirs = data_dir if isinstance(data_dir, (list, tuple)) else [data_dir]
+        for d in dirs:
+            for path in sorted(Path(d).glob("*.npz")):
+                print(f"loading {path.name}", flush=True)
+                shard = np.load(path)
+                n = len(shard["labels"])
+                starts = np.cumsum(shard["n_options"]) - shard["n_options"]
+                starts_list.append(starts + option_base)
+                cols["game_ids"].append(shard["game_ids"] + game_base)
+                for k in cols:
+                    if k != "game_ids":
+                        cols[k].append(shard[k])
+                if "plans" in shard.files:
+                    plan_cols["plans"].append(shard["plans"])
+                    plan_cols["plan_cands"].append(shard["plan_cands"])
+                    ncands = shard["n_plan_cands"]
+                    plan_cols["plan_labels"].append(shard["plan_labels"])
+                else:
+                    plan_cols["plans"].append(np.zeros((n, PLAN_DIM), np.float32))
+                    plan_cols["plan_cands"].append(
+                        np.zeros((0, PLAN_DIM), np.float32))
+                    ncands = np.zeros(n, dtype=np.int32)
+                    plan_cols["plan_labels"].append(
+                        np.full(n, -1, dtype=np.int32))
+                plan_cols["n_plan_cands"].append(ncands)
+                cstarts_list.append(np.cumsum(ncands) - ncands + cand_base)
+                cand_base += int(ncands.sum())
+                option_base += len(shard["options"])
+                game_base += int(shard["game_ids"].max()) + 1
+        for k, v in cols.items():
+            setattr(self, k, np.concatenate(v))
+        for k, v in plan_cols.items():
+            setattr(self, k, np.concatenate(v))
+        self.starts = np.concatenate(starts_list)
+        self.cand_starts = np.concatenate(cstarts_list)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, i):
+        s, n = self.starts[i], self.n_options[i]
+        cs, cn = self.cand_starts[i], self.n_plan_cands[i]
+        return (self.states[i], self.plans[i], self.state_ids[i],
+                self.options[s:s + n], self.option_ids[s:s + n],
+                self.labels[i], self.results[i], self.deck_idx[i],
+                self.plan_cands[cs:cs + cn], self.plan_labels[i])
+
+
+def collate_v3(batch):
+    B = len(batch)
+    maxN = max(row[3].shape[0] for row in batch)
+    maxM = max(1, max(row[8].shape[0] for row in batch))
+
+    states = torch.zeros(B, STATE_V2_DIM + N_CONTEXTS)
+    plans = torch.zeros(B, PLAN_DIM)
+    state_ids = torch.zeros(B, batch[0][2].shape[0], dtype=torch.long)
+    options = torch.zeros(B, maxN, batch[0][3].shape[1])
+    option_ids = torch.zeros(B, maxN, 2, dtype=torch.long)
+    valid = torch.zeros(B, maxN, dtype=torch.bool)
+    labels = torch.zeros(B, dtype=torch.long)
+    results = torch.zeros(B, dtype=torch.float32)
+    deck_idx = torch.zeros(B, dtype=torch.long)
+    plan_cands = torch.zeros(B, maxM, PLAN_DIM)
+    plan_valid = torch.zeros(B, maxM, dtype=torch.bool)
+    plan_labels = torch.full((B,), -1, dtype=torch.long)
+
+    for i, (state, plan, sids, menu, oids, label, result, didx,
+            cands, plabel) in enumerate(batch):
+        n = menu.shape[0]
+        states[i] = torch.from_numpy(state)
+        plans[i] = torch.from_numpy(plan)
+        state_ids[i] = torch.from_numpy(sids.astype(np.int64))
+        options[i, :n] = torch.from_numpy(menu)
+        option_ids[i, :n] = torch.from_numpy(oids.astype(np.int64))
+        valid[i, :n] = True
+        labels[i] = int(label)
+        results[i] = float(result)
+        deck_idx[i] = int(didx)
+        m = cands.shape[0]
+        if m:
+            plan_cands[i, :m] = torch.from_numpy(cands)
+            plan_valid[i, :m] = True
+        plan_labels[i] = int(plabel)
+
+    return (states, plans, state_ids, options, option_ids, valid, labels,
+            results, deck_idx, plan_cands, plan_valid, plan_labels)
+
+
+def load_v2_into_v3(v2_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
+    """Warm-start a V3 from a V2 state dict: shared weights copied verbatim,
+    the plan_dim new state_enc.0 columns ZERO-initialized (V3(plan=0) == V2 —
+    the warm-start invariant), plan_enc/plan_head keep their fresh init."""
+    model = OptionScorerV3(plan_dim=plan_dim)
+    sd = model.state_dict()
+    base = STATE_V2_DIM + N_CONTEXTS
+    for k, v in v2_sd.items():
+        if k == "state_enc.0.weight":
+            new = torch.zeros_like(sd[k])
+            new[:, :base] = v[:, :base]
+            new[:, base + plan_dim:] = v[:, base:]
+            sd[k] = new
+        else:
+            sd[k] = v
+    model.load_state_dict(sd)
+    return model
+
+
+def train(data_dirs: list, name: str, init: str | None = None,
+          init_v2: str | None = None, epochs: int = 8, lr: float = 3e-4,
+          batch_size: int = 256, plan_weight: float = 1.0) -> None:
+    """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
+    over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
+    ritual); reports policy AND plan-head validation accuracy."""
+    ds = BCDatasetV3([Path(d) for d in data_dirs])
+
+    rng = np.random.default_rng(0)
+    unique_games = np.unique(ds.game_ids)
+    val_games = set(rng.choice(unique_games,
+                               max(1, int(0.1 * len(unique_games))),
+                               replace=False).tolist())
+    is_val = np.isin(ds.game_ids, list(val_games))
+    train_ds = torch.utils.data.Subset(ds, np.nonzero(~is_val)[0])
+    val_ds = torch.utils.data.Subset(ds, np.nonzero(is_val)[0])
+    print(f"train {len(train_ds)}, val {len(val_ds)}")
+
+    train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                          collate_fn=collate_v3)
+    val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                        collate_fn=collate_v3)
+
+    def _resolve(p):
+        p = Path(p)
+        return p if p.is_absolute() or p.exists() else ROOT / p
+
+    if init is not None:
+        model = OptionScorerV3()
+        model.load_state_dict(torch.load(_resolve(init), map_location="cpu"))
+        print(f"warm-start from v3 {init}")
+    elif init_v2 is not None:
+        model = load_v2_into_v3(torch.load(_resolve(init_v2),
+                                           map_location="cpu"))
+        print(f"warm-start from v2 {init_v2} (plan columns zero-init)")
+    else:
+        model = OptionScorerV3()
+    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    best_acc = 0.0
+
+    def evaluate():
+        model.eval()
+        correct = total = pcorrect = ptotal = 0
+        with torch.no_grad():
+            for batch in val_dl:
+                (states, plans, sids, options, oids, valid, labels, _, _,
+                 cands, cvalid, plabels) = batch
+                logits, _ = model(states, plans, sids, options, oids)
+                logits = logits.masked_fill(~valid, -1e9)
+                correct += (logits.argmax(dim=1) == labels).sum().item()
+                total += len(labels)
+                mask = plabels >= 0
+                if mask.any():
+                    pl = model.plan_logits(states[mask], sids[mask],
+                                           cands[mask])
+                    pl = pl.masked_fill(~cvalid[mask], -1e9)
+                    pcorrect += (pl.argmax(dim=1) == plabels[mask]).sum().item()
+                    ptotal += int(mask.sum())
+        return correct / max(1, total), pcorrect / max(1, ptotal)
+
+    if init is not None or init_v2 is not None:
+        acc0, pacc0 = evaluate()
+        print(f"init val_acc {acc0:.3f}  plan_acc {pacc0:.3f}")
+
+    for epoch in range(epochs):
+        model.train()
+        running = 0.0
+        for batch in train_dl:
+            (states, plans, sids, options, oids, valid, labels, results, _,
+             cands, cvalid, plabels) = batch
+            opt.zero_grad()
+            logits, value = model(states, plans, sids, options, oids)
+            logits = logits.masked_fill(~valid, -1e9)
+            loss = F.cross_entropy(logits, labels) \
+                + 0.5 * F.huber_loss(value, results)
+            mask = plabels >= 0
+            if mask.any():
+                pl = model.plan_logits(states[mask], sids[mask], cands[mask])
+                pl = pl.masked_fill(~cvalid[mask], -1e9)
+                loss = loss + plan_weight * F.cross_entropy(pl, plabels[mask])
+            loss.backward()
+            opt.step()
+            running += loss.item()
+        acc, pacc = evaluate()
+        print(f"epoch {epoch}: train_loss {running / len(train_dl):.3f}  "
+              f"val_acc {acc:.3f}  plan_acc {pacc:.3f}", flush=True)
+        if acc > best_acc:
+            best_acc = acc
+            (ROOT / "checkpoints").mkdir(exist_ok=True)
+            torch.save(model.state_dict(),
+                       ROOT / "checkpoints" / f"{name}.pt")
+
+
+# ----------------------------------------------------------------------- CLI
+
+if __name__ == "__main__":
+    import argparse
+
+    p = argparse.ArgumentParser()
+    sub = p.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("collect", help="expert/EI plan-conditioned collection")
+    c.add_argument("--mode", choices=["expert", "ei"], required=True)
+    c.add_argument("--games", type=int, default=600)
+    c.add_argument("--decks", type=str, default="data/league/population.json")
+    c.add_argument("--out", type=str, required=True)
+    c.add_argument("--checkpoint", type=str, default=None,
+                   help="student checkpoint (ei mode)")
+    c.add_argument("--tau", type=float, default=1.0)
+    c.add_argument("--dirichlet", type=float, default=0.0)
+    c.add_argument("--deadline", type=float, default=2.0)
+    c.add_argument("--label-deadline", type=float, default=0.5)
+    c.add_argument("--workers", type=int, default=12)
+    c.add_argument("--shard-size", type=int, default=200)
+    c.add_argument("--seed", type=int, default=0)
+    t = sub.add_parser("train", help="train OptionScorerV3 on plan shards")
+    t.add_argument("--data", type=str, nargs="+", required=True)
+    t.add_argument("--name", type=str, required=True)
+    t.add_argument("--init", type=str, default=None,
+                   help="warm-start from a v3 checkpoint")
+    t.add_argument("--init-v2", type=str, default=None,
+                   help="warm-start from a v2 checkpoint (zero-init plan cols)")
+    t.add_argument("--epochs", type=int, default=8)
+    t.add_argument("--lr", type=float, default=3e-4)
+    t.add_argument("--batch-size", type=int, default=256)
+    t.add_argument("--plan-weight", type=float, default=1.0)
+    args = p.parse_args()
+
+    if args.cmd == "collect":
+        collect(args.mode, args.games, args.decks, Path(args.out),
+                checkpoint=args.checkpoint, tau=args.tau,
+                dirichlet=args.dirichlet, deadline=args.deadline,
+                label_deadline=args.label_deadline, workers=args.workers,
+                shard_size=args.shard_size, seed=args.seed)
+    else:
+        train(args.data, args.name, init=args.init, init_v2=args.init_v2,
+              epochs=args.epochs, lr=args.lr, batch_size=args.batch_size,
+              plan_weight=args.plan_weight)

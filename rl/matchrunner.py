@@ -177,6 +177,52 @@ def make_pilot(spec: OpponentSpec, instance: str):
             ckpt = ROOT / ckpt          # league specs store ROOT-relative paths
         sd = torch.load(ckpt, map_location="cpu")
 
+        if "plan_enc.0.weight" in sd:
+            # Plan-conditioned v3 checkpoint (OptionScorerV3, M11): replan at
+            # every own MAIN prompt, hold the plan for submenus keyed on
+            # (turn, yourIndex). Closure state persists across a whole series
+            # (pilots are built once, line ~318) — reset on a turn-counter
+            # drop (new game, direct loop) and on select-None (kaggle path).
+            from cg.api import SelectContext
+            from rl.encoders import encode_option_v2, encode_state_v2
+            from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+            from rl.policy import OptionScorerV3
+            m3 = OptionScorerV3()
+            m3.load_state_dict(sd)
+            m3.eval()
+            deck_ids = resolve_deck(spec[2])
+            pstate = {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
+                      "last_turn": -1}
+
+            def fn3(od):
+                obs = to_observation_class(od)
+                if obs.select is None:
+                    pstate.update(key=None, last_turn=-1)
+                    return deck_ids
+                t = obs.current.turn
+                if t < pstate["last_turn"]:          # new game in this series
+                    pstate.update(key=None)
+                pstate["last_turn"] = t
+                key = (t, obs.current.yourIndex)
+                num, sids = encode_state_v2(obs.current, deck_ids)
+                sc = np.concatenate(
+                    [num, encode_context(obs.select.context)]
+                ).astype(np.float32)
+                if obs.select.context == SelectContext.MAIN:
+                    cands = enumerate_plans(obs)
+                    mat = np.stack([encode_plan(c) for c in cands]
+                                   ).astype(np.float32)
+                    idx = m3.act_plan(sc, sids, mat)          # argmax at eval
+                    pstate.update(key=key, vec=mat[idx].copy())
+                plan = (pstate["vec"] if pstate["key"] == key
+                        else np.zeros(PLAN_DIM, np.float32))
+                pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+                opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+                oids = np.stack([i for _, i in pairs])
+                return m3.act(sc, plan, sids, opts, oids,
+                              obs.select.maxCount, greedy=True)
+            return fn3, deck_ids
+
         if "embedding.weight" in sd:
             # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
             # deck-context pools — the pilot closes over its own deck list.
