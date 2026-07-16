@@ -221,3 +221,17 @@ def test_collect_dagger_student_advances_teacher_labels(tmp_path, monkeypatch):
     assert selected == [[0], [0]]            # student's picks drove the game
     shard = np.load(tmp_path / "dagger" / "shard_0000.npz")
     assert shard["labels"].tolist() == [1, 1]  # teacher's picks are the labels
+
+
+def test_teacher_pilot_ext_spec_routes_through_make_pilot(monkeypatch):
+    import rl.matchrunner as mr
+    seen = []
+
+    def fake_make_pilot(spec, instance):
+        seen.append((spec, instance))
+        return (lambda od: [0]), list(spec[2])
+
+    monkeypatch.setattr(mr, "make_pilot", fake_make_pilot)
+    fn = old._teacher_pilot("ext:/bundles/buddy", [1] * 60, "t0")
+    assert callable(fn)
+    assert seen == [(("ext", "/bundles/buddy", [1] * 60), "t0")]

@@ -242,11 +242,16 @@ def _teacher_pilot(teacher: str, deck_ids: list[int], instance: str):
     "solver-dev" (M8.2) route through matchrunner.make_pilot so BC can clone
     the solver pilot's play — its overrides fire on ~1% of prompts, the rest
     stays the observable generic scoring (low aliasing risk; the M8.2 leg-B
-    fidelity probe measures it)."""
+    fidelity probe measures it). "ext:<dir>" (M9 Leg 2 round 2) loads an
+    external kaggle-style main.py agent as the teacher — deck-SPECIFIC
+    teachers need a matching deck population (e.g. lucario-only for buddy)."""
     if teacher == "generic":
         from rl.generic_pilot import make_generic_pilot
         return make_generic_pilot(deck_ids)
     from rl.matchrunner import make_pilot
+    if teacher.startswith("ext:"):
+        fn, _ = make_pilot(("ext", teacher[4:], deck_ids), instance)
+        return fn
     fn, _ = make_pilot((teacher, deck_ids), instance)
     return fn
 
@@ -713,6 +718,10 @@ if __name__ == "__main__":
     c.add_argument("--deck", type=str, default="lucario")
     c.add_argument("--checkpoint", type=str, default="checkpoints/osv2_bc2.pt",
                    help="student checkpoint for --teacher dagger (M9 Leg 2)")
+    c.add_argument("--dagger-teacher", type=str, default="solver",
+                   help="label source for --teacher dagger: solver | "
+                        "ext:<bundle-dir> (deck-specific ext teachers need a "
+                        "matching --decks population)")
     c.add_argument("--seed", type=int, default=0)
     c.add_argument("--decks", type=str, default="data/league/population.json",
                    help="deck population file (v2 teachers only)")
@@ -739,7 +748,8 @@ if __name__ == "__main__":
         if args.teacher == "dagger":
             collect_dagger(args.games, args.checkpoint, args.decks,
                            out_dir=Path(args.out) if args.out else None,
-                           shard_size=args.shard_size, seed=args.seed)
+                           shard_size=args.shard_size, seed=args.seed,
+                           teacher=args.dagger_teacher)
         elif args.teacher in ("generic", "solver", "solver-dev"):
             collect_games_v2(args.games, args.decks, shard_size=args.shard_size,
                              teacher=args.teacher, seed=args.seed,
