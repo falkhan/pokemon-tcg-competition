@@ -1,8 +1,18 @@
 # M9 plan: beat solver:lucario 0.55 — parallel pilot-fix + learning ladder
 
-Status: **planned 2026-07-14, not started.** Diary: `docs/M9.md` (create on start, one dated
-entry per leg including kills, status checklist at top). Bar unchanged from M8: **any agent
-≥0.55 vs `solver:lucario`, n≥800.**
+Status: **planned 2026-07-14; reprioritized 2026-07-15 behind M10 replay imitation;
+RESTORED 2026-07-16 after M10 closed NO-GO ([M10.md](M10.md)).** M10's post-mortem
+strengthens this plan's teacher-choice rule: leaderboard replay teachers hit the same
+unobservable-reasoning fidelity ceiling (~0.53) as the retired rule-pilot teacher — add
+**"BC from replays of search-based agents"** to the dead-end list above. What M10 left
+behind for these legs: multi-dir/`--init`/`--weighting` in `rl/bc.py` (Legs 2–3 need
+exactly these), the meta_v2 co-gate with pinned baselines (ship 0.448 · osv2_bc2 0.405,
+weighted n=60/deck) as an additional promotion check, a 2,123-episode harvest +
+snowball infra, and the strongest possible deck validation (the leaderboard's dominant
+list is card-for-card `decks/lucario.csv`). **Leg 1 (pilot v2 fixes) is the lead track;
+Leg 2 (DAgger on the solver — observable AND queryable) is the top learning rung.**
+Diary: `docs/M9.md` (create on start). Bar unchanged from M8: **any agent ≥0.55 vs
+`solver:lucario`, n≥800** — plus the meta co-gate on promotion.
 
 ## Why this ladder
 

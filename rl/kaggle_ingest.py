@@ -132,16 +132,24 @@ def _throttle() -> None:
     _last_request_t = time.monotonic()
 
 
-def _http_post(path: str, body: dict) -> dict:
+def _http_post(path: str, body: dict, retries: int = 4) -> dict:
     """POST to a Kaggle EpisodeService endpoint (listings only — replay downloads
-    moved to the authenticated client, see ``_default_fetcher``). Raises a
-    runbook-pointing error offline."""
+    moved to the authenticated client, see ``_default_fetcher``). Throttled like
+    the fetch path (M10: 22 unthrottled listings in a row earned a 429) and
+    backing off on rate limits. Raises a runbook-pointing error offline."""
     try:
         import requests
 
-        resp = requests.post(f"{BASE_URL}/{path}", json=body, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
+        for attempt in range(retries):
+            _throttle()
+            resp = requests.post(f"{BASE_URL}/{path}", json=body, timeout=30)
+            if resp.status_code == 429 and attempt < retries - 1:
+                wait = 30.0 * (attempt + 1)
+                print(f"[NET] 429 from {path}, backing off {wait:.0f}s", flush=True)
+                time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            return resp.json()
     except Exception as e:  # noqa: BLE001 — every failure mode gets the same remedy
         raise RuntimeError(
             f"[NET] cannot reach kaggle.com ({type(e).__name__}: {e}). This sandbox has "
@@ -263,9 +271,13 @@ def list_episodes(submission_id: int | None = None, team_id: int | None = None,
             sub = _get(a, "submissionId", "submission_id")
             reward = _get(a, "reward")
             score = _get(a, "updatedScore", "updated_score")
+            team = _get(a, "teamId", "team_id")  # M10: the snowball channel —
+            # our own listings reveal opponents' team ids, whose listings
+            # reveal THEIR opponents (harvest targeting without a leaderboard)
             row[f"submission_id_{seat}"] = None if sub is None else int(sub)
             row[f"reward_{seat}"] = None if reward is None else float(reward)
             row[f"updated_score_{seat}"] = None if score is None else float(score)
+            row[f"team_id_{seat}"] = None if team is None else int(team)
         rows.append(row)
     return pl.DataFrame(rows, schema=_LISTING_SCHEMA)
 
@@ -275,7 +287,79 @@ _LISTING_SCHEMA = {
     "submission_id_0": pl.Int64, "submission_id_1": pl.Int64,
     "reward_0": pl.Float64, "reward_1": pl.Float64,
     "updated_score_0": pl.Float64, "updated_score_1": pl.Float64,
+    "team_id_0": pl.Int64, "team_id_1": pl.Int64,
 }
+
+
+def targets(top_k: int = 30, min_score: float = 600.0, exclude=()) -> list[int]:
+    """Snowball harvest targets: the highest-scoring opponent submission ids
+    already recorded in episodes.parquet (their listings reveal their whole
+    episode history, and those episodes reveal THEIR opponents). Prints a
+    ready-to-paste `refresh --opp-subs ...` line. Pass our own submission ids
+    as `exclude` — the our_seat flag only covers the fetched episode's seat,
+    not every appearance."""
+    df = pl.read_parquet(EPISODES_PQ)
+    seats = [df.select(pl.col(f"submission_id_{s}").alias("sub"),
+                       pl.col(f"updated_score_{s}").alias("score"),
+                       (pl.col("our_seat") == s).alias("ours"))
+             for s in (0, 1)]
+    pool = (pl.concat(seats)
+              .filter(~pl.col("ours").fill_null(False)
+                      & ~pl.col("sub").is_in(list(exclude) or [-1])
+                      & pl.col("sub").is_not_null() & pl.col("score").is_not_null())
+              .group_by("sub").agg(pl.col("score").max())
+              .filter(pl.col("score") >= min_score)
+              .sort("score", descending=True).head(top_k))
+    for r in pool.iter_rows(named=True):
+        print(f"  {r['sub']:>10}  {r['score']:8.1f}", flush=True)
+    subs = pool["sub"].to_list()
+    print(f"refresh --opp-subs {' '.join(map(str, subs))}", flush=True)
+    return subs
+
+
+def leaderboard(top: int = 50) -> list[dict]:
+    """Top leaderboard teams via the authenticated Kaggle client (M10 harvest
+    targeting). Returns [{team_id, team_name, score}] best-first and prints a
+    ready-to-paste `refresh --teams ...` line. Field names vary across kaggle
+    package versions — extracted best-effort with a loud failure."""
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+
+        api = KaggleApi()
+        api.authenticate()
+        entries = api.competition_leaderboard_view(COMPETITION)
+    except Exception as e:  # noqa: BLE001 — every failure mode gets the same remedy
+        raise RuntimeError(
+            f"[NET] Kaggle leaderboard fetch failed ({type(e).__name__}: {e}). Needs "
+            "the `kaggle` package and ~/.kaggle/kaggle.json credentials — or harvest "
+            "team ids via the snowball channel instead (episodes.parquet team_id_* "
+            "columns filled by `refresh`)."
+        ) from e
+
+    def _attr(obj, *names):
+        for n in names:
+            v = getattr(obj, n, None)
+            if v is not None:
+                return v
+        return None
+
+    rows = []
+    for e in entries[:top]:
+        team = _attr(e, "teamId", "team_id")
+        rows.append({
+            "team_id": None if team is None else int(team),
+            "team_name": _attr(e, "teamName", "team_name", "teamNameNullable"),
+            "score": float(_attr(e, "score") or 0.0),
+        })
+    if rows and all(r["team_id"] is None for r in rows):
+        raise RuntimeError(
+            "leaderboard entries carry no team id in this kaggle package version; "
+            f"first entry fields: {sorted(vars(entries[0]))[:20]}")
+    for r in rows:
+        print(f"  {r['team_id']:>10}  {r['score']:8.1f}  {r['team_name']}", flush=True)
+    ids = [str(r["team_id"]) for r in rows if r["team_id"] is not None]
+    print(f"refresh --teams {' '.join(ids)}", flush=True)
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -415,13 +499,20 @@ _EPISODES_SCHEMA = {
 
 
 def refresh(our_subs: list[int], top_team_ids=(), max_new: int = 500,
-            fetcher=None, list_fn=None) -> pl.DataFrame:
-    """List episodes for our submissions (+ optional top teams), fetch+parse the new
-    ones, and merge into episodes.parquet. Resumable: the raw cache is immutable, and
-    a failed episode is skipped (it stays absent from the parquet, so the next refresh
-    retries it against the cache)."""
+            fetcher=None, list_fn=None, opp_subs=()) -> pl.DataFrame:
+    """List episodes for our submissions (+ optional opponent subs / teams),
+    fetch+parse the new ones, and merge into episodes.parquet. Resumable: the raw
+    cache is immutable, and a failed episode is skipped (it stays absent from the
+    parquet, so the next refresh retries it against the cache).
+
+    opp_subs (M10): opponent SUBMISSION ids to list — the snowball harvest
+    channel. Kaggle retired the ListEpisodes team filter (probed 2026-07-15:
+    only submissionId and ids[] are accepted, teamId 400s), so top-team
+    harvesting walks the opponent graph instead: `targets` mines the parquet
+    for the highest-scoring opponent subs, their episodes reveal THEIR
+    opponents, repeat. top_team_ids is kept for the day the filter returns."""
     list_fn = list_fn or list_episodes
-    listings = [list_fn(submission_id=s) for s in our_subs]
+    listings = [list_fn(submission_id=s) for s in list(our_subs) + list(opp_subs)]
     listings += [list_fn(team_id=t) for t in top_team_ids]
     listing = pl.concat(listings).unique(subset="episode_id") if listings else \
         pl.DataFrame(schema=_LISTING_SCHEMA)
@@ -459,6 +550,10 @@ def refresh(our_subs: list[int], top_team_ids=(), max_new: int = 500,
     if EPISODES_PQ.exists():
         old = pl.read_parquet(EPISODES_PQ).filter(
             ~pl.col("episode_id").is_in(new["episode_id"].to_list()))
+        # schema migration: rows written before a column existed get nulls
+        old = old.with_columns([pl.lit(None, dtype=dt).alias(c)
+                                for c, dt in _EPISODES_SCHEMA.items()
+                                if c not in old.columns]).select(list(_EPISODES_SCHEMA))
         new = pl.concat([old, new])
     new = new.sort("episode_id")
     EPISODES_PQ.parent.mkdir(parents=True, exist_ok=True)
@@ -780,8 +875,19 @@ def _main() -> None:
     s = sub.add_parser("verify", help="hard-assert the schema bets on a cached episode")
     s.add_argument("--episode", type=int, required=True)
 
+    s = sub.add_parser("leaderboard", help="top team ids/scores for harvest targeting")
+    s.add_argument("--top", type=int, default=50)
+
+    s = sub.add_parser("targets", help="snowball targets: top opponent subs in parquet")
+    s.add_argument("--top-k", type=int, default=30)
+    s.add_argument("--min-score", type=float, default=600.0)
+    s.add_argument("--exclude", type=int, nargs="*", default=[],
+                   help="our own submission ids (our_seat only covers fetched seats)")
+
     s = sub.add_parser("refresh", help="list + fetch + parse new episodes into parquet")
     s.add_argument("--subs", type=int, nargs="+", required=True)
+    s.add_argument("--opp-subs", type=int, nargs="*", default=[],
+                   help="opponent submission ids to snowball (see `targets`)")
     s.add_argument("--teams", type=int, nargs="*", default=[])
     s.add_argument("--max-new", type=int, default=500)
 
@@ -809,8 +915,13 @@ def _main() -> None:
         print(f"imported {a.path} -> episode {a.episode}", flush=True)
     elif a.cmd == "verify":
         verify(a.episode)
+    elif a.cmd == "leaderboard":
+        leaderboard(top=a.top)
+    elif a.cmd == "targets":
+        targets(top_k=a.top_k, min_score=a.min_score, exclude=a.exclude)
     elif a.cmd == "refresh":
-        refresh(a.subs, top_team_ids=a.teams, max_new=a.max_new)
+        refresh(a.subs, opp_subs=a.opp_subs, top_team_ids=a.teams,
+                max_new=a.max_new)
     elif a.cmd == "harvest":
         print(harvest_decks(min_games=a.min_games))
     elif a.cmd == "meta":

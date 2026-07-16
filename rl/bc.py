@@ -325,27 +325,42 @@ def collate(batch):
     return states, options, valid, labels, results
 
 class BCDatasetV2(torch.utils.data.Dataset):
-    """v2 shards: v1 fields + parallel state_ids/option_ids + deck_idx."""
+    """v2 shards: v1 fields + parallel state_ids/option_ids + deck_idx.
 
-    def __init__(self, data_dir: Path = DATA_DIR_V2):
+    data_dir may be a list of shard dirs (M10: mix teacher self-play with
+    replay-imitation shards); game/option offsets stay unique across dirs.
+    The M10 metadata columns (teacher_score, seat_won) are OPTIONAL — shards
+    without them (all pre-M10 data) default to 1.0."""
+
+    OPTIONAL_F32 = ("teacher_score", "seat_won")
+
+    def __init__(self, data_dir: Path | list = DATA_DIR_V2):
         cols = {k: [] for k in ("states", "state_ids", "options", "option_ids",
                                 "n_options", "labels", "game_ids", "results",
                                 "deck_idx")}
+        opt_cols = {k: [] for k in self.OPTIONAL_F32}
         starts_list = []
         option_base = 0
         game_base = 0
-        for path in sorted(Path(data_dir).glob("*.npz")):
-            print(f"loading {path.name}", flush=True)
-            shard = np.load(path)
-            starts = np.cumsum(shard["n_options"]) - shard["n_options"]
-            starts_list.append(starts + option_base)
-            cols["game_ids"].append(shard["game_ids"] + game_base)
-            for k in cols:
-                if k != "game_ids":
-                    cols[k].append(shard[k])
-            option_base += len(shard["options"])
-            game_base += int(shard["game_ids"].max()) + 1
+        dirs = data_dir if isinstance(data_dir, (list, tuple)) else [data_dir]
+        for d in dirs:
+            for path in sorted(Path(d).glob("*.npz")):
+                print(f"loading {path.name}", flush=True)
+                shard = np.load(path)
+                starts = np.cumsum(shard["n_options"]) - shard["n_options"]
+                starts_list.append(starts + option_base)
+                cols["game_ids"].append(shard["game_ids"] + game_base)
+                for k in cols:
+                    if k != "game_ids":
+                        cols[k].append(shard[k])
+                for k in opt_cols:
+                    opt_cols[k].append(shard[k] if k in shard.files else
+                                       np.ones(len(shard["labels"]), dtype=np.float32))
+                option_base += len(shard["options"])
+                game_base += int(shard["game_ids"].max()) + 1
         for k, v in cols.items():
+            setattr(self, k, np.concatenate(v))
+        for k, v in opt_cols.items():
             setattr(self, k, np.concatenate(v))
         self.starts = np.concatenate(starts_list)
 
@@ -387,11 +402,58 @@ def collate_v2(batch):
     return states, state_ids, options, option_ids, valid, labels, results, deck_idx
 
 
+class _WeightedView(torch.utils.data.Dataset):
+    """BCDatasetV2 rows + a per-example loss weight appended (M10). Kept as a
+    wrapper so BCDatasetV2.__getitem__ / collate_v2 stay byte-compatible with
+    the tcg twin (tests/test_bc.py parity)."""
+
+    def __init__(self, ds: BCDatasetV2, weights: np.ndarray):
+        self.ds, self.weights = ds, weights
+
+    def __len__(self):
+        return len(self.ds)
+
+    def __getitem__(self, i):
+        return (*self.ds[i], self.weights[i])
+
+
+def collate_v2w(batch):
+    core = collate_v2([row[:-1] for row in batch])
+    w = torch.tensor([float(row[-1]) for row in batch], dtype=torch.float32)
+    return (*core, w)
+
+
+def _example_weights(ds: BCDatasetV2, weighting: str) -> np.ndarray:
+    """--weighting none|score|winner -> per-example weights, mean-normalized.
+    score: leaderboard-score ramp clip((s-450)/150, 0.25, 3.0) — self-play
+    shards carry teacher_score=1.0 and land on the 0.25 floor by design; the
+    normalization keeps the total gradient scale unchanged. winner: only the
+    winning seat's decisions carry loss (soft winners-only without rebuilding
+    shards)."""
+    if weighting == "none":
+        return np.ones(len(ds), dtype=np.float32)
+    if weighting == "score":
+        w = np.clip((ds.teacher_score - 450.0) / 150.0, 0.25, 3.0)
+    elif weighting == "winner":
+        w = ds.seat_won.astype(np.float32)
+    else:
+        raise ValueError(f"unknown weighting {weighting!r}")
+    mean = float(w.mean())
+    if mean <= 0:
+        raise ValueError(f"weighting {weighting!r} zeroes every example")
+    return (w / mean).astype(np.float32)
+
+
 def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
-             data_dir: Path = DATA_DIR_V2):
+             data_dir: Path | list = DATA_DIR_V2, init: Path | None = None,
+             weighting: str = "none"):
     """Train OptionScorerV2 on generic-teacher v2 shards. Reports overall AND
     per-deck val accuracy (the G5 deck-conditioning signal). BC should MATCH
-    the teacher, not beat it — the M7.3 gate is fidelity >= 0.80 val top-1."""
+    the teacher, not beat it — the M7.3 gate is fidelity >= 0.80 val top-1.
+
+    M10 knobs: data_dir may be a list of shard dirs; init warm-starts from an
+    existing checkpoint (fine-tuning); weighting applies per-example CE
+    weights from the optional shard metadata (see _example_weights)."""
     ds = BCDatasetV2(data_dir)
 
     rng = np.random.default_rng(0)
@@ -399,31 +461,29 @@ def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
     val_games = set(rng.choice(unique_games, max(1, int(0.1 * len(unique_games))),
                                replace=False).tolist())
     is_val = np.isin(ds.game_ids, list(val_games))
-    train_ds = torch.utils.data.Subset(ds, np.nonzero(~is_val)[0])
+    use_w = weighting != "none"
+    # val always evaluates unweighted rows; only the train side sees weights
+    train_base = _WeightedView(ds, _example_weights(ds, weighting)) if use_w else ds
+    train_ds = torch.utils.data.Subset(train_base, np.nonzero(~is_val)[0])
     val_ds = torch.utils.data.Subset(ds, np.nonzero(is_val)[0])
     print(f"train {len(train_ds)}, val {len(val_ds)}")
 
     train_dl = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                          collate_fn=collate_v2)
+                          collate_fn=collate_v2w if use_w else collate_v2)
     val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                         collate_fn=collate_v2)
 
     model = OptionScorerV2()
+    if init is not None:
+        ckpt = Path(init)
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt
+        model.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        print(f"warm-start from {ckpt}")
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_acc = 0.0
 
-    for epoch in range(epochs):
-        model.train()
-        running = 0.0
-        for states, sids, options, oids, valid, labels, results, _ in train_dl:
-            opt.zero_grad()
-            logits, value = model(states, sids, options, oids)
-            logits = logits.masked_fill(~valid, -1e9)
-            loss = F.cross_entropy(logits, labels) + 0.5 * F.huber_loss(value, results)
-            loss.backward()
-            opt.step()
-            running += loss.item()
-
+    def evaluate() -> tuple[float, str]:
         model.eval()
         correct = total = 0
         per_deck: dict[int, list[int]] = {}
@@ -438,8 +498,31 @@ def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
                     per_deck.setdefault(d, [0, 0])
                     per_deck[d][0] += h
                     per_deck[d][1] += 1
-        acc = correct / max(1, total)
         by_deck = " ".join(f"d{d}:{c / n:.2f}" for d, (c, n) in sorted(per_deck.items()))
+        return correct / max(1, total), by_deck
+
+    if init is not None:
+        acc0, by_deck0 = evaluate()
+        print(f"init val_acc {acc0:.3f}  [{by_deck0}]  "
+              "(the pre-training baseline the fine-tune must beat)")
+
+    for epoch in range(epochs):
+        model.train()
+        running = 0.0
+        for batch in train_dl:
+            states, sids, options, oids, valid, labels, results = batch[:7]
+            w = batch[8] if use_w else None
+            opt.zero_grad()
+            logits, value = model(states, sids, options, oids)
+            logits = logits.masked_fill(~valid, -1e9)
+            ce = (F.cross_entropy(logits, labels) if w is None else
+                  (F.cross_entropy(logits, labels, reduction="none") * w).mean())
+            loss = ce + 0.5 * F.huber_loss(value, results)
+            loss.backward()
+            opt.step()
+            running += loss.item()
+
+        acc, by_deck = evaluate()
         print(f"epoch {epoch}: train_loss {running / len(train_dl):.3f}  "
               f"val_acc {acc:.3f}  [{by_deck}]")
 
@@ -527,8 +610,16 @@ if __name__ == "__main__":
     t.add_argument("--epochs", type=int, default=10)
     t.add_argument("--name", type=str, default=None)
     t.add_argument("--arch", type=str, default="v1", choices=["v1", "v2"])
-    t.add_argument("--data", type=str, default=None,
-                   help="shard dir for --arch v2 (default data/bc_v2)")
+    t.add_argument("--data", type=str, nargs="+", default=None,
+                   help="shard dir(s) for --arch v2 (default data/bc_v2; "
+                        "multiple dirs are mixed, M10)")
+    t.add_argument("--init", type=str, default=None,
+                   help="checkpoint to warm-start from (fine-tuning, M10)")
+    t.add_argument("--weighting", type=str, default="none",
+                   choices=["none", "score", "winner"],
+                   help="per-example CE weights from shard metadata (M10)")
+    t.add_argument("--lr", type=float, default=3e-4)
+    t.add_argument("--batch-size", type=int, default=256)
     args = p.parse_args()
 
     if args.cmd == "collect":
@@ -542,6 +633,8 @@ if __name__ == "__main__":
     elif args.cmd == "train":
         if args.arch == "v2":
             train_v2(epochs=args.epochs, name=args.name or "osv2_bc",
-                     data_dir=Path(args.data) if args.data else DATA_DIR_V2)
+                     data_dir=[Path(d) for d in args.data] if args.data else DATA_DIR_V2,
+                     init=args.init, weighting=args.weighting,
+                     lr=args.lr, batch_size=args.batch_size)
         else:
             train(epochs=args.epochs, name=args.name or "bc_v1")
