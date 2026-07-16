@@ -23,6 +23,8 @@ _EVOLVES_FROM = {c.cardId: getattr(c, "evolvesFrom", None) for c in all_card_dat
 _HAND_DISCARD_TRAINER_NAMES = ("Carmine",)   # HAND_DISCARD_TRAINER_NAMES
 _HAND_DISCARD_IDS = {cid for cid, n in _NAME.items()
                      if n in _HAND_DISCARD_TRAINER_NAMES}
+_GUST_TRAINER_NAMES = ("Boss’s Orders",)  # GUST_TRAINER_NAMES — U+2019 in card data, not ASCII '
+_GUST_IDS = {cid for cid, n in _NAME.items() if n in _GUST_TRAINER_NAMES}
 
 # --- card-selection context categories (for score_card) ---
 _PROMOTE_CTX = {SelectContext.SETUP_ACTIVE_POKEMON, SelectContext.SETUP_BENCH_POKEMON,
@@ -128,12 +130,12 @@ def _attach_recipient_value(card, me, op_active):
     return 300 + quality - 50 * min(energy_gap - 1, 4)  # BASE - PENALTY*min(gap-1, CAP)
 
 
-def make_generic_pilot(deck):
+def make_generic_pilot(deck, fixes: frozenset = frozenset()):
     def agent(obs_dict):
         obs = to_observation_class(obs_dict)
         if obs.select is None:
             return deck
-        scores = [score_option(o, obs) for o in obs.select.option]
+        scores = [score_option(o, obs, fixes) for o in obs.select.option]
         order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
         return [int(i) for i in order[:obs.select.maxCount]]
     return agent
@@ -145,7 +147,7 @@ def _card_at(obs, area, index, player):
     try: return zone[index]
     except (TypeError, IndexError): return None
 
-def score_option(o, obs):
+def score_option(o, obs, fixes: frozenset = frozenset()):
     st = obs.current; me = st.players[st.yourIndex]; op = st.players[1 - st.yourIndex]
     my_active = me.active[0] if me.active else None
     op_active = op.active[0] if op.active else None
@@ -155,13 +157,13 @@ def score_option(o, obs):
     if t == OptionType.ATTACH: return score_attach(o, obs, me)
     if t == OptionType.ABILITY: return 3000
     if t == OptionType.EVOLVE: return 2800
-    if t == OptionType.PLAY: return score_play(o, obs)
+    if t == OptionType.PLAY: return score_play(o, obs, fixes)
     if t == OptionType.RETREAT: return score_retreat(obs)
-    if t == OptionType.CARD: return score_card(o, obs)
+    if t == OptionType.CARD: return score_card(o, obs, fixes)
     return _PRIORITY.get(t, 0)
 
 
-def score_card(o, obs):
+def score_card(o, obs, fixes: frozenset = frozenset()):
     """Card-selection contexts (SETUP/SWITCH/TO_HAND/DISCARD/...) — no more coin flips."""
     st = obs.current
     op = st.players[1 - st.yourIndex]
@@ -187,8 +189,35 @@ def score_card(o, obs):
     if ctx in _DISCARD_CTX:                       # discard the LEAST useful
         return -_card_usefulness(card.id)
     if ctx in _TARGET_CTX:                        # damage the highest-prize opponent Pokémon
-        return 100 * _CARD.get(card.id, (0, 0, 0, [], 1))[4]
+        prize_score = 100 * _CARD.get(card.id, (0, 0, 0, [], 1))[4]
+        if ("gust" in fixes and ctx == SelectContext.EFFECT_TARGET
+                and player != st.yourIndex
+                and getattr(card, "hp", None) is not None):
+            # Fix B2 (M9): the gust PLAY fired because a faster-KO target
+            # exists — pick by fastest KO (race math), prize tie-break.
+            # Unknown/unKOable targets keep the plain prize ranking.
+            me = st.players[st.yourIndex]
+            board = [p for p in (list(me.active or []) + list(me.bench or []))
+                     if p is not None]
+            ttk = min((_turns_to_first_ko(p, card) for p in board),
+                      default=UNREACHABLE)
+            return 1000 * max(0, 12 - min(ttk, 12)) + prize_score
+        return prize_score
     return 50                                     # unknown card context: neutral
+
+
+def _gust_has_better_target(me, op):
+    """M9 Fix B predicate: the opponent bench holds a target my board KOs
+    strictly faster than their active. Unknown/unKOable targets never qualify
+    (_turns_to_first_ko returns UNREACHABLE for them)."""
+    op_active = op.active[0] if op.active and op.active[0] is not None else None
+    bench = [p for p in (op.bench or []) if p is not None]
+    board = [p for p in (list(me.active or []) + list(me.bench or [])) if p is not None]
+    if op_active is None or not bench or not board:
+        return False
+    active_ttk = min(_turns_to_first_ko(p, op_active) for p in board)
+    return any(min(_turns_to_first_ko(p, t) for p in board) < min(active_ttk, UNREACHABLE)
+               for t in bench)
 
 
 def _op_board_harmless(op_active, op_bench=()):
@@ -260,7 +289,7 @@ def score_retreat(obs):
         return -1
     return 100 + bench_best // 20
 
-def score_play(o, obs):
+def score_play(o, obs, fixes: frozenset = frozenset()):
     my_index = obs.current.yourIndex
     me = obs.current.players[my_index]
     # Engine quirk (found 2026-07-12, kaggle ep 85467275 + local repro): PLAY
@@ -282,7 +311,14 @@ def score_play(o, obs):
         return 2400                       # developing the board is always good
 
     if card.id in _HAND_DISCARD_IDS and _hand_holds_keepers(me):
+        if "handdiscard" in fixes:
+            return -100                   # SCORE_HAND_DISCARD_REFUSED: below END — pass instead
         return 150                        # SCORE_HAND_DISCARD_BLOCKED: below near-deckout
+
+    if "gust" in fixes and card.id in _GUST_IDS:
+        op = obs.current.players[1 - my_index]
+        if _gust_has_better_target(me, op):
+            return 2450                   # SCORE_GUST_KILLSHOT: above taper/develop, below KO tier
 
     has_board = (bool(me.active) and me.active[0] is not None) or any(p for p in me.bench)
     if not has_board:

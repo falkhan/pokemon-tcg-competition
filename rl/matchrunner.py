@@ -21,6 +21,9 @@ Opponent specs (picklable tuples; deck = decks/ name | csv path | list of ids):
   ("solver", deck)          generic pilot + within-turn combo solver (M7.4a)
   ("solver-dev", deck)      solver + the development tier (M8.1: setup search)
   ("random", deck)          uniform-random legal moves
+  ("generic2"/"solver2", deck)   pilot v2: base pilot + M9 Leg 1 fixes; the
+                            a/b variants carry one fix each for attribution
+  ("ext", path, deck)       external kaggle-style main.py agent (M9 Leg 0 probe)
 
 Usage:
   python -m rl.matchrunner play --a generic:lucario --b random:kyogre -n 60
@@ -36,6 +39,17 @@ ROOT = Path(__file__).resolve().parent.parent
 DECK_DIR = ROOT / "decks"
 
 OpponentSpec = tuple
+
+# M9 Leg 1 pilot-v2 spec kinds -> (base kind, fixes). Separable a/b variants
+# keep the two fixes individually measurable for attribution.
+_FIXED_KINDS = {
+    "generic2":  ("generic", frozenset({"handdiscard", "gust"})),
+    "generic2a": ("generic", frozenset({"handdiscard"})),
+    "generic2b": ("generic", frozenset({"gust"})),
+    "solver2":   ("solver",  frozenset({"handdiscard", "gust"})),
+    "solver2a":  ("solver",  frozenset({"handdiscard"})),
+    "solver2b":  ("solver",  frozenset({"gust"})),
+}
 
 
 def resolve_deck(deck) -> list[int]:
@@ -54,7 +68,7 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model") else spec[1]
+    return spec[2] if spec[0] in ("rule", "model", "ext") else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -62,8 +76,11 @@ def parse_spec(s: str) -> OpponentSpec:
     "model:checkpoints/bc_v1.pt:kyogre", "random:kyogre"."""
     parts = s.split(":")
     kind = parts[0]
-    if kind in ("generic", "random", "solver", "solver-dev") and len(parts) == 2:
+    if kind in ("generic", "random", "solver", "solver-dev", *_FIXED_KINDS) \
+            and len(parts) == 2:
         return (kind, parts[1])
+    if kind == "ext" and len(parts) == 3:
+        return ("ext", parts[1], parts[2])
     if kind == "mcts" and len(parts) == 4:
         return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
@@ -87,6 +104,32 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # kaggle-env deck return, unused in direct loops) and accepts names only;
         # the battle deck is resolved from the spec's own deck slot below.
         return load_teacher(instance, agent=spec[1], deck=spec[1]), resolve_deck(spec[2])
+    if kind in _FIXED_KINDS:
+        base, fixes = _FIXED_KINDS[kind]
+        ids = resolve_deck(spec[1])
+        if base == "generic":
+            from rl.generic_pilot import make_generic_pilot
+            return make_generic_pilot(ids, fixes=fixes), ids
+        from rl.turn_solver import make_solver_pilot
+        return make_solver_pilot(ids, instance=instance, fixes=fixes), ids
+    if kind == "ext":
+        # External kaggle-style bundle: import OUR engine first so cg is pinned
+        # in sys.modules, then exec the bundle's main.py and grab its agent.
+        import importlib.util
+        import cg.api  # noqa: F401
+        main_py = Path(spec[1])
+        if main_py.is_dir():
+            main_py = main_py / "main.py"
+        mspec = importlib.util.spec_from_file_location(f"ext_{instance}", main_py)
+        mod = importlib.util.module_from_spec(mspec)
+        mspec.loader.exec_module(mod)
+        fn = getattr(mod, "agent", None)
+        if fn is None:
+            candidates = [v for v in vars(mod).values() if callable(v)]
+            if not candidates:
+                raise ValueError(f"no callable agent found in {main_py}")
+            fn = candidates[-1]
+        return fn, resolve_deck(spec[2])
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])

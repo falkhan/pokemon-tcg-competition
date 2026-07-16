@@ -161,3 +161,63 @@ def test_load_population_resolves_names_and_paths(tmp_path):
     decks = old.load_population(pop)
     assert len(decks) == 2 and all(len(d) == 60 for d in decks)
     assert decks == new.load_population(pop)
+
+
+def test_collect_dagger_student_advances_teacher_labels(tmp_path, monkeypatch):
+    """M9 Leg 2 wiring: the shard's labels come from the TEACHER while the
+    game advances on the STUDENT's (sampled) picks. Engine, encoders, and the
+    model are stubbed — the real path is exercised by the R-gate smoke run."""
+    import json
+    from types import SimpleNamespace
+
+    from tests import builders as b
+
+    pop = tmp_path / "population.json"
+    pop.write_text(json.dumps({"decks": [[1] * 60]}))
+    ckpt = tmp_path / "student.pt"
+    torch.save({}, ckpt)
+
+    class FakeStudent:
+        def load_state_dict(self, sd):
+            pass
+
+        def eval(self):
+            pass
+
+        def act(self, *a, **kw):
+            return [0]                       # student always picks option 0
+
+    selected = []
+    script = {"n": 0}
+
+    def fake_battle_start(d0, d1):
+        return {"current": {"result": -1, "yourIndex": 0}}, \
+            SimpleNamespace(errorPlayer=-1, errorType=None)
+
+    def fake_battle_select(picks):
+        selected.append(picks)
+        script["n"] += 1
+        done = script["n"] >= 2
+        return {"current": {"result": 0 if done else -1, "yourIndex": 0}}
+
+    obs = b.observation(options=[b.option(0), b.option(1)])
+    monkeypatch.setattr(old, "OptionScorerV2", FakeStudent)
+    monkeypatch.setattr(old, "battle_start", fake_battle_start)
+    monkeypatch.setattr(old, "battle_select", fake_battle_select)
+    monkeypatch.setattr(old, "battle_finish", lambda: None)
+    monkeypatch.setattr(old, "to_observation_class", lambda d: obs)
+    monkeypatch.setattr(old, "encode_state_v2",
+                        lambda cur, deck: (np.zeros(4, np.float32),
+                                           np.zeros(3, np.int32)))
+    monkeypatch.setattr(old, "encode_context", lambda ctx: np.zeros(2, np.float32))
+    monkeypatch.setattr(old, "encode_option_v2",
+                        lambda o, ob: (np.zeros(5, np.float32),
+                                       np.zeros(2, np.int32)))
+    monkeypatch.setattr(old, "_teacher_pilot",
+                        lambda teacher, deck, inst: lambda od: [1])  # teacher: 1
+
+    old.collect_dagger(1, str(ckpt), pop, out_dir=tmp_path / "dagger")
+
+    assert selected == [[0], [0]]            # student's picks drove the game
+    shard = np.load(tmp_path / "dagger" / "shard_0000.npz")
+    assert shard["labels"].tolist() == [1, 1]  # teacher's picks are the labels

@@ -214,7 +214,7 @@ def _root_snapshot(obs) -> _Snap:
                  race, ready, bench, evos, hand)
 
 
-def _candidate_actions(obs) -> list[list[int]]:
+def _candidate_actions(obs, fixes: frozenset = frozenset()) -> list[list[int]]:
     """Beam over one prompt's option menu, lethal-first. Single-pick prompts
     keep every ATTACK + the TOP_K best others by the greedy pilot's own
     score_option (+ END, so every prompt has a turn-terminating child).
@@ -223,7 +223,7 @@ def _candidate_actions(obs) -> list[list[int]]:
     tcg/search.py enumerate_actions)."""
     sel = obs.select
     n = len(sel.option)
-    scores = [score_option(o, obs) for o in sel.option]
+    scores = [score_option(o, obs, fixes) for o in sel.option]
     if sel.maxCount == 1:
         attacks = [i for i in range(n) if sel.option[i].type == OptionType.ATTACK]
         others = sorted((i for i in range(n) if i not in set(attacks)),
@@ -289,7 +289,7 @@ def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
 
 
 def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
-         dev: bool = False):
+         dev: bool = False, fixes: frozenset = frozenset()):
     """Depth-first search over MY remaining turn. Returns (score, line) where
     line is the action list-of-lists from `state` to the best leaf. Leaves:
     game over, turn passed to the opponent, or depth cap. The stand-pat floor
@@ -300,12 +300,12 @@ def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
             or depth >= MAX_DEPTH:
         return score_leaf(snap, obs, dev), []
     best_score, best_line = score_leaf(snap, obs, dev), []   # stand-pat floor
-    for action in _candidate_actions(obs):
+    for action in _candidate_actions(obs, fixes):
         if budget["nodes"] >= MAX_NODES or perf_counter() >= deadline:
             break
         budget["nodes"] += 1
         child = search_step(state.searchId, action)
-        score, line = _dfs(child, snap, depth + 1, deadline, budget, dev)
+        score, line = _dfs(child, snap, depth + 1, deadline, budget, dev, fixes)
         if score > best_score:
             best_score, best_line = score, [action] + line
         if best_score >= W_WIN:                          # win short-circuit
@@ -314,7 +314,7 @@ def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
 
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
-               dev: bool = False) -> list[int] | None:
+               dev: bool = False, fixes: frozenset = frozenset()) -> list[int] | None:
     """Search my remaining turn; return the FIRST action of the best line iff
     it clears the tier's override bar, else None (defer to greedy). The
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
@@ -331,7 +331,7 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     budget = {"nodes": 0}
     root = _open_search(obs, deck)
     try:
-        best_score, best_line = _dfs(root, snap, 0, deadline, budget, dev)
+        best_score, best_line = _dfs(root, snap, 0, deadline, budget, dev, fixes)
     finally:
         search_end()
     if not best_line:
@@ -345,7 +345,8 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     return None
 
 
-def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
+def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False,
+                      fixes: frozenset = frozenset()):
     """Generic pilot + within-turn combo solver. `instance` is accepted for
     the matchrunner uniqueness contract (unused: no module-level state).
     dev=True (M8.1) additionally runs the DEVELOPMENT tier on underdeveloped
@@ -356,7 +357,7 @@ def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
     found at the MAIN prompt would derail one action later. Any solver error
     falls back to the greedy pick: the wrapper must never cost the G1 crash
     gate."""
-    inner = make_generic_pilot(deck)
+    inner = make_generic_pilot(deck, fixes)
 
     def agent(obs_dict):
         obs = to_observation_class(obs_dict)
@@ -364,14 +365,14 @@ def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
             return deck
         if should_solve(obs):
             try:
-                pick = solve_turn(obs, deck)
+                pick = solve_turn(obs, deck, fixes=fixes)
             except Exception:
                 pick = None
             if pick is not None:
                 return pick
         elif dev and should_solve_dev(obs):
             try:
-                pick = solve_turn(obs, deck, dev=True)
+                pick = solve_turn(obs, deck, dev=True, fixes=fixes)
             except Exception:
                 pick = None
             if pick is not None:

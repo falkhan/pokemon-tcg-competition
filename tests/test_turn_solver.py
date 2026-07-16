@@ -427,7 +427,8 @@ def test_dev_pilot_wiring(monkeypatch):
     monkeypatch.setattr(ts, "should_solve", lambda obs: False)
     monkeypatch.setattr(ts, "should_solve_dev", lambda obs: True)
     monkeypatch.setattr(ts, "solve_turn",
-                        lambda obs, deck, deadline_s=None, dev=False:
+                        lambda obs, deck, deadline_s=None, dev=False,
+                        fixes=frozenset():
                         (calls.append(dev) or [7]) if dev else [1])
     obs = main_menu(me_board(), op_board(), [EVOLVE, PLAY_HAND0, ATTACK_102, END])
     dev_pilot = ts.make_solver_pilot(DECK, dev=True)

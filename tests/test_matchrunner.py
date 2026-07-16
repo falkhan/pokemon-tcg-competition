@@ -26,6 +26,11 @@ LUCARIO = [int(x) for x in (DECKS / "lucario.csv").read_text().split()]
     ("rule:iono", ("rule", "iono", "iono")),
     ("rule:lucario:kyogre", ("rule", "lucario", "kyogre")),
     ("model:checkpoints/bc_v1.pt:kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
+    ("solver2:lucario", ("solver2", "lucario")),
+    ("solver2a:lucario", ("solver2a", "lucario")),
+    ("generic2b:kyogre", ("generic2b", "kyogre")),
+    ("ext:bundles/buddy:decks/lucario.csv",
+     ("ext", "bundles/buddy", "decks/lucario.csv")),
 ])
 def test_parse_spec_kinds(s, expected):
     assert mr.parse_spec(s) == expected
@@ -139,6 +144,15 @@ def test_percentile_nearest_rank():
 def test_make_pilot_solver_wraps_the_generic_pilot():
     fn, deck = mr.make_pilot(("solver", "lucario"), "t0")
     assert callable(fn) and len(deck) == 60
+
+
+def test_make_pilot_fixed_kinds_build():
+    # M9 Leg 1: every pilot-v2 variant builds and resolves its deck.
+    for kind in mr._FIXED_KINDS:
+        fn, deck = mr.make_pilot((kind, "lucario"), f"t_{kind}")
+        assert callable(fn) and len(deck) == 60
+    assert mr.spec_deck(("solver2", "lucario")) == "lucario"
+    assert mr.spec_deck(("ext", "bundles/buddy", "kyogre")) == "kyogre"
 
 
 def test_series_wr_counts_draws_as_half():
