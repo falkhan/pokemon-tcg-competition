@@ -208,7 +208,13 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 sc = np.concatenate(
                     [num, encode_context(obs.select.context)]
                 ).astype(np.float32)
-                if obs.select.context == SelectContext.MAIN:
+                if obs.select.context == SelectContext.MAIN \
+                        and pstate["key"] != key:
+                    # Plan ONCE at the turn's first MAIN and hold it (M11 fix
+                    # 2026-07-17): training plan rows exist only at first-MAIN
+                    # states — replanning every MAIN is off-distribution for
+                    # the head AND flip-flops the plan mid-turn (measured:
+                    # 0.278 vs 0.345 base at Rung 0 before this fix).
                     cands = enumerate_plans(obs)
                     mat = np.stack([encode_plan(c) for c in cands]
                                    ).astype(np.float32)

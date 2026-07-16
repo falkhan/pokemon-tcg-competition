@@ -69,11 +69,15 @@ separates M11 from the buddy-DAgger 0.198 disaster.
   first; attackers = board slots with `_best_damage>0` (or with +1 energy when a basic
   energy in hand and `not energyAttached` ⇒ needs_attach); bench targets only when a
   gust trainer in hand (`GUST_IDS={1182}` — card fact, not heuristic); cap 48.
-- **Inference protocol**: recompute plan at every own MAIN prompt
-  (`obs.select.context == SelectContext.MAIN` — NOT `select.type`), hold for submenus
-  keyed on `(obs.current.turn, yourIndex)`; τ-sampling only during collection, argmax
-  at eval. Reset state on `obs.select is None` (kaggle) AND turn-counter drop
-  (direct loop — matchrunner pilots persist across a whole series, `matchrunner.py:289`).
+- **Inference protocol** *(CHANGED 2026-07-17 after Rung 0 measured 0.278)*: plan
+  ONCE at each turn's FIRST own MAIN prompt (`obs.select.context ==
+  SelectContext.MAIN` and a fresh `(turn, yourIndex)` key) and HOLD it for the
+  whole turn. The original "recompute at every MAIN" (buddy's protocol) is
+  off-distribution — training plan rows exist only at first-MAIN states — and
+  flip-flops the plan mid-turn; measured cost ≈ -7pp at Rung 0. τ-sampling only
+  during collection, argmax at eval. Reset state on `obs.select is None` (kaggle)
+  AND turn-counter drop (direct loop — matchrunner pilots persist across a whole
+  series, `matchrunner.py:289`).
 - **Exploration**: τ over rounds 1→4: 1.0, 0.7, 0.4, 0.2; Dirichlet(α=0.5, ε=0.25)
   round 1 only. Sampled plan shapes execution only — never a training input.
 
@@ -142,6 +146,10 @@ python -m rl.matchrunner play --a model:checkpoints/osv3_plan0.pt:lucario --b so
 ```
 Gates: plan coverage ≥0.85 at collection; **wr ≥0.38** (base osv2_bc2 0.345).
 Kill: <0.35 after one fix iteration.
+*(2026-07-17 amendment: after the protocol-fix iteration landed 0.328 — the
+exact mixed-teacher signature from M9 Leg 2 — one mechanism probe was added:
+`osv3_plan0b` trained on plan_ei0 ONLY, single teacher, no bc_v2b mixing.
+Rung 1 training, if reached, drops bc_v2b from the mix for the same reason.)*
 
 **Rung 1 — EI rounds r=1..4** (τ = 1.0/0.7/0.4/0.2; round 1 adds `--dirichlet 0.25`;
 optionally `data/league/population_m11.json` with lucario ×4 for mirror share):
