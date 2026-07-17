@@ -47,6 +47,55 @@ ROOT = Path(__file__).resolve().parent.parent
 WIDE_NODES = 4000          # widened data-gen budget (inference default: 800)
 WIDE_DEPTH = 10            # (inference default: 8)
 
+# M14 setup-plan teacher: the M13 value consumed at DATA-GEN only (the
+# override law bans live consumption). Constants carry their provenance:
+# margin 200 = calibrated 0.80-accuracy gap; turn cap 32 = the value's
+# validated per-bucket range; LAMBDA 3000 = the score_leaf tail band.
+VS_LAMBDA = 3000.0
+VS_MARGIN = 200.0
+VS_MAX_TURN = 32
+
+
+def _value_solve_factory(vnet, cell):
+    """Per-worker value-guided solver for SETUP-plan commits. Returns
+    value_solve(obs, deck) -> (line, trail) when a line beats stand-pat by
+    the calibrated margin (else (None, None))."""
+    from rl.turn_solver import _root_snapshot, score_leaf, solve_turn_line
+    ctx_main = encode_context(SelectContext.MAIN)
+
+    def leaf_value_for(deck):
+        def leaf_value(obs):
+            num, sids = encode_state_v2(obs.current, deck)
+            sc = np.concatenate([num, ctx_main]).astype(np.float32)
+            with torch.no_grad():
+                se = vnet.embedding(
+                    torch.from_numpy(sids).long().unsqueeze(0)).flatten(-2)
+                s = vnet.state_enc(torch.cat(
+                    [torch.from_numpy(sc).unsqueeze(0),
+                     torch.zeros(1, PLAN_DIM), se], dim=-1))
+                v = float(vnet.value_head(s).squeeze())
+            sign = 1.0 if obs.current.yourIndex == cell["me"] else -1.0
+            return VS_LAMBDA * sign * v
+        return leaf_value
+
+    def value_solve(obs, deck):
+        if obs.current.turn >= VS_MAX_TURN \
+                or getattr(obs, "search_begin_input", None) is None:
+            return None, None
+        cell["me"] = obs.current.yourIndex
+        lv = leaf_value_for(deck)
+        try:
+            score, line, trail = solve_turn_line(
+                obs, deck, deadline_s=0.5, dev=True, leaf_value=lv)
+            snap = _root_snapshot(obs)
+            if line and score >= score_leaf(snap, obs, dev=True,
+                                            leaf_value=lv) + VS_MARGIN:
+                return line, trail
+        except Exception:
+            pass
+        return None, None
+    return value_solve
+
 
 # ---------------------------------------------------------------- collection
 
@@ -84,7 +133,7 @@ def _cleared(score) -> bool:
 
 
 def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
-                  deadline, label_deadline, stats):
+                  deadline, label_deadline, stats, value_solve=None):
     """Teacher's labeled action for this prompt + (cands, plan_label) when a
     fresh plan row was created. Teacher semantics = the SHIPPING solver pilot:
     a solver line is executed/labeled only when it clears the override bar,
@@ -95,6 +144,13 @@ def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
     if is_main and st["key"] != key:
         score, line, trail = _solve(obs, deck, deadline)
         committed = bool(line) and _cleared(score)
+        if committed:
+            stats["kill_plans"] += 1
+        elif value_solve is not None:
+            vline, vtrail = value_solve(obs, deck)   # M14: SETUP plans
+            if vline:
+                line, trail, committed = vline, vtrail, True
+                stats["setup_plans"] += 1
         plan = derive_plan(line, trail, obs) if committed else None
         cands = enumerate_plans(obs)
         idx = match_candidate(plan, cands)
@@ -141,7 +197,8 @@ def _collect_chunk(args):
     """One worker: play [lo, hi) games, write its own shards. Spawn-safe —
     everything it needs is re-imported/rebuilt here."""
     (mode, lo, hi, decks_file, out_dir, checkpoint, tau, dirichlet,
-     deadline, label_deadline, shard_size, seed, worker) = args
+     deadline, label_deadline, shard_size, seed, worker, opponents,
+     value_ckpt) = args
     import random
 
     from rl.generic_pilot import make_generic_pilot
@@ -161,13 +218,31 @@ def _collect_chunk(args):
         student.load_state_dict(torch.load(ckpt, map_location="cpu"))
         student.eval()
 
+    value_solve = None
+    if value_ckpt:
+        vp = Path(value_ckpt)
+        if not vp.is_absolute() and not vp.exists():
+            vp = ROOT / vp
+        vnet = OptionScorerV3()
+        vnet.load_state_dict(torch.load(vp, map_location="cpu"))
+        vnet.eval()
+        value_solve = _value_solve_factory(vnet, {"me": 0})
+
+    opp_pilots = {}          # spec string -> (fn, deck_ids), built lazily
+    def _opponent(spec_str, instance):
+        if spec_str not in opp_pilots:
+            from rl.matchrunner import make_pilot, parse_spec
+            opp_pilots[spec_str] = make_pilot(parse_spec(spec_str), instance)
+        return opp_pilots[spec_str]
+
     columns = ("states", "plans", "state_ids", "options", "option_ids",
                "n_options", "labels", "game_ids", "results", "deck_idx",
                "plan_cands", "n_plan_cands", "plan_labels")
     shard = {k: [] for k in columns}
     shard_idx = sum(1 for _ in out.glob(f"shard_w{worker:02d}_*.npz"))
     stats = {"games": 0, "decisions": 0, "plan_rows": 0, "plan_missed": 0,
-             "plan_null": 0, "plan_gust": 0, "derails": 0, "wins": [0, 0, 0]}
+             "plan_null": 0, "plan_gust": 0, "derails": 0, "wins": [0, 0, 0],
+             "kill_plans": 0, "setup_plans": 0, "opp": {}}
     t0 = perf_counter()
 
     def flush():
@@ -199,6 +274,18 @@ def _collect_chunk(args):
     for game in range(lo, hi):
         picks_idx = [rng.randrange(len(population)) for _ in range(2)]
         decks = [population[picks_idx[0]], population[picks_idx[1]]]
+        # M14 mixed opponents: one seat may be an external pilot (buddy /
+        # rule expert / plain solver spec). Only the TEACHER seat is
+        # recorded then (M10 ban: never imitate third parties).
+        teacher_seat = game % 2
+        opp_spec = None
+        opp_fn = None
+        if opponents:
+            opp_spec = opponents[rng.randrange(len(opponents))]
+            if opp_spec != "self":
+                opp_fn, opp_deck = _opponent(opp_spec, f"op{worker}")
+                decks[1 - teacher_seat] = list(opp_deck)
+                picks_idx[1 - teacher_seat] = 0
         fallbacks = [make_generic_pilot(d) for d in decks]
         seat_state = [_fresh_seat_state(), _fresh_seat_state()]
         student_plan = [np.zeros(PLAN_DIM, np.float32),
@@ -214,13 +301,21 @@ def _collect_chunk(args):
         while obs_dict["current"]["result"] < 0:
             player = obs_dict["current"]["yourIndex"]
             obs = to_observation_class(obs_dict)
+
+            if opp_fn is not None and player != teacher_seat:
+                # external opponent seat: it plays, nothing is recorded
+                picks = opp_fn(obs_dict)
+                obs_dict = battle_select(
+                    [int(i) for i in picks[:obs.select.maxCount]])
+                continue
+
             key = (obs.current.turn, player)
             is_main = obs.select.context == SelectContext.MAIN
 
             label_action, plan_row = _teacher_step(
                 seat_state[player], obs, obs_dict, decks[player],
                 fallbacks[player], key, is_main, deadline, label_deadline,
-                stats)
+                stats, value_solve=value_solve)
 
             state_num, state_ids = encode_state_v2(obs.current, decks[player])
             state_ctx = np.concatenate(
@@ -271,6 +366,10 @@ def _collect_chunk(args):
         battle_finish()
         stats["wins"][result] += 1
         stats["games"] += 1
+        if opp_spec is not None:
+            o = stats["opp"].setdefault(opp_spec.split(":")[0], [0, 0])
+            o[0] += result == teacher_seat        # teacher-seat wins
+            o[1] += 1
 
         for (state_ctx, plan_vec, state_ids, opts, opt_ids, label, player,
              cands_mat, plan_label) in game_rows:
@@ -306,7 +405,9 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             checkpoint: str | None = None, tau: float = 1.0,
             dirichlet: float = 0.0, deadline: float = 2.0,
             label_deadline: float = 0.5, workers: int = 12,
-            shard_size: int = 200, seed: int = 0) -> dict:
+            shard_size: int = 200, seed: int = 0,
+            opponents: list | None = None,
+            value_ckpt: str | None = None) -> dict:
     assert mode in ("expert", "ei")
     assert mode != "ei" or checkpoint, "--mode ei needs --checkpoint"
     out_dir = Path(out_dir)
@@ -321,7 +422,7 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             break
         jobs.append((mode, lo, hi, str(decks_file), str(out_dir), checkpoint,
                      tau, dirichlet, deadline, label_deadline, shard_size,
-                     seed, w))
+                     seed, w, opponents, value_ckpt))
         lo = hi
 
     if len(jobs) == 1:                                # tests / smoke path
@@ -332,16 +433,27 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
 
     agg = {k: sum(r[k] for r in results)
            for k in ("games", "decisions", "plan_rows", "plan_missed",
-                     "plan_null", "plan_gust", "derails")}
+                     "plan_null", "plan_gust", "derails", "kill_plans",
+                     "setup_plans")}
     agg["wins"] = [sum(r["wins"][i] for r in results) for i in range(3)]
+    agg["opp"] = {}
+    for r in results:
+        for k, (w_, n_) in r["opp"].items():
+            o = agg["opp"].setdefault(k, [0, 0])
+            o[0] += w_
+            o[1] += n_
     rows = max(1, agg["plan_rows"])
     agg["coverage"] = 1.0 - agg["plan_missed"] / rows
     print(f"done: {agg['games']} games, {agg['decisions']} decisions, "
           f"{agg['plan_rows']} plan rows -> {out_dir}", flush=True)
     print(f"plan coverage {agg['coverage']:.3f}  "
           f"(missed {agg['plan_missed']})  null {agg['plan_null'] / rows:.2f}  "
+          f"kill {agg['kill_plans']}  SETUP {agg['setup_plans']}  "
           f"gust {agg['plan_gust'] / rows:.2f}  derails {agg['derails']}",
           flush=True)
+    for k, (w_, n_) in sorted(agg["opp"].items()):
+        print(f"  vs {k}: teacher seat {w_}/{n_} ({w_ / max(1, n_):.2f})",
+              flush=True)
     return agg
 
 
@@ -581,6 +693,13 @@ if __name__ == "__main__":
     c.add_argument("--workers", type=int, default=12)
     c.add_argument("--shard-size", type=int, default=200)
     c.add_argument("--seed", type=int, default=0)
+    c.add_argument("--opponents", type=str, nargs="+", default=None,
+                   help="opponent specs rotated per game ('self' = teacher "
+                        "mirror); only the teacher seat is recorded vs "
+                        "external opponents (M14)")
+    c.add_argument("--value-ckpt", type=str, default=None,
+                   help="setup-value checkpoint enabling SETUP-plan commits "
+                        "(M14; margin 200, turn<32)")
     t = sub.add_parser("train", help="train OptionScorerV3 on plan shards")
     t.add_argument("--data", type=str, nargs="+", required=True)
     t.add_argument("--name", type=str, required=True)
@@ -599,7 +718,8 @@ if __name__ == "__main__":
                 checkpoint=args.checkpoint, tau=args.tau,
                 dirichlet=args.dirichlet, deadline=args.deadline,
                 label_deadline=args.label_deadline, workers=args.workers,
-                shard_size=args.shard_size, seed=args.seed)
+                shard_size=args.shard_size, seed=args.seed,
+                opponents=args.opponents, value_ckpt=args.value_ckpt)
     else:
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
               epochs=args.epochs, lr=args.lr, batch_size=args.batch_size,
