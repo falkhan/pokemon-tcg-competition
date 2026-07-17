@@ -161,3 +161,32 @@ class TestConditionalAttacks:
         assert charged_best(attacker, target, board_ids=set()) == (120, 2)
         assert rc._charged_best(attacker, target, board_ids=set()) == (120, 2)
         assert turns_to_ready(attacker, target, board_ids=set()) == 2
+
+    def test_attach_scorer_respects_conditional_attacks(self, monkeypatch):
+        # M14 replay fix: a conditional attacker missing its requirement hits
+        # the non-attacker floor in BOTH twins' attach scorers.
+        self._patch_single(monkeypatch)
+        import rl.generic_pilot as rlp
+        import tcg.pilot as tp
+        from tcg import constants as tc
+        from tests import builders as b
+        from tests.fake_cg import AreaType, OptionType
+        me = b.player(active=b.pokemon(10), hand=[b.hand_card(6)])
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=200)))
+        opt = b.option(OptionType.ATTACH, area=AreaType.HAND, index=0,
+                       in_play_area=AreaType.ACTIVE, in_play_index=0)
+        assert tp.score_attach(opt, obs) == tc.SCORE_ATTACH_NON_ATTACKER
+        assert rlp.score_attach(opt, obs, me) == 400
+        # requirement on board: attacker again (scores above the floor)
+        me2 = b.player(active=b.pokemon(10), bench=[b.pokemon(5)],
+                       hand=[b.hand_card(6)])
+        obs2 = b.observation(me=me2, opponent=b.player(active=b.pokemon(5, hp=200)))
+        assert tp.score_attach(opt, obs2) > tc.SCORE_ATTACH_NON_ATTACKER
+        assert rlp.score_attach(opt, obs2, me2) > 400
+
+    def _patch_single(self, monkeypatch):
+        import rl.combat as rc
+        import tcg.combat as tc_
+        # card 10's only attack (107) requires card 5 on board
+        monkeypatch.setattr(rc, "CONDITIONAL_ATTACKS", {107: 5})
+        monkeypatch.setattr(tc_, "CONDITIONAL_ATTACKS", {107: 5})

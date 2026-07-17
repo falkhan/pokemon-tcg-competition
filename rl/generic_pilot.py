@@ -352,24 +352,35 @@ def score_attach(o, obs, me):
         return 500
 
     is_active = o.inPlayArea == AreaType.ACTIVE
+    # M14 replay finding (51-63% of live attaches went to saturated
+    # recipients; Solrock fed without Lunatone up to 1.8x/game): this path
+    # never learned the CONDITIONAL_ATTACKS card facts — thread board_ids so
+    # a conditional attacker without its requirement stops counting.
+    from rl.combat import _attack_available
+    my_board_ids = {p.id for p in (list(me.active or []) + list(me.bench or []))
+                    if p is not None}
 
     # 1) Lookahead: does this attach UNBLOCK a KO on the opponent's active?
 
     if opponent_active_card is not None:
-        now = _best_damage(target_pokemon, opponent_active_card, extra_energy=0)
-        after = _best_damage(target_pokemon, opponent_active_card, extra_energy=1)
+        now = _best_damage(target_pokemon, opponent_active_card, extra_energy=0,
+                           board_ids=my_board_ids)
+        after = _best_damage(target_pokemon, opponent_active_card, extra_energy=1,
+                             board_ids=my_board_ids)
         if now < opponent_active_card.hp <= after:
             return  4000 if is_active else 2900    # active can cash it this turn -> top priority
 
     # 2) Otherwise is target a real attacker that still needs energy?
 
     damaging = [(_ATK[a][0], len(_ATK[a][1])) for a in _CARD[target_pokemon.id][3]
-                if a in _ATK and _ATK[a][0] > 0]
+                if a in _ATK and _ATK[a][0] > 0
+                and _attack_available(a, my_board_ids)]
 
     if not damaging:
         return 400
 
-    if _turns_to_ready(target_pokemon, opponent_active_card) == 0:
+    if _turns_to_ready(target_pokemon, opponent_active_card,
+                       board_ids=my_board_ids) == 0:
         # The BEST attack is charged (M7.2b — was the cheapest, which stopped
         # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
         return 600

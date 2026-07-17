@@ -14,7 +14,8 @@ from types import SimpleNamespace
 from cg.api import AreaType, OptionType, SelectContext, to_observation_class
 
 from tcg import constants
-from tcg.combat import best_damage, turns_to_first_ko, turns_to_ready
+from tcg.combat import (attack_available, best_damage, turns_to_first_ko,
+                        turns_to_ready)
 from tcg.library import (ATTACKS, CARDS, ENERGY_CARD_IDS,
                          HAND_DISCARD_TRAINER_IDS, POKEMON_CARD_IDS,
                          known_attacks)
@@ -337,23 +338,35 @@ def score_attach(option, observation) -> float:
         return constants.SCORE_ATTACH_NO_TARGET
 
     is_active = option.inPlayArea == AreaType.ACTIVE
+    # M14 twin (see rl/generic_pilot.score_attach): CONDITIONAL_ATTACKS gate
+    # this path too — a conditional attacker without its requirement is not
+    # an attacker worth charging.
+    my_state = observation.current.players[my_index]
+    my_board_ids = {p.id for p in (list(my_state.active or [])
+                                   + list(my_state.bench or []))
+                    if p is not None}
 
     # 1) Lookahead: does this attach UNBLOCK a KO on the opponent's active?
     if opponent_active is not None:
-        damage_now = best_damage(target, opponent_active, extra_energy=0)
-        damage_after = best_damage(target, opponent_active, extra_energy=1)
+        damage_now = best_damage(target, opponent_active, extra_energy=0,
+                                 board_ids=my_board_ids)
+        damage_after = best_damage(target, opponent_active, extra_energy=1,
+                                   board_ids=my_board_ids)
         if damage_now < opponent_active.hp <= damage_after:
             return (constants.SCORE_ATTACH_UNBLOCKS_KO_ACTIVE if is_active
                     else constants.SCORE_ATTACH_UNBLOCKS_KO_BENCH)
 
     # 2) Otherwise: is the target a real attacker that still needs energy?
-    damaging_attacks = [(attack.damage, len(attack.cost))
-                        for attack in known_attacks(CARDS[target.id])
-                        if attack.damage > 0]
+    # (iterate ids, not Attack records — the record carries no id, and
+    # attack_available needs one)
+    damaging_attacks = [(ATTACKS[a].damage, len(ATTACKS[a].cost))
+                        for a in CARDS[target.id].attack_ids
+                        if a in ATTACKS and ATTACKS[a].damage > 0
+                        and attack_available(a, my_board_ids)]
     if not damaging_attacks:
         return constants.SCORE_ATTACH_NON_ATTACKER
 
-    if turns_to_ready(target, opponent_active) == 0:
+    if turns_to_ready(target, opponent_active, board_ids=my_board_ids) == 0:
         # The BEST attack is charged (M7.2b — was the cheapest, which stopped
         # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
         return constants.SCORE_ATTACH_ALREADY_LOADED
