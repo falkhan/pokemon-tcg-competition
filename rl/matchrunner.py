@@ -156,6 +156,10 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # calibrate_margin.py): smallest LAMBDA*|dV| gap with ordering acc
         # >= 0.80 (measured 0.804 at coverage 0.84). One value, no sweep.
         VS_MARGIN = 200.0
+        # v3 (S1 re-gate 2, user-approved): trust the value only where its own
+        # held-out per-bucket report says it can rank — t4-15 buckets 0.79-0.80
+        # vs near-chance past turn ~32. Greedy handles the long grind.
+        VS_MAX_TURN = 32
         ckpt = Path(spec[1])
         if not ckpt.is_absolute() and not ckpt.exists():
             ckpt = ROOT / ckpt
@@ -191,7 +195,8 @@ def make_pilot(spec: OpponentSpec, instance: str):
                     pick = None
                 if pick is not None:
                     return pick
-            elif obs.select.context == SelectContext.MAIN:
+            elif obs.select.context == SelectContext.MAIN \
+                    and obs.current.turn < VS_MAX_TURN:
                 cell["me"] = obs.current.yourIndex
                 try:
                     pick = solve_turn(obs, ids, dev=True,
