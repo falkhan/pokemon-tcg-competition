@@ -54,6 +54,10 @@ WIDE_DEPTH = 10            # (inference default: 8)
 VS_LAMBDA = 3000.0
 VS_MARGIN = 200.0
 VS_MAX_TURN = 32
+# Runaway-game guard (found 2026-07-17: a buddy/rule matchup can stall
+# forever; solver mirrors never do, so M11/M13 never hit it). Games past the
+# cap are scored as draws. Normal games run well under 300 prompts.
+MAX_GAME_DECISIONS = 600
 
 
 def _value_solve_factory(vnet, cell):
@@ -242,7 +246,7 @@ def _collect_chunk(args):
     shard_idx = sum(1 for _ in out.glob(f"shard_w{worker:02d}_*.npz"))
     stats = {"games": 0, "decisions": 0, "plan_rows": 0, "plan_missed": 0,
              "plan_null": 0, "plan_gust": 0, "derails": 0, "wins": [0, 0, 0],
-             "kill_plans": 0, "setup_plans": 0, "opp": {}}
+             "kill_plans": 0, "setup_plans": 0, "timeouts": 0, "opp": {}}
     t0 = perf_counter()
 
     def flush():
@@ -298,7 +302,12 @@ def _collect_chunk(args):
                              f"(errorType={start_data.errorType})")
 
         game_rows: list[tuple] = []
+        n_prompts = 0
         while obs_dict["current"]["result"] < 0:
+            n_prompts += 1
+            if n_prompts > MAX_GAME_DECISIONS:
+                stats["timeouts"] += 1
+                break
             player = obs_dict["current"]["yourIndex"]
             obs = to_observation_class(obs_dict)
 
@@ -363,6 +372,8 @@ def _collect_chunk(args):
             obs_dict = battle_select(exec_action)
 
         result = obs_dict["current"]["result"]
+        if result < 0:
+            result = 2                       # capped runaway -> scored a draw
         battle_finish()
         stats["wins"][result] += 1
         stats["games"] += 1
@@ -434,7 +445,7 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
     agg = {k: sum(r[k] for r in results)
            for k in ("games", "decisions", "plan_rows", "plan_missed",
                      "plan_null", "plan_gust", "derails", "kill_plans",
-                     "setup_plans")}
+                     "setup_plans", "timeouts")}
     agg["wins"] = [sum(r["wins"][i] for r in results) for i in range(3)]
     agg["opp"] = {}
     for r in results:
