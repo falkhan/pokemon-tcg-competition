@@ -41,6 +41,14 @@ if "embedding.weight" not in WEIGHTS:
 DECK = [int(x) for x in open(os.path.join(_BASE, "deck.csv")) if x.strip()]
 
 _EMBED = WEIGHTS["embedding.weight"]
+_IS_V3 = "plan_enc.0.weight" in WEIGHTS          # M11 plan-conditioned export
+if _IS_V3:
+    from cg.api import SelectContext
+    from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+    # Turn-scoped plan state (buddy-precedent module globals): plan once at
+    # each turn's FIRST own MAIN prompt, hold for the turn. Reset on the
+    # deck-return call and on a turn-counter drop (new game, reused process).
+    _PSTATE = {"key": None, "vec": None, "last_turn": -1}
 
 
 def _linear(x, name):    # torch Linear stores weight as (out, in) -> transpose!
@@ -66,9 +74,35 @@ def score_options_v2(state_ctx, state_ids, options, option_ids):
     return _linear(_relu(_linear(so, "score_head.0")), "score_head.2").ravel()
 
 
+def _trunk_v3(state_ctx, plan, state_ids):
+    se = _EMBED[state_ids].reshape(-1)
+    x = np.concatenate([state_ctx, plan, se])
+    return _relu(_linear(_relu(_linear(x, "state_enc.0")), "state_enc.2"))
+
+
+def score_options_v3(state_ctx, plan, state_ids, options, option_ids):
+    """Numpy twin of tcg.network.OptionScorerV3.forward, logits only."""
+    s = _trunk_v3(state_ctx, plan, state_ids)
+    oe = _EMBED[option_ids].reshape(len(options), -1)
+    o = _relu(_linear(np.concatenate([options, oe], axis=1), "option_enc.0"))
+    so = np.concatenate([np.broadcast_to(s, (len(o), s.size)), o], axis=1)
+    return _linear(_relu(_linear(so, "score_head.0")), "score_head.2").ravel()
+
+
+def score_plans(state_ctx, state_ids, plan_cands):
+    """Numpy twin of tcg.network.OptionScorerV3.plan_logits (plan=zeros trunk)."""
+    zeros = np.zeros(plan_cands.shape[1], dtype=np.float32)
+    s = _trunk_v3(state_ctx, zeros, state_ids)
+    p = _relu(_linear(plan_cands, "plan_enc.0"))
+    sp = np.concatenate([np.broadcast_to(s, (len(p), s.size)), p], axis=1)
+    return _linear(_relu(_linear(sp, "plan_head.0")), "plan_head.2").ravel()
+
+
 def agent(obs_dict: dict) -> list[int]:
     obs = to_observation_class(obs_dict)
     if obs.select is None:  # game start: return the deck list
+        if _IS_V3:
+            _PSTATE.update(key=None, vec=None, last_turn=-1)
         return DECK
     numeric, state_ids = encode_state_v2(obs.current, DECK)
     state_ctx = np.concatenate([numeric,
@@ -76,6 +110,23 @@ def agent(obs_dict: dict) -> list[int]:
     pairs = [encode_option_v2(o, obs) for o in obs.select.option]
     options = np.stack([n for n, _ in pairs]).astype(np.float32)
     option_ids = np.stack([i for _, i in pairs])
-    scores = score_options_v2(state_ctx, state_ids, options, option_ids)
+    if not _IS_V3:
+        scores = score_options_v2(state_ctx, state_ids, options, option_ids)
+        order = np.argsort(scores)[::-1]
+        return [int(i) for i in order[:obs.select.maxCount]]
+
+    t = obs.current.turn
+    if t < _PSTATE["last_turn"]:                 # new game in a reused process
+        _PSTATE.update(key=None, vec=None)
+    _PSTATE["last_turn"] = t
+    key = (t, obs.current.yourIndex)
+    if obs.select.context == SelectContext.MAIN and _PSTATE["key"] != key:
+        cands = enumerate_plans(obs)
+        mat = np.stack([encode_plan(c) for c in cands]).astype(np.float32)
+        idx = int(np.argmax(score_plans(state_ctx, state_ids, mat)))
+        _PSTATE.update(key=key, vec=mat[idx].copy())
+    plan = (_PSTATE["vec"] if _PSTATE["key"] == key and _PSTATE["vec"] is not None
+            else np.zeros(PLAN_DIM, dtype=np.float32))
+    scores = score_options_v3(state_ctx, plan, state_ids, options, option_ids)
     order = np.argsort(scores)[::-1]
     return [int(i) for i in order[:obs.select.maxCount]]
