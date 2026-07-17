@@ -34,12 +34,15 @@ Plan = namedtuple("Plan", "attacker_slot target_slot attack_idx attack_id "
                           "lethal wins attacker_prize return_ko concedes opp_ttk")
 
 
-def _attack_damage(attacker, target, attack_id, extra_energy: int = 0) -> int:
+def _attack_damage(attacker, target, attack_id, extra_energy: int = 0,
+                   board_ids=None) -> int:
     """Damage of ONE specific attack (affordability + weak/res — the
-    per-attack twin of rl.combat._best_damage's inner loop)."""
+    per-attack twin of rl.combat._best_damage's inner loop). board_ids gates
+    CONDITIONAL_ATTACKS (M13 0a)."""
+    from rl.combat import _attack_available
     if attacker is None or target is None or attacker.id not in _CARD:
         return 0
-    if attack_id not in _ATK:
+    if attack_id not in _ATK or not _attack_available(attack_id, board_ids):
         return 0
     _, _, atk_type, _, _ = _CARD[attacker.id]
     energies = list(getattr(attacker, "energies", ())) + [atk_type] * extra_energy
@@ -90,7 +93,10 @@ def _board(player):
 
 def _make_plan(aslot, attacker, tslot, target, aidx, aid, needs_attach,
                me, op, op_active) -> Plan | None:
-    dmg = _attack_damage(attacker, target, aid, extra_energy=1 if needs_attach else 0)
+    my_ids = {p.id for _, p in _board(me)}
+    dmg = _attack_damage(attacker, target, aid,
+                         extra_energy=1 if needs_attach else 0,
+                         board_ids=my_ids)
     if dmg <= 0:
         return None
     target_prize = _CARD.get(target.id, (0, 0, 0, [], 1))[4]
@@ -132,6 +138,7 @@ def enumerate_plans(obs) -> list:
     if gust:
         targets += [(j + 1, p) for j, p in enumerate(op.bench or [])
                     if p is not None]
+    my_ids = {p.id for _, p in _board(me)}
     for aslot, attacker in _board(me):
         if attacker.id not in _CARD:
             continue
@@ -141,10 +148,12 @@ def enumerate_plans(obs) -> list:
                 continue
             for tslot, target in targets:
                 needs = False
-                if _attack_damage(attacker, target, aid) <= 0:
+                if _attack_damage(attacker, target, aid,
+                                  board_ids=my_ids) <= 0:
                     if not can_attach:
                         continue
-                    if _attack_damage(attacker, target, aid, extra_energy=1) <= 0:
+                    if _attack_damage(attacker, target, aid, extra_energy=1,
+                                      board_ids=my_ids) <= 0:
                         continue
                     needs = True
                 plan = _make_plan(aslot, attacker, tslot, target, aidx, aid,

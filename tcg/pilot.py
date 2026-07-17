@@ -173,7 +173,10 @@ def attach_recipient_value(pokemon, me, opponent_active) -> float:
     profile = (SimpleNamespace(id=evolution.id,
                                energies=list(getattr(pokemon, "energies", ()) or ()))
                if evolution is not None else pokemon)
-    energy_gap = turns_to_ready(profile, opponent_active)
+    # M13 0a twin: own board ids gate CONDITIONAL_ATTACKS (see rl/generic_pilot).
+    board_ids = {p.id for p in (list(me.active or []) + list(me.bench or []))
+                 if p is not None}
+    energy_gap = turns_to_ready(profile, opponent_active, board_ids)
     if energy_gap == 0:
         return constants.ATTACH_RECIPIENT_CHARGED
     quality = min(attacker_quality(profile.id), constants.ATTACKER_QUALITY_CAP)

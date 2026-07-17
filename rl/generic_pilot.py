@@ -123,7 +123,12 @@ def _attach_recipient_value(card, me, op_active):
     profile = (SimpleNamespace(id=evolution.id,
                                energies=list(getattr(card, "energies", ()) or ()))
                if evolution is not None else card)
-    energy_gap = _turns_to_ready(profile, op_active)
+    # M13 0a: pass own board ids so CONDITIONAL_ATTACKS gate the charged-best
+    # (a Solrock without Lunatone in play is not the attacker its table row
+    # claims — the live ep-85607769/86469359 overfeeding at the source).
+    board_ids = {p.id for p in (list(me.active or []) + list(me.bench or []))
+                 if p is not None}
+    energy_gap = _turns_to_ready(profile, op_active, board_ids)
     if energy_gap == 0:
         return 50                          # ATTACH_RECIPIENT_CHARGED
     quality = min(_attacker_quality(profile.id), 300)   # ATTACKER_QUALITY_CAP
