@@ -67,3 +67,27 @@ def test_parse_spec_rank_kind():
     assert mr.parse_spec("rank:checkpoints/osv3_rank1.pt:lucario") == \
         ("rank", "checkpoints/osv3_rank1.pt", "lucario")
     assert mr.spec_deck(("rank", "x.pt", "lucario")) == "lucario"
+
+
+def test_parse_spec_vsolver_kind():
+    assert mr.parse_spec("vsolver:checkpoints/osv3_setupval1.pt:lucario") == \
+        ("vsolver", "checkpoints/osv3_setupval1.pt", "lucario")
+    assert mr.spec_deck(("vsolver", "x.pt", "lucario")) == "lucario"
+
+
+def test_score_leaf_leaf_value_replaces_tail_keeps_anchors():
+    import rl.turn_solver as ts
+    from tests import builders as b
+    me = b.player(active=b.pokemon(1, energies=[6]), bench=[b.pokemon(4)])
+    opp = b.player(active=b.pokemon(4, hp=300))
+    root = b.observation(me=me, opponent=opp)
+    snap = ts._root_snapshot(root)
+    # non-terminal leaf: learned tail replaces heuristics entirely
+    leaf = b.observation(me=me, opponent=opp)
+    base = ts.score_leaf(snap, leaf)
+    learned = ts.score_leaf(snap, leaf, leaf_value=lambda o: 1234.0)
+    assert learned == 1234.0                 # prizes 0 + tail replaced
+    assert learned != base or base == 1234.0
+    # terminal anchors ignore leaf_value
+    won = b.observation(me=me, opponent=opp, result=0)
+    assert ts.score_leaf(snap, won, leaf_value=lambda o: 1234.0) == ts.W_WIN

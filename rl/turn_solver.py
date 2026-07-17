@@ -256,11 +256,16 @@ def _dev_bonus(snap: _Snap, me_p, op_active) -> float:
     return bonus
 
 
-def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
+def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
     """End-of-line value from MY perspective: game result, then prizes taken
     this turn, then lethal-next-turn setup / exposure / chip tiebreaks.
     dev=True (M8.1) adds the development block — deltas vs the root snapshot,
-    so stand-pat scores 0 development and only real setup gains rank."""
+    so stand-pat scores 0 development and only real setup gains rank.
+
+    leaf_value (M13 Rung 1): optional callable obs -> scaled score that
+    REPLACES the sub-prize heuristic tail (threat/damage/counter/race/
+    deck-low/dev). The certain terms stay exact: terminal results, prizes
+    taken/conceded, and the benchless-return-KO game-ender."""
     cur = obs.current
     if cur.result >= 0:
         if cur.result == 2:
@@ -272,6 +277,12 @@ def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
     my_active = me_p.active[0] if me_p.active and me_p.active[0] is not None else None
     op_active = op_p.active[0] if op_p.active and op_p.active[0] is not None else None
     board = _my_board(me_p)
+    if leaf_value is not None:
+        if op_active is not None and my_active is not None and board \
+                and _best_damage(op_active, my_active) >= my_active.hp \
+                and len(board) == 1:     # bench EMPTY + return-KO: game over
+            score += W_BENCHLESS_KO
+        return score + leaf_value(obs)
     if op_active is not None and op_active.id in _CARD and board:
         if any(_best_damage(p, op_active, extra_energy=1) >= op_active.hp
                for p in board):
@@ -292,7 +303,7 @@ def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
 
 
 def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
-         dev: bool = False, fixes: frozenset = frozenset()):
+         dev: bool = False, fixes: frozenset = frozenset(), leaf_value=None):
     """Depth-first search over MY remaining turn. Returns (score, line, trail)
     where line is the action list-of-lists from `state` to the best leaf and
     trail[i] is the search observation at which line[i] was taken (M11: plan
@@ -306,15 +317,16 @@ def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
     max_nodes = budget.get("max_nodes", MAX_NODES)
     if obs.current.result >= 0 or obs.current.yourIndex != snap.me \
             or depth >= max_depth:
-        return score_leaf(snap, obs, dev), [], []
-    best_score, best_line, best_trail = score_leaf(snap, obs, dev), [], []
+        return score_leaf(snap, obs, dev, leaf_value), [], []
+    best_score, best_line, best_trail = \
+        score_leaf(snap, obs, dev, leaf_value), [], []
     for action in _candidate_actions(obs, fixes):
         if budget["nodes"] >= max_nodes or perf_counter() >= deadline:
             break
         budget["nodes"] += 1
         child = search_step(state.searchId, action)
         score, line, trail = _dfs(child, snap, depth + 1, deadline, budget,
-                                  dev, fixes)
+                                  dev, fixes, leaf_value)
         if score > best_score:
             best_score, best_line, best_trail = \
                 score, [action] + line, [obs] + trail
@@ -326,6 +338,7 @@ def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
 def solve_turn_line(obs, deck: list[int], deadline_s: float | None = None,
                     dev: bool = False, fixes: frozenset = frozenset(),
                     max_depth: int | None = None, max_nodes: int | None = None,
+                    leaf_value=None,
                     ) -> tuple[float, list[list[int]], list]:
     """Full-line variant for offline data generation (M11 expert iteration):
     returns (best_score, line, per_step_obs) with NO first-action truncation
@@ -342,7 +355,7 @@ def solve_turn_line(obs, deck: list[int], deadline_s: float | None = None,
               "max_nodes": MAX_NODES if max_nodes is None else max_nodes}
     root = _open_search(obs, deck)
     try:
-        return _dfs(root, snap, 0, deadline, budget, dev, fixes)
+        return _dfs(root, snap, 0, deadline, budget, dev, fixes, leaf_value)
     finally:
         search_end()
 
@@ -380,7 +393,8 @@ def score_siblings(obs, deck: list[int], deadline_s: float | None = None,
 
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
-               dev: bool = False, fixes: frozenset = frozenset()) -> list[int] | None:
+               dev: bool = False, fixes: frozenset = frozenset(),
+               leaf_value=None) -> list[int] | None:
     """Search my remaining turn; return the FIRST action of the best line iff
     it clears the tier's override bar, else None (defer to greedy). The
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
@@ -390,12 +404,14 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     (MIN_OVERRIDE_SCORE); dev overrides only when the best line beats the
     stand-pat leaf by DEV_OVERRIDE_MARGIN — a real development gain, not
     line-vs-line noise — under the shorter DEV_DEADLINE_S."""
-    best_score, best_line, _ = solve_turn_line(obs, deck, deadline_s, dev, fixes)
+    best_score, best_line, _ = solve_turn_line(obs, deck, deadline_s, dev,
+                                               fixes, leaf_value=leaf_value)
     if not best_line:
         return None
     if dev:
         snap = _root_snapshot(obs)
-        if best_score >= score_leaf(snap, obs, dev=True) + DEV_OVERRIDE_MARGIN:
+        if best_score >= score_leaf(snap, obs, dev=True,
+                                    leaf_value=leaf_value) + DEV_OVERRIDE_MARGIN:
             return [int(i) for i in best_line[0]]
         return None
     if best_score >= MIN_OVERRIDE_SCORE:

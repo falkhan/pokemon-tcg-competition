@@ -68,7 +68,8 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model", "ext", "rank") else spec[1]
+    return spec[2] if spec[0] in ("rule", "model", "ext", "rank", "vsolver") \
+        else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -83,6 +84,8 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("ext", parts[1], parts[2])
     if kind == "rank" and len(parts) == 3:
         return ("rank", parts[1], parts[2])
+    if kind == "vsolver" and len(parts) == 3:
+        return ("vsolver", parts[1], parts[2])
     if kind == "mcts" and len(parts) == 4:
         return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
@@ -132,6 +135,69 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 raise ValueError(f"no callable agent found in {main_py}")
             fn = candidates[-1]
         return fn, resolve_deck(spec[2])
+    if kind == "vsolver":
+        # M13 Rung 1: the solver pilot with the OUTCOME-GROUNDED setup value
+        # as the search leaf on non-lethal turns. Lethal tier unchanged
+        # (heuristic prize hunting stays exact); on other own MAIN prompts a
+        # dev-mode solve runs with leaf_value replacing the heuristic tail,
+        # overriding greedy only past DEV_OVERRIDE_MARGIN. Turn-passed leaves
+        # are encoded from the flipped perspective and NEGATED (zero-sum) —
+        # exact in the mirror, approximate cross-deck (logged limitation).
+        import numpy as np
+        import torch
+        from cg.api import SelectContext, to_observation_class
+        from rl.encoders import encode_context, encode_state_v2
+        from rl.plan import PLAN_DIM
+        from rl.policy import OptionScorerV3
+        from rl.generic_pilot import make_generic_pilot
+        from rl.turn_solver import should_solve, solve_turn
+        LAMBDA = 3000.0
+        ckpt = Path(spec[1])
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt
+        net = OptionScorerV3()
+        net.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        net.eval()
+        ids = resolve_deck(spec[2])
+        inner = make_generic_pilot(ids)
+        ctx_main = encode_context(SelectContext.MAIN)
+        cell = {"me": 0}
+
+        def leaf_value(obs):
+            num, sids = encode_state_v2(obs.current, ids)
+            sc = np.concatenate([num, ctx_main]).astype(np.float32)
+            with torch.no_grad():
+                se = net.embedding(
+                    torch.from_numpy(sids).long().unsqueeze(0)).flatten(-2)
+                zeros = torch.zeros(1, PLAN_DIM)
+                s = net.state_enc(torch.cat(
+                    [torch.from_numpy(sc).unsqueeze(0), zeros, se], dim=-1))
+                v = float(net.value_head(s).squeeze())
+            sign = 1.0 if obs.current.yourIndex == cell["me"] else -1.0
+            return LAMBDA * sign * v
+
+        def fnv(od):
+            obs = to_observation_class(od)
+            if obs.select is None:
+                return ids
+            if should_solve(obs):
+                try:
+                    pick = solve_turn(obs, ids)
+                except Exception:
+                    pick = None
+                if pick is not None:
+                    return pick
+            elif obs.select.context == SelectContext.MAIN:
+                cell["me"] = obs.current.yourIndex
+                try:
+                    pick = solve_turn(obs, ids, dev=True,
+                                      leaf_value=leaf_value)
+                except Exception:
+                    pick = None
+                if pick is not None:
+                    return pick
+            return inner(od)
+        return fnv, ids
     if kind == "rank":
         # M12 consumer: the solver pilot, plus a CONFIDENT ranker override on
         # single-pick MAIN prompts the solver tiers pass on. The net was
