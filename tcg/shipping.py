@@ -93,7 +93,11 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
     if ckpt_path.exists():
         state_dict = torch.load(ckpt_path, map_location="cpu")
         if "plan_enc.0.weight" in state_dict:      # M11 plan-conditioned v3
-            model = OptionScorerV3()
+            from tcg.encoders import EMBED_DIM, N_CONTEXTS, STATE_V2_DIM
+            from tcg.network import PLAN_DIM
+            n_ids = (state_dict["state_enc.0.weight"].shape[1]
+                     - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
+            model = OptionScorerV3(n_state_ids=n_ids)  # M15: 12 or 20
         elif "embedding.weight" in state_dict:
             model = OptionScorerV2()
         else:
@@ -156,13 +160,15 @@ def parity_check(main_path: str = SUBMISSION_MAIN) -> float:
 
     if "plan_enc.0.weight" in weights:             # M11 v3: forward AND plan head
         from tcg.network import PLAN_DIM
-        model = OptionScorerV3()
+        n_ids = (weights["state_enc.0.weight"].shape[1]
+                 - encoders.STATE_V2_DIM - encoders.N_CONTEXTS
+                 - PLAN_DIM) // encoders.EMBED_DIM   # M15: 12 or 20
+        model = OptionScorerV3(n_state_ids=n_ids)
         model.load_state_dict(torch_weights)
         state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS,
                                dtype=np.float32)
         plan = rng.random(PLAN_DIM, dtype=np.float32)
-        state_ids = rng.integers(0, encoders.N_CARD_IDS,
-                                 size=encoders.N_STATE_IDS)
+        state_ids = rng.integers(0, encoders.N_CARD_IDS, size=n_ids)
         options = rng.random((9, encoders.OPTION_V2_DIM), dtype=np.float32)
         option_ids = rng.integers(0, encoders.N_CARD_IDS,
                                   size=(9, encoders.N_OPTION_IDS))

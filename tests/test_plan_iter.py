@@ -170,6 +170,9 @@ def _stub_engine(monkeypatch, selected, n_prompts=2, solve_score=2e5):
     monkeypatch.setattr(pi, "encode_state_v2",
                         lambda cur, deck: (np.zeros(4, np.float32),
                                            np.zeros(3, np.int32)))
+    monkeypatch.setattr(pi, "encode_state_v3",
+                        lambda cur, deck: (np.zeros(4, np.float32),
+                                           np.zeros(3, np.int32)))
     monkeypatch.setattr(pi, "encode_context",
                         lambda ctx: np.zeros(2, np.float32))
     monkeypatch.setattr(pi, "encode_option_v2",
@@ -228,3 +231,34 @@ def test_collect_ei_student_advances_teacher_labels(tmp_path, monkeypatch):
     assert selected == [[0], [0]]                # student's picks drove the game
     shard = np.load(next((tmp_path / "out").glob("*.npz")))
     assert shard["labels"].tolist() == [1, 1]    # teacher labels every prompt
+
+
+def test_v3h_zero_hand_equals_legacy_v3():
+    # M15 warm-start invariant: hand-aware(zero hand ids) == legacy net.
+    from rl.encoders import N_STATE_IDS_V3
+    torch.manual_seed(3)
+    legacy = OptionScorerV3()
+    v3h = pi.load_v3_into_v3h(legacy.state_dict())
+    assert v3h.n_state_ids == N_STATE_IDS_V3
+    rng = np.random.default_rng(4)
+    sc, sids, opts, oids = _rand_inputs(rng)
+    sids20 = torch.cat([sids, torch.zeros(sids.shape[0],
+                                          N_STATE_IDS_V3 - N_STATE_IDS,
+                                          dtype=torch.long)], dim=1)
+    plan = torch.zeros(sc.shape[0], PLAN_DIM)
+    l_old, v_old = legacy(sc, plan, sids, opts, oids)
+    l_new, v_new = v3h(sc, plan, sids20, opts, oids)
+    assert torch.allclose(l_old, l_new, atol=1e-6)
+    assert torch.allclose(v_old, v_new, atol=1e-6)
+
+
+def test_encode_state_v3_hand_ids():
+    from tests import builders as b
+    from rl.encoders import N_STATE_IDS_V3, encode_state_v3
+    me = b.player(active=b.pokemon(1), hand=[b.hand_card(7), b.hand_card(3),
+                                            b.hand_card(6)])
+    obs = b.observation(me=me)
+    num, ids = encode_state_v3(obs.current, [1] * 60)
+    assert ids.shape == (N_STATE_IDS_V3,)
+    assert sorted(ids[12:15].tolist()) == [3, 6, 7]   # sorted hand ids
+    assert not ids[15:].any()                          # zero padding

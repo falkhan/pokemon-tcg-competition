@@ -29,9 +29,9 @@ if _BASE not in sys.path:
     sys.path.insert(0, _BASE)
 
 from cg.api import to_observation_class
-from rl.encoders import (N_CARD_IDS, N_CONTEXTS, N_OPTION_IDS, N_STATE_IDS,
-                         OPTION_V2_DIM, STATE_V2_DIM, encode_context,
-                         encode_option_v2, encode_state_v2)
+from rl.encoders import (EMBED_DIM, N_CARD_IDS, N_CONTEXTS, N_OPTION_IDS,
+                         N_STATE_IDS, OPTION_V2_DIM, STATE_V2_DIM,
+                         encode_context, encode_option_v2, encode_state_v2)
 
 WEIGHTS = np.load(os.path.join(_BASE, "policy_weights.npz"))
 if "embedding.weight" not in WEIGHTS:
@@ -45,6 +45,14 @@ _IS_V3 = "plan_enc.0.weight" in WEIGHTS          # M11 plan-conditioned export
 if _IS_V3:
     from cg.api import SelectContext
     from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+    # M15: hand-aware exports carry 20 state ids — sniff from the weights
+    # and pick the matching encoder.
+    _N_IDS = (WEIGHTS["state_enc.0.weight"].shape[1]
+              - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
+    if _N_IDS > N_STATE_IDS:
+        from rl.encoders import encode_state_v3 as _encode_state
+    else:
+        _encode_state = encode_state_v2
     # Turn-scoped plan state (buddy-precedent module globals): plan once at
     # each turn's FIRST own MAIN prompt, hold for the turn. Reset on the
     # deck-return call and on a turn-counter drop (new game, reused process).
@@ -104,7 +112,8 @@ def agent(obs_dict: dict) -> list[int]:
         if _IS_V3:
             _PSTATE.update(key=None, vec=None, last_turn=-1)
         return DECK
-    numeric, state_ids = encode_state_v2(obs.current, DECK)
+    numeric, state_ids = (_encode_state if _IS_V3
+                          else encode_state_v2)(obs.current, DECK)
     state_ctx = np.concatenate([numeric,
                                 encode_context(obs.select.context)]).astype(np.float32)
     pairs = [encode_option_v2(o, obs) for o in obs.select.option]

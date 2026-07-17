@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from cg.api import SelectContext, to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
 from rl.bc import load_population
-from rl.encoders import encode_context, encode_state_v2
+from rl.encoders import encode_context, encode_state_v3
 from rl.plan import PLAN_DIM
 from rl.policy import OptionScorerV3
 
@@ -116,7 +116,7 @@ def _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
                 seen_keys.add(key)
                 me = obs.current.players[player]
                 op = obs.current.players[1 - player]
-                num, sids = encode_state_v2(obs.current, decks[player])
+                num, sids = encode_state_v3(obs.current, decks[player])
                 sc = np.concatenate(
                     [num, encode_context(obs.select.context)]
                 ).astype(np.float32)
@@ -187,10 +187,16 @@ def _load_rows(data_dirs):
         for path in sorted(Path(d).glob("*.npz")):
             shard = np.load(path)
             cols["game_ids"].append(shard["game_ids"] + game_base)
+            # (state_ids widths may mix 12/20 across batches — padded below)
             for k in cols:
                 if k != "game_ids":
                     cols[k].append(shard[k])
             game_base += int(shard["game_ids"].max()) + 1
+    widths = {a.shape[1] for a in cols["state_ids"]}
+    if len(widths) > 1:                        # M15 pad shim: 12 -> 20 ids
+        wmax = max(widths)
+        cols["state_ids"] = [np.pad(a, ((0, 0), (0, wmax - a.shape[1])))
+                             for a in cols["state_ids"]]
     return {k: np.concatenate(v) for k, v in cols.items()}
 
 
@@ -255,7 +261,7 @@ def train(data_dirs: list, name: str, init_v3: str | None = None,
                                          exclude_games=ok_train_games)
     print(f"train pairs {len(train_pairs)}, val pairs {len(val_pairs)}")
 
-    model = OptionScorerV3()
+    model = OptionScorerV3(n_state_ids=rows["state_ids"].shape[1])
     if init_v3 is not None:
         p = Path(init_v3)
         if not p.is_absolute() and not p.exists():

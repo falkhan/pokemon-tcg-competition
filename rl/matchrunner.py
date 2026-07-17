@@ -327,12 +327,17 @@ def make_pilot(spec: OpponentSpec, instance: str):
             # (pilots are built once, line ~318) — reset on a turn-counter
             # drop (new game, direct loop) and on select-None (kaggle path).
             from cg.api import SelectContext
-            from rl.encoders import encode_option_v2, encode_state_v2
+            from rl.encoders import (EMBED_DIM, encode_option_v2,
+                                     encode_state_v2, encode_state_v3)
             from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
             from rl.policy import OptionScorerV3
-            m3 = OptionScorerV3()
+            from rl.encoders import N_CONTEXTS as _NC, STATE_V2_DIM as _SV2
+            n_ids = (sd["state_enc.0.weight"].shape[1] - _SV2 - _NC
+                     - PLAN_DIM) // EMBED_DIM
+            m3 = OptionScorerV3(n_state_ids=n_ids)
             m3.load_state_dict(sd)
             m3.eval()
+            enc_state = encode_state_v3 if n_ids > 12 else encode_state_v2
             deck_ids = resolve_deck(spec[2])
             pstate = {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
                       "last_turn": -1}
@@ -347,7 +352,7 @@ def make_pilot(spec: OpponentSpec, instance: str):
                     pstate.update(key=None)
                 pstate["last_turn"] = t
                 key = (t, obs.current.yourIndex)
-                num, sids = encode_state_v2(obs.current, deck_ids)
+                num, sids = enc_state(obs.current, deck_ids)
                 sc = np.concatenate(
                     [num, encode_context(obs.select.context)]
                 ).astype(np.float32)

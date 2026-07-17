@@ -312,6 +312,23 @@ def encode_state_v2(state, my_deck: list[int]) -> tuple[np.ndarray, np.ndarray]:
     return numeric.astype(np.float32), _board_ids(state)
 
 
+N_HAND_IDS = 8   # M15: hand-card id slots (sorted, 0-padded, overflow capped)
+N_STATE_IDS_V3 = N_STATE_IDS + N_HAND_IDS
+
+
+def encode_state_v3(state, my_deck: list[int]) -> tuple[np.ndarray, np.ndarray]:
+    """M15 hand-aware ids: same STATE_V2_DIM numeric, but ids = 12 board +
+    up to N_HAND_IDS of MY hand-card ids (sorted for permutation stability,
+    0-padded). The M14 encoder audit: the hand was a summed 36-dim pool the
+    id-embedding pathway never saw — invisible combos. encode_state_v2 stays
+    untouched (legacy checkpoints/bundles keep loading)."""
+    numeric, board = encode_state_v2(state, my_deck)
+    me = state.players[state.yourIndex]
+    hand = sorted(c.id for c in (me.hand or []) if c is not None)[:N_HAND_IDS]
+    hand += [0] * (N_HAND_IDS - len(hand))
+    return numeric, np.concatenate([board, np.array(hand, dtype=np.int32)])
+
+
 def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
     """(numeric OPTION_V2_DIM f32, [acted_id, target_id] i32, 0 = none)."""
     your_index = obs.current.yourIndex

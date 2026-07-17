@@ -36,8 +36,9 @@ from cg.api import SelectContext, to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
 from rl.turn_solver import MIN_OVERRIDE_SCORE
 from rl.bc import load_population
-from rl.encoders import (N_CONTEXTS, STATE_V2_DIM, encode_context,
-                         encode_option_v2, encode_state_v2)
+from rl.encoders import (N_CONTEXTS, N_STATE_IDS_V3, STATE_V2_DIM,
+                         encode_context, encode_option_v2, encode_state_v2,
+                         encode_state_v3)
 from rl.plan import (PLAN_DIM, derive_plan, encode_plan, enumerate_plans,
                      match_candidate)
 from rl.policy import OptionScorerV3
@@ -326,7 +327,13 @@ def _collect_chunk(args):
                 fallbacks[player], key, is_main, deadline, label_deadline,
                 stats, value_solve=value_solve)
 
-            state_num, state_ids = encode_state_v2(obs.current, decks[player])
+            # M15: new data carries hand-aware ids (expert mode always; ei
+            # mode follows the student's own id width)
+            enc_state = (encode_state_v3 if mode == "expert"
+                         or getattr(student, "n_state_ids",
+                                    None) == N_STATE_IDS_V3
+                         else encode_state_v2)
+            state_num, state_ids = enc_state(obs.current, decks[player])
             state_ctx = np.concatenate(
                 [state_num, encode_context(obs.select.context)]
             ).astype(np.float32)
@@ -512,6 +519,15 @@ class BCDatasetV3(torch.utils.data.Dataset):
                 cand_base += int(ncands.sum())
                 option_base += len(shard["options"])
                 game_base += int(shard["game_ids"].max()) + 1
+        # M15 pad shim: mixed id widths (legacy 12 vs hand-aware 20) — pad
+        # every shard's state_ids to the widest with zeros ("no hand info",
+        # the same semantics as the plan-column shim).
+        widths = {a.shape[1] for a in cols["state_ids"]}
+        if len(widths) > 1:
+            wmax = max(widths)
+            cols["state_ids"] = [
+                np.pad(a, ((0, 0), (0, wmax - a.shape[1])))
+                for a in cols["state_ids"]]
         for k, v in cols.items():
             setattr(self, k, np.concatenate(v))
         for k, v in plan_cols.items():
@@ -571,6 +587,25 @@ def collate_v3(batch):
             results, deck_idx, plan_cands, plan_valid, plan_labels)
 
 
+def load_v3_into_v3h(v3_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
+    """M15 warm start: legacy 12-id v3 weights into a hand-aware (20-id) net.
+    All shared weights copy verbatim; the 8 new hand-embedding column blocks
+    of state_enc.0 are ZERO-initialized, so hand-aware(zero-hand-ids) ==
+    legacy net exactly (the warm-start invariant, third use)."""
+    from rl.encoders import N_STATE_IDS_V3
+    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=N_STATE_IDS_V3)
+    sd = model.state_dict()
+    for k, v in v3_sd.items():
+        if k == "state_enc.0.weight":
+            new = torch.zeros_like(sd[k])
+            new[:, :v.shape[1]] = v               # ids sit at the END: old
+            sd[k] = new                           # block maps 1:1, rest zero
+        else:
+            sd[k] = v
+    model.load_state_dict(sd)
+    return model
+
+
 def load_v2_into_v3(v2_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     """Warm-start a V3 from a V2 state dict: shared weights copied verbatim,
     the plan_dim new state_enc.0 columns ZERO-initialized (V3(plan=0) == V2 —
@@ -590,8 +625,16 @@ def load_v2_into_v3(v2_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     return model
 
 
+def _n_ids_of(sd: dict) -> int:
+    """Infer a v3 checkpoint's state-id count from its first Linear width."""
+    from rl.encoders import EMBED_DIM
+    width = sd["state_enc.0.weight"].shape[1]
+    return (width - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
+
+
 def train(data_dirs: list, name: str, init: str | None = None,
-          init_v2: str | None = None, epochs: int = 8, lr: float = 3e-4,
+          init_v2: str | None = None, init_v3h: str | None = None,
+          epochs: int = 8, lr: float = 3e-4,
           batch_size: int = 256, plan_weight: float = 1.0) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
@@ -618,9 +661,15 @@ def train(data_dirs: list, name: str, init: str | None = None,
         return p if p.is_absolute() or p.exists() else ROOT / p
 
     if init is not None:
-        model = OptionScorerV3()
-        model.load_state_dict(torch.load(_resolve(init), map_location="cpu"))
-        print(f"warm-start from v3 {init}")
+        sdict = torch.load(_resolve(init), map_location="cpu")
+        model = OptionScorerV3(n_state_ids=_n_ids_of(sdict))
+        model.load_state_dict(sdict)
+        print(f"warm-start from v3 {init} (n_state_ids={model.n_state_ids})")
+    elif init_v3h is not None:
+        model = load_v3_into_v3h(torch.load(_resolve(init_v3h),
+                                            map_location="cpu"))
+        print(f"warm-start from legacy v3 {init_v3h} "
+              "(hand-embedding columns zero-init)")
     elif init_v2 is not None:
         model = load_v2_into_v3(torch.load(_resolve(init_v2),
                                            map_location="cpu"))
@@ -718,6 +767,9 @@ if __name__ == "__main__":
                    help="warm-start from a v3 checkpoint")
     t.add_argument("--init-v2", type=str, default=None,
                    help="warm-start from a v2 checkpoint (zero-init plan cols)")
+    t.add_argument("--init-v3h", type=str, default=None,
+                   help="warm-start a HAND-AWARE net from a legacy v3 "
+                        "checkpoint (M15; hand columns zero-init)")
     t.add_argument("--epochs", type=int, default=8)
     t.add_argument("--lr", type=float, default=3e-4)
     t.add_argument("--batch-size", type=int, default=256)
@@ -733,5 +785,5 @@ if __name__ == "__main__":
                 opponents=args.opponents, value_ckpt=args.value_ckpt)
     else:
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
-              epochs=args.epochs, lr=args.lr, batch_size=args.batch_size,
-              plan_weight=args.plan_weight)
+              init_v3h=args.init_v3h, epochs=args.epochs, lr=args.lr,
+              batch_size=args.batch_size, plan_weight=args.plan_weight)

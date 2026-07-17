@@ -141,15 +141,16 @@ class OptionScorerV3(nn.Module):
     mismatch in plan encoding. All-zeros plan == "no plan"."""
 
     def __init__(self, hidden: int = 256, embed: int = EMBED_DIM,
-                 plan_dim: int | None = None):
+                 plan_dim: int | None = None, n_state_ids: int = N_STATE_IDS):
         super().__init__()
         if plan_dim is None:
             from rl.plan import PLAN_DIM
             plan_dim = PLAN_DIM
         self.plan_dim = plan_dim
+        self.n_state_ids = n_state_ids     # M15: 12 legacy | 20 hand-aware
         self.embedding = nn.Embedding(N_CARD_IDS, embed, padding_idx=0)
         self.state_enc = nn.Sequential(
-            nn.Linear(STATE_V2_DIM + N_CONTEXTS + plan_dim + N_STATE_IDS * embed,
+            nn.Linear(STATE_V2_DIM + N_CONTEXTS + plan_dim + n_state_ids * embed,
                       hidden),
             nn.ReLU(),
             nn.Linear(hidden, hidden), nn.ReLU(),
