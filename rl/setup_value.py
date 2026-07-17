@@ -127,6 +127,9 @@ def _collect_chunk(args):
 
         if (game - lo + 1) % shard_size == 0:
             flush()
+        # progress beacon for wrapper UIs (m13_collect.sh): one tiny file per
+        # worker, overwritten per game — cheap, crash-safe, poll-friendly.
+        (out / f".progress_w{worker:02d}").write_text(str(game - lo + 1))
         if game - lo + 1 == 25:
             per_game = (perf_counter() - t0) / 25
             print(f"[w{worker}] game 25: {per_game:.1f}s/game -> projected "
