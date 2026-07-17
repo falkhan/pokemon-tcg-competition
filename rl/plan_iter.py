@@ -246,9 +246,13 @@ def _collect_chunk(args):
                     student_key[player] = key
                 s_vec = (student_plan[player] if student_key[player] == key
                          else np.zeros(PLAN_DIM, np.float32))
+                # Actions are GREEDY given the sampled plan (fix 2026-07-17,
+                # EI round 1 measured 0.314): exploration lives at the PLAN
+                # level only — per-prompt Gumbel noise makes turns incoherent,
+                # the exact failure mode plan conditioning exists to prevent.
                 exec_action = student.act(state_ctx, s_vec, state_ids, opts,
                                           opt_ids, obs.select.maxCount,
-                                          greedy=False)
+                                          greedy=True)
                 exec_action = [int(i) for i in exec_action]
                 if exec_action != label_action:   # off the teacher's line now
                     seat_state[player]["on"] = False

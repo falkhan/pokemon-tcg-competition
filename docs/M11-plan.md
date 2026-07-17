@@ -78,8 +78,13 @@ separates M11 from the buddy-DAgger 0.198 disaster.
   during collection, argmax at eval. Reset state on `obs.select is None` (kaggle)
   AND turn-counter drop (direct loop — matchrunner pilots persist across a whole
   series, `matchrunner.py:289`).
-- **Exploration**: τ over rounds 1→4: 1.0, 0.7, 0.4, 0.2; Dirichlet(α=0.5, ε=0.25)
-  round 1 only. Sampled plan shapes execution only — never a training input.
+- **Exploration** *(CHANGED 2026-07-17 after EI round 1 regressed to 0.314)*:
+  plan-level ONLY — EI actions are GREEDY given the sampled plan (per-prompt
+  Gumbel stacked on plan noise made execution chaotic and trained the policy
+  on junk states). τ starts at 0.3, no Dirichlet; later rounds anneal 0.3 →
+  0.15 if rounds keep passing. Sampled plan shapes execution only — never a
+  training input. Rounds collect from and warm-start the BEST checkpoint so
+  far, and each failed round's data dir is quarantined.
 
 ## Phase E — all edits batched before any run
 
