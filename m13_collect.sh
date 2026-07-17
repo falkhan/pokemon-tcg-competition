@@ -17,8 +17,9 @@ CORES=$(nproc 2>/dev/null || echo 8)
 PROFILE=laptop
 GAMES=10000
 WORKERS=""
-SEED=1
+SEED=""
 OUT=data/setupval
+SHARD_SIZE=100   # flush every 100 games/worker: Ctrl-C loses at most the game in flight (worker flushes on interrupt) or <100 on a hard kill
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -38,6 +39,12 @@ case "$PROFILE" in
   *) echo "unknown profile: $PROFILE (laptop|box)"; exit 2 ;;
 esac
 WORKERS=${WORKERS:-$DEF_WORKERS}
+# Auto-seed: one more than the number of existing shard files, so every rerun
+# is a FRESH batch (unique deck-sampling stream) that appends to the dataset.
+if [ -z "$SEED" ]; then
+  SEED=$(( $(ls "$OUT"/shard_* 2>/dev/null | wc -l) + 1 ))
+fi
+EXISTING=$(ls "$OUT"/shard_* 2>/dev/null | wc -l)
 LOG=runs/m13_collect_s${SEED}.log
 PY=.venv/bin/python
 
@@ -59,16 +66,16 @@ BALL=("◐" "◓" "◑" "◒")
 echo ""
 echo "${BOLD}${RED}⚡ M13 SETUP-STATE SAFARI ⚡${RST}"
 echo "${DIM}   ${PROFILE} profile · ${GAMES} games · ${WORKERS}/${CORES} workers at nice -${NICENESS} · seed ${SEED} → ${OUT}${RST}"
-echo "${DIM}   Tip: batches stack — chunked runs (--games 2500) are fine.${RST}"
+echo "${DIM}   Dataset already holds ${EXISTING} shard(s) — this batch stacks on top.${RST}"
 echo ""
 
 mkdir -p runs "$OUT"
 rm -f "$OUT"/.progress_w*
 
 nice -n "$NICENESS" "$PY" -m rl.setup_value collect --games "$GAMES" --out "$OUT" \
-      --workers "$WORKERS" --seed "$SEED" >"$LOG" 2>&1 &
+      --workers "$WORKERS" --seed "$SEED" --shard-size "$SHARD_SIZE" >"$LOG" 2>&1 &
 PID=$!
-trap 'echo ""; echo "${YEL}✋ Safari interrupted — finished shards are safe in ${OUT}${RST}"; kill $PID 2>/dev/null; exit 130' INT
+trap 'echo ""; echo "${YEL}✋ Safari pausing — letting each worker finish its current game…${RST}"; touch "$OUT/.stop"; wait $PID 2>/dev/null; rm -f "$OUT"/.progress_w* "$OUT/.stop" 2>/dev/null; echo "${YEL}   All completed games are shard-safe in ${OUT} — rerun me anytime, batches stack.${RST}"; exit 130' INT
 
 START=$(date +%s)
 FRAME=0

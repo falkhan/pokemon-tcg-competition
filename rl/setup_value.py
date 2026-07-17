@@ -79,7 +79,23 @@ def _collect_chunk(args):
         for v in shard.values():
             v.clear()
 
+    try:
+        _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
+                   stats, flush, t0)
+    except KeyboardInterrupt:
+        flush()                      # Ctrl-C: keep every completed game
+    flush()
+    return stats
+
+
+def _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
+               stats, flush, t0):
+    from rl.turn_solver import make_solver_pilot
+
+    stop_file = out / ".stop"
     for game in range(lo, hi):
+        if stop_file.exists():       # graceful drain (m13_collect.sh Ctrl-C)
+            break
         picks_idx = [rng.randrange(len(population)) for _ in range(2)]
         decks = [population[picks_idx[0]], population[picks_idx[1]]]
         pilots = [make_solver_pilot(d, instance=f"sv{game}_{s}")
@@ -135,14 +151,12 @@ def _collect_chunk(args):
             print(f"[w{worker}] game 25: {per_game:.1f}s/game -> projected "
                   f"{per_game * (hi - lo) / 60:.0f} min", flush=True)
 
-    flush()
-    return stats
-
 
 def collect(n_games: int, decks_file, out_dir: Path, workers: int = 12,
             shard_size: int = 500, seed: int = 0) -> dict:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / ".stop").unlink(missing_ok=True)   # stale sentinel from a prior run
     chunk = -(-n_games // workers)
     jobs, lo = [], 0
     for w in range(workers):
