@@ -18,6 +18,18 @@ _CARD = {c.cardId: (c.weakness, c.resistance, int(c.energyType), c.attacks,
                     3 if c.megaEx else 2 if c.ex else 1)
          for c in _all_card_data()}
 
+# Card FACTS the tables can't otherwise see (M13 Rung 0a — mirrored in
+# tcg/combat.py, change BOTH): attacks whose printed damage requires a
+# specific card on the attacker's OWN board. Enforced only when callers pass
+# `board_ids` (the ids in play on the attacker's side); board_ids=None keeps
+# every legacy call site byte-identical.
+CONDITIONAL_ATTACKS = {980: 675}   # Solrock's attack needs Lunatone in play
+
+
+def _attack_available(attack_id, board_ids) -> bool:
+    req = CONDITIONAL_ATTACKS.get(attack_id)
+    return req is None or board_ids is None or req in board_ids
+
 
 def _can_afford(energies, cost) -> bool:
     """Do a Pokémon's attached energies cover an attack's cost (colorless = any)?"""
@@ -44,7 +56,7 @@ def _can_afford(energies, cost) -> bool:
 UNREACHABLE = 99
 
 
-def _charged_best(attacker, target=None) -> tuple[int, int]:
+def _charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
     """Best attack by damage vs `target` assuming FULL charge: (damage, cost_total).
 
     Unlike _best_damage this skips affordability — it answers "what is this
@@ -60,7 +72,7 @@ def _charged_best(attacker, target=None) -> tuple[int, int]:
         if target is not None else (None, None, 0, [], 1)
     best = (0, 0)
     for aid in attacks:
-        if aid not in _ATK:
+        if aid not in _ATK or not _attack_available(aid, board_ids):
             continue
         dmg, cost = _ATK[aid]
         if dmg <= 0:
@@ -74,14 +86,14 @@ def _charged_best(attacker, target=None) -> tuple[int, int]:
     return best
 
 
-def _turns_to_ready(pokemon, target=None) -> int:
+def _turns_to_ready(pokemon, target=None, board_ids=None) -> int:
     """Attaches still needed before `pokemon` can fire its charged-best attack
     (attach 1/turn). Total cost, not typed: own-type energy pays typed AND
     colorless slots, so the gap is cost_total - attached (off-type costs are
     undercounted — accepted approximation; _can_afford stays the exact check).
     Works on hand cards (no .energies -> 0 attached). UNREACHABLE if it can
     never deal damage."""
-    dmg, cost_total = _charged_best(pokemon, target)
+    dmg, cost_total = _charged_best(pokemon, target, board_ids)
     if dmg <= 0:
         return UNREACHABLE
     return max(0, cost_total - len(getattr(pokemon, "energies", ())))
@@ -106,10 +118,11 @@ def _turns_to_first_ko(attacker, target) -> int:
     return min(UNREACHABLE, max(gap, 1) + hits - 1)
 
 
-def _best_damage(attacker, target, extra_energy: int = 0) -> int:
+def _best_damage(attacker, target, extra_energy: int = 0, board_ids=None) -> int:
     """Max damage `attacker` can deal to `target` this turn (best affordable attack,
     after weakness/resistance vs the attacker's type). extra_energy simulates attaching
-    that many of the attacker's own energy (the '+1 attach enables the attack' case)."""
+    that many of the attacker's own energy (the '+1 attach enables the attack' case).
+    board_ids (optional): own in-play card ids — gates CONDITIONAL_ATTACKS."""
     if attacker is None or target is None or attacker.id not in _CARD:
         return 0
     _, _, atk_type, attacks, _ = _CARD[attacker.id]
@@ -117,7 +130,7 @@ def _best_damage(attacker, target, extra_energy: int = 0) -> int:
     t_weak, t_res, _, _, _ = _CARD.get(target.id, (None, None, 0, [], 1))
     best = 0
     for aid in attacks:
-        if aid not in _ATK:
+        if aid not in _ATK or not _attack_available(aid, board_ids):
             continue
         dmg, cost = _ATK[aid]
         if dmg <= 0 or not _can_afford(energies, cost):
