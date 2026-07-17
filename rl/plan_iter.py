@@ -34,6 +34,7 @@ from torch.utils.data import DataLoader
 
 from cg.api import SelectContext, to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
+from rl.turn_solver import MIN_OVERRIDE_SCORE
 from rl.bc import load_population
 from rl.encoders import (N_CONTEXTS, STATE_V2_DIM, encode_context,
                          encode_option_v2, encode_state_v2)
@@ -75,14 +76,26 @@ def _fresh_seat_state():
             "line": None, "step": 0, "on": False}
 
 
+def _cleared(score) -> bool:
+    """Rung 0'' (2026-07-17): honor the shipping solver's override bar. Lines
+    below MIN_OVERRIDE_SCORE are the M8.1 dev-tier trap — trusting them was
+    measured at 0.314 < 0.362, and cloning them produced Rung 0's 0.33 wall."""
+    return score is not None and score >= MIN_OVERRIDE_SCORE
+
+
 def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
                   deadline, label_deadline, stats):
     """Teacher's labeled action for this prompt + (cands, plan_label) when a
-    fresh plan row was created. Updates st per the anti-aliasing invariant."""
+    fresh plan row was created. Teacher semantics = the SHIPPING solver pilot:
+    a solver line is executed/labeled only when it clears the override bar,
+    else the greedy pilot labels. Invariant: a row carries a non-zero plan IFF
+    its label comes from a bar-clearing line, and the plan derives from that
+    very line (anti-aliasing)."""
     plan_row = None
     if is_main and st["key"] != key:
-        _, line, trail = _solve(obs, deck, deadline)
-        plan = derive_plan(line, trail, obs) if line else None
+        score, line, trail = _solve(obs, deck, deadline)
+        committed = bool(line) and _cleared(score)
+        plan = derive_plan(line, trail, obs) if committed else None
         cands = enumerate_plans(obs)
         idx = match_candidate(plan, cands)
         plan_row = (cands, idx)
@@ -93,8 +106,8 @@ def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
             stats["plan_null"] += 1
         elif cands[idx].needs_gust:
             stats["plan_gust"] += 1
-        st.update(key=key, vec=encode_plan(plan), line=line, step=0,
-                  on=bool(line))
+        st.update(key=key, vec=encode_plan(plan),
+                  line=line if committed else None, step=0, on=committed)
 
     action = None
     if st["key"] == key and st["on"] and st["line"] and \
@@ -107,12 +120,17 @@ def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
             st["on"] = False
             stats["derails"] += 1
     if action is None and len(obs.select.option) >= 2:
-        _, line2, trail2 = _solve(obs, deck, label_deadline)
-        if line2 and _action_valid([int(i) for i in line2[0]], obs):
+        score2, line2, trail2 = _solve(obs, deck, label_deadline)
+        if line2 and _cleared(score2) \
+                and _action_valid([int(i) for i in line2[0]], obs):
             action = [int(i) for i in line2[0]]
             plan2 = derive_plan(line2, trail2, obs)
             st.update(key=key, vec=encode_plan(plan2), line=line2, step=1,
                       on=True)
+        elif st["key"] == key and st["on"] is False and st["vec"].any():
+            # committed plan died with the derail: abandon it so later rows
+            # this turn stay label-consistent (greedy label <-> zero plan)
+            st["vec"] = np.zeros(PLAN_DIM, np.float32)
     if action is None:
         picks = fallback(obs_dict)
         action = [int(i) for i in picks[:obs.select.maxCount]]

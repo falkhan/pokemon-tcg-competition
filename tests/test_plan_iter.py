@@ -144,7 +144,7 @@ class _FakeStudent:
         return 0
 
 
-def _stub_engine(monkeypatch, selected, n_prompts=2):
+def _stub_engine(monkeypatch, selected, n_prompts=2, solve_score=2e5):
     from tests import builders as b
     from tests.fake_cg import OptionType, SelectContext
 
@@ -177,9 +177,13 @@ def _stub_engine(monkeypatch, selected, n_prompts=2):
                                        np.zeros(2, np.int32)))
     # teacher solve: the line says option 1 then option 0
     monkeypatch.setattr(pi, "_solve",
-                        lambda obs_, deck, dl: (1.0, [[1], [0]], [obs, obs]))
+                        lambda obs_, deck, dl: (solve_score, [[1], [0]],
+                                                [obs, obs]))
     monkeypatch.setattr(pi, "derive_plan", lambda line, trail, root: None)
     monkeypatch.setattr(pi, "enumerate_plans", lambda o: [None])
+    # the greedy fallback: stub at its source (imported inside _collect_chunk)
+    monkeypatch.setattr("rl.generic_pilot.make_generic_pilot",
+                        lambda d: lambda od: [0, 1])
     return obs
 
 
@@ -198,6 +202,19 @@ def test_collect_expert_executes_and_labels_the_line(tmp_path, monkeypatch):
     assert shard["labels"].tolist() == [1, 0]    # ...and labeled
     assert shard["plan_labels"].tolist()[0] == 0  # null plan row recorded
     assert shard["n_plan_cands"].tolist() == [1, 0]
+
+
+def test_collect_expert_below_bar_defers_to_greedy(tmp_path, monkeypatch):
+    # Rung 0'': a line below MIN_OVERRIDE_SCORE is NOT executed or labeled —
+    # the greedy fallback labels (option 0 here) and the plan stays null.
+    selected = []
+    _stub_engine(monkeypatch, selected, solve_score=1.0)
+    pi.collect("expert", 1, _pop_file(tmp_path), tmp_path / "out", workers=1)
+    assert selected == [[0], [0]]                # greedy pick, not the line
+    shard = np.load(next((tmp_path / "out").glob("*.npz")))
+    assert shard["labels"].tolist() == [0, 0]
+    assert not shard["plans"].any()              # no committed plan anywhere
+    assert shard["plan_labels"].tolist()[0] == 0  # null plan row
 
 
 def test_collect_ei_student_advances_teacher_labels(tmp_path, monkeypatch):
