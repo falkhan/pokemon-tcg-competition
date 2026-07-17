@@ -394,7 +394,7 @@ def score_siblings(obs, deck: list[int], deadline_s: float | None = None,
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
                dev: bool = False, fixes: frozenset = frozenset(),
-               leaf_value=None) -> list[int] | None:
+               leaf_value=None, dev_margin: float | None = None) -> list[int] | None:
     """Search my remaining turn; return the FIRST action of the best line iff
     it clears the tier's override bar, else None (defer to greedy). The
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
@@ -409,9 +409,10 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     if not best_line:
         return None
     if dev:
+        margin = DEV_OVERRIDE_MARGIN if dev_margin is None else dev_margin
         snap = _root_snapshot(obs)
         if best_score >= score_leaf(snap, obs, dev=True,
-                                    leaf_value=leaf_value) + DEV_OVERRIDE_MARGIN:
+                                    leaf_value=leaf_value) + margin:
             return [int(i) for i in best_line[0]]
         return None
     if best_score >= MIN_OVERRIDE_SCORE:

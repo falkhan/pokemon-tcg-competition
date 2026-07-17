@@ -152,6 +152,10 @@ def make_pilot(spec: OpponentSpec, instance: str):
         from rl.generic_pilot import make_generic_pilot
         from rl.turn_solver import should_solve, solve_turn
         LAMBDA = 3000.0
+        # Calibrated 2026-07-18 on osv3_setupval2's held-out pairs (scratchpad
+        # calibrate_margin.py): smallest LAMBDA*|dV| gap with ordering acc
+        # >= 0.80 (measured 0.804 at coverage 0.84). One value, no sweep.
+        VS_MARGIN = 200.0
         ckpt = Path(spec[1])
         if not ckpt.is_absolute() and not ckpt.exists():
             ckpt = ROOT / ckpt
@@ -191,7 +195,8 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 cell["me"] = obs.current.yourIndex
                 try:
                     pick = solve_turn(obs, ids, dev=True,
-                                      leaf_value=leaf_value)
+                                      leaf_value=leaf_value,
+                                      dev_margin=VS_MARGIN)
                 except Exception:
                     pick = None
                 if pick is not None:
