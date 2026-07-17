@@ -1,17 +1,43 @@
 #!/usr/bin/env bash
-# M13 setup-state safari — VDI-friendly self-play collection with a live bar.
+# M13 setup-state safari — self-play collection with a live bar.
 #
-#   ./m13_collect.sh [games] [workers] [seed]
+#   ./m13_collect.sh [--profile laptop|box] [--games N] [--workers N]
+#                    [--seed N] [--out DIR]
 #
-# Defaults: 10000 games, 6 workers (leaves ~10 cores for your Citrix VDI),
-# seed 1 (batch 1 used seed 0). Shards append into data/setupval — batches
-# stack safely. Ctrl-C stops the safari cleanly (finished shards are kept).
+# Profiles set the defaults; every flag overrides them individually:
+#   laptop (default): workers = cores/4 (min 2), nice -19 — your Citrix VDI
+#                     and everything else keep scheduling priority.
+#   box:              workers = 3*cores/4 (min 4), nice -10 — the stationary
+#                     machine, still polite to concurrent jobs.
+# Batches STACK (shards append; seed bumps per batch by default), so chunked
+# runs across a day are fine. Ctrl-C stops cleanly; finished shards kept.
 set -u
 
-GAMES=${1:-10000}
-WORKERS=${2:-6}
-SEED=${3:-1}
+CORES=$(nproc 2>/dev/null || echo 8)
+PROFILE=laptop
+GAMES=10000
+WORKERS=""
+SEED=1
 OUT=data/setupval
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --profile) PROFILE=$2; shift 2 ;;
+    --games)   GAMES=$2;   shift 2 ;;
+    --workers) WORKERS=$2; shift 2 ;;
+    --seed)    SEED=$2;    shift 2 ;;
+    --out)     OUT=$2;     shift 2 ;;
+    -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown arg: $1 (see --help)"; exit 2 ;;
+  esac
+done
+
+case "$PROFILE" in
+  laptop) DEF_WORKERS=$(( CORES / 4 > 2 ? CORES / 4 : 2 ));  NICENESS=19 ;;
+  box)    DEF_WORKERS=$(( CORES * 3 / 4 > 4 ? CORES * 3 / 4 : 4 )); NICENESS=10 ;;
+  *) echo "unknown profile: $PROFILE (laptop|box)"; exit 2 ;;
+esac
+WORKERS=${WORKERS:-$DEF_WORKERS}
 LOG=runs/m13_collect_s${SEED}.log
 PY=.venv/bin/python
 
@@ -32,13 +58,14 @@ BALL=("◐" "◓" "◑" "◒")
 
 echo ""
 echo "${BOLD}${RED}⚡ M13 SETUP-STATE SAFARI ⚡${RST}"
-echo "${DIM}   ${GAMES} games · ${WORKERS} workers (VDI-friendly) · seed ${SEED} → ${OUT}${RST}"
+echo "${DIM}   ${PROFILE} profile · ${GAMES} games · ${WORKERS}/${CORES} workers at nice -${NICENESS} · seed ${SEED} → ${OUT}${RST}"
+echo "${DIM}   Tip: batches stack — chunked runs (--games 2500) are fine.${RST}"
 echo ""
 
 mkdir -p runs "$OUT"
 rm -f "$OUT"/.progress_w*
 
-"$PY" -m rl.setup_value collect --games "$GAMES" --out "$OUT" \
+nice -n "$NICENESS" "$PY" -m rl.setup_value collect --games "$GAMES" --out "$OUT" \
       --workers "$WORKERS" --seed "$SEED" >"$LOG" 2>&1 &
 PID=$!
 trap 'echo ""; echo "${YEL}✋ Safari interrupted — finished shards are safe in ${OUT}${RST}"; kill $PID 2>/dev/null; exit 130' INT
