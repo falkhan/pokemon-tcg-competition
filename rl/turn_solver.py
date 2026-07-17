@@ -149,9 +149,12 @@ def _dev_facts(me, op_active) -> tuple[float, int, int, int, int]:
                     and _best_damage(p, op_active) > 0)
     else:
         race, ready = RACE_CAP_TURNS, 0
-    bench = sum(1 for p in me.bench if p is not None)
+    bench = sum(1 for p in (me.bench or []) if p is not None)
     evos = sum(1 for p in board if p.id not in _IS_BASIC)
-    hand = len([c for c in me.hand if c is not None])
+    # hand is None in search observations where this side is no longer the
+    # observer (turn-passed leaves) — found by M12 score_siblings; the live
+    # dev tier never surfaced it because make_solver_pilot swallows the crash.
+    hand = len([c for c in (me.hand or []) if c is not None])
     return race, ready, bench, evos, hand
 
 
@@ -342,6 +345,38 @@ def solve_turn_line(obs, deck: list[int], deadline_s: float | None = None,
         return _dfs(root, snap, 0, deadline, budget, dev, fixes)
     finally:
         search_end()
+
+
+def score_siblings(obs, deck: list[int], deadline_s: float | None = None,
+                   dev: bool = True,
+                   max_depth: int | None = None, max_nodes: int | None = None,
+                   ) -> list[tuple[list[int], float]]:
+    """M12 ranker labels: per-sibling deep scores at the root prompt. For each
+    beam candidate: step one ply, _dfs the remainder (shared deadline/budget),
+    return [(action, best_score)] aligned to the beam order. dev=True by
+    default — the dev-bonus terms are the ranking signal on non-lethal turns
+    (as LABELS, margin-filtered downstream; never as a live override)."""
+    if deadline_s is None:
+        deadline_s = SOLVE_DEADLINE_S
+    snap = _root_snapshot(obs)
+    deadline = perf_counter() + deadline_s
+    budget = {"nodes": 0,
+              "max_depth": MAX_DEPTH if max_depth is None else max_depth,
+              "max_nodes": MAX_NODES if max_nodes is None else max_nodes}
+    root = _open_search(obs, deck)
+    out = []
+    try:
+        for action in _candidate_actions(root.observation):
+            if budget["nodes"] >= budget["max_nodes"] \
+                    or perf_counter() >= deadline:
+                break
+            budget["nodes"] += 1
+            child = search_step(root.searchId, action)
+            score, _, _ = _dfs(child, snap, 1, deadline, budget, dev)
+            out.append(([int(i) for i in action], float(score)))
+    finally:
+        search_end()
+    return out
 
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,

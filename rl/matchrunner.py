@@ -68,7 +68,7 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model", "ext") else spec[1]
+    return spec[2] if spec[0] in ("rule", "model", "ext", "rank") else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -81,6 +81,8 @@ def parse_spec(s: str) -> OpponentSpec:
         return (kind, parts[1])
     if kind == "ext" and len(parts) == 3:
         return ("ext", parts[1], parts[2])
+    if kind == "rank" and len(parts) == 3:
+        return ("rank", parts[1], parts[2])
     if kind == "mcts" and len(parts) == 4:
         return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
@@ -130,6 +132,71 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 raise ValueError(f"no callable agent found in {main_py}")
             fn = candidates[-1]
         return fn, resolve_deck(spec[2])
+    if kind == "rank":
+        # M12 consumer: the solver pilot, plus a CONFIDENT ranker override on
+        # single-pick MAIN prompts the solver tiers pass on. The net was
+        # trained to predict widened-search sibling preferences from the root
+        # prompt — inference is one forward pass, no engine calls. Overrides
+        # only when top1-top2 logit gap >= CONF_MARGIN (no sweep), restricted
+        # to the greedy beam (unbeamed options were never labeled).
+        import numpy as np
+        import torch
+        from cg.api import SelectContext, to_observation_class
+        from rl.encoders import (encode_context, encode_option_v2,
+                                 encode_state_v2)
+        from rl.generic_pilot import make_generic_pilot
+        from rl.plan import PLAN_DIM
+        from rl.policy import OptionScorerV3
+        from rl.turn_solver import _candidate_actions, should_solve, solve_turn
+        CONF_MARGIN = 1.0
+        ckpt = Path(spec[1])
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt
+        net = OptionScorerV3()
+        net.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        net.eval()
+        ids = resolve_deck(spec[2])
+        inner = make_generic_pilot(ids)
+
+        def fnr(od):
+            obs = to_observation_class(od)
+            if obs.select is None:
+                return ids
+            if should_solve(obs):
+                try:
+                    pick = solve_turn(obs, ids)
+                except Exception:
+                    pick = None
+                if pick is not None:
+                    return pick
+            if obs.select.context == SelectContext.MAIN \
+                    and obs.select.maxCount == 1 \
+                    and len(obs.select.option) >= 2:
+                beam = [a[0] for a in _candidate_actions(obs) if len(a) == 1]
+                if len(beam) >= 2:
+                    num, sids = encode_state_v2(obs.current, ids)
+                    sc = np.concatenate(
+                        [num, encode_context(obs.select.context)]
+                    ).astype(np.float32)
+                    pairs = [encode_option_v2(o, obs)
+                             for o in obs.select.option]
+                    opts = np.stack([x for x, _ in pairs]).astype(np.float32)
+                    oids = np.stack([i for _, i in pairs])
+                    with torch.no_grad():
+                        logits, _ = net(
+                            torch.from_numpy(sc).unsqueeze(0),
+                            torch.zeros(1, PLAN_DIM),
+                            torch.from_numpy(sids).long().unsqueeze(0),
+                            torch.from_numpy(opts).unsqueeze(0),
+                            torch.from_numpy(oids).long().unsqueeze(0))
+                    l = logits.squeeze(0)
+                    ranked = sorted(beam, key=lambda i: float(l[i]),
+                                    reverse=True)
+                    if float(l[ranked[0]]) - float(l[ranked[1]]) \
+                            >= CONF_MARGIN:
+                        return [int(ranked[0])]
+            return inner(od)
+        return fnr, ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])
