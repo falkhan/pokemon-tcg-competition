@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # M13 setup-state safari — self-play collection with a live bar.
 #
-#   ./m13_collect.sh [--profile laptop|box] [--games N] [--workers N]
-#                    [--seed N] [--out DIR]
+#   ./m13_collect.sh [--profile laptop|box] [--games N] [--target N]
+#                    [--workers N] [--seed N] [--out DIR]
+#
+# --target N collects only what's MISSING to reach N total games in the
+# dataset (counts existing shards first) — the set-and-forget mode for
+# chunked days: ./m13_collect.sh --target 10000, rerun until it says done.
 #
 # Profiles set the defaults; every flag overrides them individually:
 #   laptop (default): workers = cores/4 (min 2), nice -19 — your Citrix VDI
@@ -13,9 +17,15 @@
 # runs across a day are fine. Ctrl-C stops cleanly; finished shards kept.
 set -u
 
+BOLD=$(tput bold 2>/dev/null || true); DIM=$(tput dim 2>/dev/null || true)
+RED=$(tput setaf 1 2>/dev/null || true); YEL=$(tput setaf 3 2>/dev/null || true)
+CYN=$(tput setaf 6 2>/dev/null || true); RST=$(tput sgr0 2>/dev/null || true)
+
 CORES=$(nproc 2>/dev/null || echo 8)
+PY=.venv/bin/python
 PROFILE=laptop
 GAMES=10000
+TARGET=""
 WORKERS=""
 SEED=""
 OUT=data/setupval
@@ -25,6 +35,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --profile) PROFILE=$2; shift 2 ;;
     --games)   GAMES=$2;   shift 2 ;;
+    --target)  TARGET=$2;  shift 2 ;;
     --workers) WORKERS=$2; shift 2 ;;
     --seed)    SEED=$2;    shift 2 ;;
     --out)     OUT=$2;     shift 2 ;;
@@ -45,12 +56,30 @@ if [ -z "$SEED" ]; then
   SEED=$(( $(ls "$OUT"/shard_* 2>/dev/null | wc -l) + 1 ))
 fi
 EXISTING=$(ls "$OUT"/shard_* 2>/dev/null | wc -l)
+if [ "$EXISTING" -gt 0 ]; then
+  HAVE=$("$PY" - <<PYEOF 2>/dev/null || echo "0 0"
+import numpy as np, glob
+g = s = 0
+for f in glob.glob("$OUT/shard_*"):
+    ids = np.load(f)["game_ids"]
+    g += len(set(ids.tolist())); s += len(ids)
+print(g, s)
+PYEOF
+)
+  HAVE_GAMES=${HAVE% *}; HAVE_STATES=${HAVE#* }
+else
+  HAVE_GAMES=0; HAVE_STATES=0
+fi
+if [ -n "$TARGET" ]; then
+  GAMES=$(( TARGET - HAVE_GAMES ))
+  if [ "$GAMES" -le 0 ]; then
+    echo ""
+    echo "${BOLD}🏆 Pokédex complete!${RST} Dataset already holds ${HAVE_GAMES} games (target ${TARGET})."
+    echo "${DIM}   Nothing to collect — go train: see --help's next-step command.${RST}"
+    exit 0
+  fi
+fi
 LOG=runs/m13_collect_s${SEED}.log
-PY=.venv/bin/python
-
-BOLD=$(tput bold 2>/dev/null || true); DIM=$(tput dim 2>/dev/null || true)
-RED=$(tput setaf 1 2>/dev/null || true); YEL=$(tput setaf 3 2>/dev/null || true)
-CYN=$(tput setaf 6 2>/dev/null || true); RST=$(tput sgr0 2>/dev/null || true)
 
 FLAVOR=(
   "Pikachu is charging up the value head…"
@@ -66,7 +95,8 @@ BALL=("◐" "◓" "◑" "◒")
 echo ""
 echo "${BOLD}${RED}⚡ M13 SETUP-STATE SAFARI ⚡${RST}"
 echo "${DIM}   ${PROFILE} profile · ${GAMES} games · ${WORKERS}/${CORES} workers at nice -${NICENESS} · seed ${SEED} → ${OUT}${RST}"
-echo "${DIM}   Dataset already holds ${EXISTING} shard(s) — this batch stacks on top.${RST}"
+echo "${DIM}   Dataset so far: ${HAVE_GAMES} games / ${HAVE_STATES} states in ${EXISTING} shard(s) — this batch stacks on top.${RST}"
+[ -n "$TARGET" ] && echo "${DIM}   Target ${TARGET}: collecting the missing ${GAMES}.${RST}"
 echo ""
 
 mkdir -p runs "$OUT"
