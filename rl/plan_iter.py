@@ -55,22 +55,31 @@ WIDE_DEPTH = 10            # (inference default: 8)
 VS_LAMBDA = 3000.0
 VS_MARGIN = 200.0
 VS_MAX_TURN = 32
+# M18a: ei-mode rows where the student's executed action departs from the
+# teacher's label carry this weight (disagreement-weighted DAgger).
+EI_DISAGREE_WEIGHT = 10.0
 # Runaway-game guard (found 2026-07-17: a buddy/rule matchup can stall
 # forever; solver mirrors never do, so M11/M13 never hit it). Games past the
 # cap are scored as draws. Normal games run well under 300 prompts.
 MAX_GAME_DECISIONS = 600
 
 
-def _value_solve_factory(vnet, cell):
+def _value_solve_factory(vnet, cell, stats, vs_margin=VS_MARGIN):
     """Per-worker value-guided solver for SETUP-plan commits. Returns
     value_solve(obs, deck) -> (line, trail) when a line beats stand-pat by
     the calibrated margin (else (None, None))."""
     from rl.turn_solver import _root_snapshot, score_leaf, solve_turn_line
     ctx_main = encode_context(SelectContext.MAIN)
+    # M18 fix: the net's id width picks the state encoder. M17 fed 12-id v2
+    # states to the 20-id hand-aware net -> RuntimeError on every call,
+    # silently swallowed -> SETUP 0 across the whole 10k collection.
+    enc_state = (encode_state_v3
+                 if getattr(vnet, "n_state_ids", None) == N_STATE_IDS_V3
+                 else encode_state_v2)
 
     def leaf_value_for(deck):
         def leaf_value(obs):
-            num, sids = encode_state_v2(obs.current, deck)
+            num, sids = enc_state(obs.current, deck)
             sc = np.concatenate([num, ctx_main]).astype(np.float32)
             with torch.no_grad():
                 se = vnet.embedding(
@@ -89,15 +98,26 @@ def _value_solve_factory(vnet, cell):
             return None, None
         cell["me"] = obs.current.yourIndex
         lv = leaf_value_for(deck)
+        stats["vs_calls"] += 1
         try:
             score, line, trail = solve_turn_line(
                 obs, deck, deadline_s=0.5, dev=True, leaf_value=lv)
             snap = _root_snapshot(obs)
-            if line and score >= score_leaf(snap, obs, dev=True,
-                                            leaf_value=lv) + VS_MARGIN:
-                return line, trail
+            if line:
+                margin = score - score_leaf(snap, obs, dev=True,
+                                            leaf_value=lv)
+                if len(stats["vs_margins"]) < 500:
+                    stats["vs_margins"].append(float(margin))
+                if margin >= vs_margin:
+                    return line, trail
         except Exception:
-            pass
+            # Worker crash-discipline (as in _solve) — but COUNTED, and the
+            # first failure prints: M17's silent swallow hid the encoder bug.
+            stats["vs_errors"] += 1
+            if stats["vs_errors"] == 1:
+                import traceback
+                print("[value-solve] first error:", flush=True)
+                traceback.print_exc()
         return None, None
     return value_solve
 
@@ -203,7 +223,7 @@ def _collect_chunk(args):
     everything it needs is re-imported/rebuilt here."""
     (mode, lo, hi, decks_file, out_dir, checkpoint, tau, dirichlet,
      deadline, label_deadline, shard_size, seed, worker, opponents,
-     value_ckpt) = args
+     value_ckpt, vs_margin) = args
     import random
 
     from rl.generic_pilot import make_generic_pilot
@@ -214,24 +234,39 @@ def _collect_chunk(args):
     np_rng = np.random.default_rng(seed * 10007 + worker)
     torch.manual_seed(seed * 10007 + worker)
 
+    from rl.policy import option_dim_of
+
     student = None
     if mode == "ei":
         ckpt = Path(checkpoint)
         if not ckpt.is_absolute() and not ckpt.exists():
             ckpt = ROOT / ckpt
-        student = OptionScorerV3()
-        student.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        sdict = torch.load(ckpt, map_location="cpu")
+        skw = (dict(n_state_ids=_n_ids_of(sdict),
+                    option_dim=option_dim_of(sdict))
+               if "state_enc.0.weight" in sdict else {})   # {} = test stubs
+        student = OptionScorerV3(**skw)
+        student.load_state_dict(sdict)
         student.eval()
+
+    stats = {"games": 0, "decisions": 0, "plan_rows": 0, "plan_missed": 0,
+             "plan_null": 0, "plan_gust": 0, "derails": 0, "wins": [0, 0, 0],
+             "kill_plans": 0, "setup_plans": 0, "timeouts": 0, "opp": {},
+             "vs_calls": 0, "vs_errors": 0, "vs_margins": []}
 
     value_solve = None
     if value_ckpt:
         vp = Path(value_ckpt)
         if not vp.is_absolute() and not vp.exists():
             vp = ROOT / vp
-        vnet = OptionScorerV3()
-        vnet.load_state_dict(torch.load(vp, map_location="cpu"))
+        vdict = torch.load(vp, map_location="cpu")
+        vkw = (dict(n_state_ids=_n_ids_of(vdict),
+                    option_dim=option_dim_of(vdict))
+               if "state_enc.0.weight" in vdict else {})   # {} = test stubs
+        vnet = OptionScorerV3(**vkw)
+        vnet.load_state_dict(vdict)
         vnet.eval()
-        value_solve = _value_solve_factory(vnet, {"me": 0})
+        value_solve = _value_solve_factory(vnet, {"me": 0}, stats, vs_margin)
 
     opp_pilots = {}          # spec string -> (fn, deck_ids), built lazily
     def _opponent(spec_str, instance):
@@ -242,12 +277,9 @@ def _collect_chunk(args):
 
     columns = ("states", "plans", "state_ids", "options", "option_ids",
                "n_options", "labels", "game_ids", "results", "deck_idx",
-               "plan_cands", "n_plan_cands", "plan_labels")
+               "plan_cands", "n_plan_cands", "plan_labels", "weights")
     shard = {k: [] for k in columns}
     shard_idx = sum(1 for _ in out.glob(f"shard_w{worker:02d}_*.npz"))
-    stats = {"games": 0, "decisions": 0, "plan_rows": 0, "plan_missed": 0,
-             "plan_null": 0, "plan_gust": 0, "derails": 0, "wins": [0, 0, 0],
-             "kill_plans": 0, "setup_plans": 0, "timeouts": 0, "opp": {}}
     t0 = perf_counter()
 
     def flush():
@@ -271,6 +303,7 @@ def _collect_chunk(args):
                         np.zeros((0, PLAN_DIM), np.float32)),
             n_plan_cands=np.array(shard["n_plan_cands"], dtype=np.int32),
             plan_labels=np.array(shard["plan_labels"], dtype=np.int32),
+            weights=np.array(shard["weights"], dtype=np.float32),
         )
         shard_idx += 1
         for v in shard.values():
@@ -348,6 +381,7 @@ def _collect_chunk(args):
                 cands_mat = np.stack([encode_plan(c) for c in cands]
                                      ).astype(np.float32)
 
+            row_weight = 1.0
             if mode == "ei":
                 if plan_row is not None:      # student picks ITS OWN plan here
                     s_idx = student.act_plan(state_ctx, state_ids, cands_mat,
@@ -361,12 +395,17 @@ def _collect_chunk(args):
                 # EI round 1 measured 0.314): exploration lives at the PLAN
                 # level only — per-prompt Gumbel noise makes turns incoherent,
                 # the exact failure mode plan conditioning exists to prevent.
-                exec_action = student.act(state_ctx, s_vec, state_ids, opts,
+                # M16: a pre-option-identity student consumes the legacy
+                # option slice (recorded rows keep the full new encoding).
+                s_dim = getattr(student, "option_dim", opts.shape[1])
+                s_opts = opts[:, :s_dim] if opts.shape[1] > s_dim else opts
+                exec_action = student.act(state_ctx, s_vec, state_ids, s_opts,
                                           opt_ids, obs.select.maxCount,
                                           greedy=True)
                 exec_action = [int(i) for i in exec_action]
                 if exec_action != label_action:   # off the teacher's line now
                     seat_state[player]["on"] = False
+                    row_weight = EI_DISAGREE_WEIGHT   # M18a: DAgger weighting
             else:
                 exec_action = label_action
 
@@ -374,7 +413,7 @@ def _collect_chunk(args):
                               if seat_state[player]["key"] == key
                               else np.zeros(PLAN_DIM, np.float32),
                               state_ids, opts, opt_ids, label_action[0],
-                              player, cands_mat, plan_label))
+                              player, cands_mat, plan_label, row_weight))
             stats["decisions"] += 1
             obs_dict = battle_select(exec_action)
 
@@ -390,7 +429,7 @@ def _collect_chunk(args):
             o[1] += 1
 
         for (state_ctx, plan_vec, state_ids, opts, opt_ids, label, player,
-             cands_mat, plan_label) in game_rows:
+             cands_mat, plan_label, row_weight) in game_rows:
             shard["states"].append(state_ctx)
             shard["plans"].append(plan_vec)
             shard["state_ids"].append(state_ids)
@@ -405,6 +444,7 @@ def _collect_chunk(args):
             shard["plan_cands"].append(cands_mat)
             shard["n_plan_cands"].append(len(cands_mat))
             shard["plan_labels"].append(plan_label)
+            shard["weights"].append(row_weight)
 
         if (game - lo + 1) % shard_size == 0:
             flush()
@@ -425,7 +465,8 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             label_deadline: float = 0.5, workers: int = 12,
             shard_size: int = 200, seed: int = 0,
             opponents: list | None = None,
-            value_ckpt: str | None = None) -> dict:
+            value_ckpt: str | None = None,
+            vs_margin: float = VS_MARGIN) -> dict:
     assert mode in ("expert", "ei")
     assert mode != "ei" or checkpoint, "--mode ei needs --checkpoint"
     out_dir = Path(out_dir)
@@ -440,7 +481,7 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             break
         jobs.append((mode, lo, hi, str(decks_file), str(out_dir), checkpoint,
                      tau, dirichlet, deadline, label_deadline, shard_size,
-                     seed, w, opponents, value_ckpt))
+                     seed, w, opponents, value_ckpt, vs_margin))
         lo = hi
 
     if len(jobs) == 1:                                # tests / smoke path
@@ -452,7 +493,7 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
     agg = {k: sum(r[k] for r in results)
            for k in ("games", "decisions", "plan_rows", "plan_missed",
                      "plan_null", "plan_gust", "derails", "kill_plans",
-                     "setup_plans", "timeouts")}
+                     "setup_plans", "timeouts", "vs_calls", "vs_errors")}
     agg["wins"] = [sum(r["wins"][i] for r in results) for i in range(3)]
     agg["opp"] = {}
     for r in results:
@@ -469,6 +510,20 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
           f"kill {agg['kill_plans']}  SETUP {agg['setup_plans']}  "
           f"gust {agg['plan_gust'] / rows:.2f}  derails {agg['derails']}",
           flush=True)
+    if value_ckpt:
+        margins = np.array([m for r in results for m in r["vs_margins"]],
+                           dtype=np.float32)
+        agg["vs_margins"] = margins.tolist()
+        pct = ("p10/p50/p90/p99 = " + "/".join(
+                   f"{np.percentile(margins, q):.0f}" for q in (10, 50, 90, 99))
+               if len(margins) else "n/a (no solved lines)")
+        print(f"value-solve: calls {agg['vs_calls']}  "
+              f"errors {agg['vs_errors']}  commits {agg['setup_plans']}  "
+              f"margin {pct}  (threshold {vs_margin:.0f})", flush=True)
+        if agg["setup_plans"] == 0:
+            print("WARNING: SETUP=0 — a value ckpt was supplied but no setup "
+                  "plan was ever committed (M17 failure signature; check "
+                  "vs_errors and the margin distribution)", flush=True)
     for k, (w_, n_) in sorted(agg["opp"].items()):
         print(f"  vs {k}: teacher seat {w_}/{n_} ({w_ / max(1, n_):.2f})",
               flush=True)
@@ -485,7 +540,7 @@ class BCDatasetV3(torch.utils.data.Dataset):
     def __init__(self, data_dir: Path | list):
         cols = {k: [] for k in ("states", "state_ids", "options", "option_ids",
                                 "n_options", "labels", "game_ids", "results",
-                                "deck_idx")}
+                                "deck_idx", "weights")}
         plan_cols = {"plans": [], "plan_cands": [], "n_plan_cands": [],
                      "plan_labels": []}
         starts_list, cstarts_list = [], []
@@ -499,8 +554,14 @@ class BCDatasetV3(torch.utils.data.Dataset):
                 starts = np.cumsum(shard["n_options"]) - shard["n_options"]
                 starts_list.append(starts + option_base)
                 cols["game_ids"].append(shard["game_ids"] + game_base)
+                # M18a shim: weightless shards (all pre-M18 data) load as
+                # uniformly weighted — same spirit as the plan-column shim.
+                cols["weights"].append(
+                    shard["weights"].astype(np.float32)
+                    if "weights" in shard.files
+                    else np.ones(n, np.float32))
                 for k in cols:
-                    if k != "game_ids":
+                    if k not in ("game_ids", "weights"):
                         cols[k].append(shard[k])
                 if "plans" in shard.files:
                     plan_cols["plans"].append(shard["plans"])
@@ -528,6 +589,15 @@ class BCDatasetV3(torch.utils.data.Dataset):
             cols["state_ids"] = [
                 np.pad(a, ((0, 0), (0, wmax - a.shape[1])))
                 for a in cols["state_ids"]]
+        # M16 pad shim: mixed option widths (legacy vs option-identity) — pad
+        # legacy shards' options with zeros ("no identity info"; their PLAY
+        # FEAT blocks are already blank, the same semantics).
+        owidths = {a.shape[1] for a in cols["options"]}
+        if len(owidths) > 1:
+            owmax = max(owidths)
+            cols["options"] = [
+                np.pad(a, ((0, 0), (0, owmax - a.shape[1])))
+                for a in cols["options"]]
         for k, v in cols.items():
             setattr(self, k, np.concatenate(v))
         for k, v in plan_cols.items():
@@ -544,7 +614,8 @@ class BCDatasetV3(torch.utils.data.Dataset):
         return (self.states[i], self.plans[i], self.state_ids[i],
                 self.options[s:s + n], self.option_ids[s:s + n],
                 self.labels[i], self.results[i], self.deck_idx[i],
-                self.plan_cands[cs:cs + cn], self.plan_labels[i])
+                self.plan_cands[cs:cs + cn], self.plan_labels[i],
+                self.weights[i])
 
 
 def collate_v3(batch):
@@ -564,9 +635,10 @@ def collate_v3(batch):
     plan_cands = torch.zeros(B, maxM, PLAN_DIM)
     plan_valid = torch.zeros(B, maxM, dtype=torch.bool)
     plan_labels = torch.full((B,), -1, dtype=torch.long)
+    weights = torch.ones(B, dtype=torch.float32)
 
     for i, (state, plan, sids, menu, oids, label, result, didx,
-            cands, plabel) in enumerate(batch):
+            cands, plabel, weight) in enumerate(batch):
         n = menu.shape[0]
         states[i] = torch.from_numpy(state)
         plans[i] = torch.from_numpy(plan)
@@ -582,9 +654,10 @@ def collate_v3(batch):
             plan_cands[i, :m] = torch.from_numpy(cands)
             plan_valid[i, :m] = True
         plan_labels[i] = int(plabel)
+        weights[i] = float(weight)
 
     return (states, plans, state_ids, options, option_ids, valid, labels,
-            results, deck_idx, plan_cands, plan_valid, plan_labels)
+            results, deck_idx, plan_cands, plan_valid, plan_labels, weights)
 
 
 def load_v3_into_v3h(v3_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
@@ -625,6 +698,31 @@ def load_v2_into_v3(v2_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     return model
 
 
+def load_v3h_into_v3o(v3h_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
+    """M16 warm start: pre-option-identity weights into an OPTION_V3_DIM net.
+    option_enc.0's new numeric input columns are ZERO-init and its embedding
+    column block shifts right, so v3o(legacy-encoded options padded with
+    zeros, PLAY ids 0) == old net exactly (warm-start invariant, fourth use).
+    NB the invariant holds for MASKED identity, not live encodings: real PLAY
+    ids light up already-trained embedding rows through existing weights —
+    intended (that pathway is the warm start's head start), just not identity."""
+    from rl.encoders import EMBED_DIM, N_OPTION_IDS, OPTION_V3_DIM
+    old_opt = v3h_sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * EMBED_DIM
+    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=_n_ids_of(v3h_sd),
+                           option_dim=OPTION_V3_DIM)
+    sd = model.state_dict()
+    for k, v in v3h_sd.items():
+        if k == "option_enc.0.weight":
+            new = torch.zeros_like(sd[k])
+            new[:, :old_opt] = v[:, :old_opt]
+            new[:, OPTION_V3_DIM:] = v[:, old_opt:]
+            sd[k] = new
+        else:
+            sd[k] = v
+    model.load_state_dict(sd)
+    return model
+
+
 def _n_ids_of(sd: dict) -> int:
     """Infer a v3 checkpoint's state-id count from its first Linear width."""
     from rl.encoders import EMBED_DIM
@@ -634,6 +732,7 @@ def _n_ids_of(sd: dict) -> int:
 
 def train(data_dirs: list, name: str, init: str | None = None,
           init_v2: str | None = None, init_v3h: str | None = None,
+          init_v3o: str | None = None,
           epochs: int = 8, lr: float = 3e-4,
           batch_size: int = 256, plan_weight: float = 1.0) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
@@ -661,10 +760,18 @@ def train(data_dirs: list, name: str, init: str | None = None,
         return p if p.is_absolute() or p.exists() else ROOT / p
 
     if init is not None:
+        from rl.policy import option_dim_of
         sdict = torch.load(_resolve(init), map_location="cpu")
-        model = OptionScorerV3(n_state_ids=_n_ids_of(sdict))
+        model = OptionScorerV3(n_state_ids=_n_ids_of(sdict),
+                               option_dim=option_dim_of(sdict))
         model.load_state_dict(sdict)
-        print(f"warm-start from v3 {init} (n_state_ids={model.n_state_ids})")
+        print(f"warm-start from v3 {init} (n_state_ids={model.n_state_ids}, "
+              f"option_dim={model.option_dim})")
+    elif init_v3o is not None:
+        model = load_v3h_into_v3o(torch.load(_resolve(init_v3o),
+                                             map_location="cpu"))
+        print(f"warm-start from pre-option-identity v3 {init_v3o} "
+              "(option-identity columns zero-init)")
     elif init_v3h is not None:
         model = load_v3_into_v3h(torch.load(_resolve(init_v3h),
                                             map_location="cpu"))
@@ -675,7 +782,9 @@ def train(data_dirs: list, name: str, init: str | None = None,
                                            map_location="cpu"))
         print(f"warm-start from v2 {init_v2} (plan columns zero-init)")
     else:
-        model = OptionScorerV3()
+        from rl.encoders import N_STATE_IDS_V3, OPTION_V3_DIM
+        model = OptionScorerV3(n_state_ids=N_STATE_IDS_V3,
+                               option_dim=OPTION_V3_DIM)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_acc = 0.0
 
@@ -685,7 +794,7 @@ def train(data_dirs: list, name: str, init: str | None = None,
         with torch.no_grad():
             for batch in val_dl:
                 (states, plans, sids, options, oids, valid, labels, _, _,
-                 cands, cvalid, plabels) = batch
+                 cands, cvalid, plabels, _) = batch
                 logits, _ = model(states, plans, sids, options, oids)
                 logits = logits.masked_fill(~valid, -1e9)
                 correct += (logits.argmax(dim=1) == labels).sum().item()
@@ -708,11 +817,15 @@ def train(data_dirs: list, name: str, init: str | None = None,
         running = 0.0
         for batch in train_dl:
             (states, plans, sids, options, oids, valid, labels, results, _,
-             cands, cvalid, plabels) = batch
+             cands, cvalid, plabels, weights) = batch
             opt.zero_grad()
             logits, value = model(states, plans, sids, options, oids)
             logits = logits.masked_fill(~valid, -1e9)
-            loss = F.cross_entropy(logits, labels) \
+            # M18a: per-row disagreement weights on the policy CE only —
+            # value/plan targets aren't better on disagreement rows, and an
+            # unweighted evaluate() keeps val_acc comparable across milestones.
+            ce = F.cross_entropy(logits, labels, reduction="none")
+            loss = (ce * weights).sum() / weights.sum() \
                 + 0.5 * F.huber_loss(value, results)
             mask = plabels >= 0
             if mask.any():
@@ -730,6 +843,87 @@ def train(data_dirs: list, name: str, init: str | None = None,
             (ROOT / "checkpoints").mkdir(exist_ok=True)
             torch.save(model.state_dict(),
                        ROOT / "checkpoints" / f"{name}.pt")
+
+
+# ------------------------------------------------------------- M18a relabel
+
+def _student_agreement(model, shard, batch_size: int = 512) -> np.ndarray:
+    """Per-row bool mask: does the model's greedy argmax match the stored
+    teacher label? Batched forward over the ragged option slices — the same
+    masked-argmax math as act()/evaluate(). Narrow legacy columns are
+    zero-padded for inference only (the BCDatasetV3 shim semantics)."""
+    n = len(shard["labels"])
+    n_opts = shard["n_options"].astype(np.int64)
+    starts = np.cumsum(n_opts) - n_opts
+    states = shard["states"].astype(np.float32)
+    plans = (shard["plans"] if "plans" in shard
+             else np.zeros((n, PLAN_DIM))).astype(np.float32)
+    sids = shard["state_ids"].astype(np.int64)
+    if sids.shape[1] < model.n_state_ids:
+        sids = np.pad(sids, ((0, 0), (0, model.n_state_ids - sids.shape[1])))
+    opts = shard["options"].astype(np.float32)
+    if opts.shape[1] < model.option_dim:
+        opts = np.pad(opts, ((0, 0), (0, model.option_dim - opts.shape[1])))
+    oids = shard["option_ids"].astype(np.int64)
+
+    agree = np.zeros(n, dtype=bool)
+    with torch.no_grad():
+        for lo in range(0, n, batch_size):
+            hi = min(lo + batch_size, n)
+            maxN = int(n_opts[lo:hi].max())
+            menu = torch.zeros(hi - lo, maxN, opts.shape[1])
+            menu_ids = torch.zeros(hi - lo, maxN, oids.shape[1],
+                                   dtype=torch.long)
+            valid = torch.zeros(hi - lo, maxN, dtype=torch.bool)
+            for i in range(hi - lo):
+                s, m = starts[lo + i], n_opts[lo + i]
+                menu[i, :m] = torch.from_numpy(opts[s:s + m])
+                menu_ids[i, :m] = torch.from_numpy(oids[s:s + m])
+                valid[i, :m] = True
+            logits, _ = model(torch.from_numpy(states[lo:hi]),
+                              torch.from_numpy(plans[lo:hi]),
+                              torch.from_numpy(sids[lo:hi]),
+                              menu, menu_ids)
+            logits = logits.masked_fill(~valid, -1e9)
+            agree[lo:hi] = (logits.argmax(dim=1).numpy()
+                            == shard["labels"][lo:hi])
+    return agree
+
+
+def relabel(data_dirs: list, ckpt: str, weight: float = EI_DISAGREE_WEIGHT,
+            suffix: str = "_w", batch_size: int = 512) -> None:
+    """M18a offline disagreement weighting: run the student's greedy argmax
+    over every stored decision and write sibling '<dir><suffix>' shard dirs —
+    all original columns unchanged, plus a per-row `weights` column (`weight`
+    where the student disagrees with the stored teacher label, else 1)."""
+    from rl.policy import option_dim_of
+
+    def _resolve(p):
+        p = Path(p)
+        return p if p.is_absolute() or p.exists() else ROOT / p
+
+    sdict = torch.load(_resolve(ckpt), map_location="cpu")
+    model = OptionScorerV3(n_state_ids=_n_ids_of(sdict),
+                           option_dim=option_dim_of(sdict))
+    model.load_state_dict(sdict)
+    model.eval()
+
+    for d in data_dirs:
+        src = _resolve(d)
+        out = Path(str(src).rstrip("/") + suffix)
+        out.mkdir(parents=True, exist_ok=True)
+        n_dis = n_rows = 0
+        for path in sorted(src.glob("*.npz")):
+            shard = dict(np.load(path))
+            agree = _student_agreement(model, shard, batch_size)
+            shard["weights"] = np.where(agree, 1.0, weight).astype(np.float32)
+            np.savez_compressed(out / path.name, **shard)
+            n_dis += int((~agree).sum())
+            n_rows += len(agree)
+            print(f"{path.name}: disagreement {int((~agree).sum())}"
+                  f"/{len(agree)}", flush=True)
+        print(f"{d}: disagreement {n_dis}/{n_rows} = "
+              f"{n_dis / max(1, n_rows):.3f} -> {out}", flush=True)
 
 
 # ----------------------------------------------------------------------- CLI
@@ -760,6 +954,9 @@ if __name__ == "__main__":
     c.add_argument("--value-ckpt", type=str, default=None,
                    help="setup-value checkpoint enabling SETUP-plan commits "
                         "(M14; margin 200, turn<32)")
+    c.add_argument("--vs-margin", type=float, default=VS_MARGIN,
+                   help="SETUP commit margin over stand-pat (M18: "
+                        "recalibrate from the printed margin distribution)")
     t = sub.add_parser("train", help="train OptionScorerV3 on plan shards")
     t.add_argument("--data", type=str, nargs="+", required=True)
     t.add_argument("--name", type=str, required=True)
@@ -770,10 +967,21 @@ if __name__ == "__main__":
     t.add_argument("--init-v3h", type=str, default=None,
                    help="warm-start a HAND-AWARE net from a legacy v3 "
                         "checkpoint (M15; hand columns zero-init)")
+    t.add_argument("--init-v3o", type=str, default=None,
+                   help="warm-start an OPTION-IDENTITY net from a pre-M16 "
+                        "v3/v3h checkpoint (option columns zero-init)")
     t.add_argument("--epochs", type=int, default=8)
     t.add_argument("--lr", type=float, default=3e-4)
     t.add_argument("--batch-size", type=int, default=256)
     t.add_argument("--plan-weight", type=float, default=1.0)
+    r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
+                                       "sibling shard dirs (<dir><suffix>)")
+    r.add_argument("--data", type=str, nargs="+", required=True)
+    r.add_argument("--ckpt", type=str, required=True,
+                   help="student checkpoint whose argmax defines agreement")
+    r.add_argument("--weight", type=float, default=EI_DISAGREE_WEIGHT)
+    r.add_argument("--suffix", type=str, default="_w")
+    r.add_argument("--batch-size", type=int, default=512)
     args = p.parse_args()
 
     if args.cmd == "collect":
@@ -782,8 +990,13 @@ if __name__ == "__main__":
                 dirichlet=args.dirichlet, deadline=args.deadline,
                 label_deadline=args.label_deadline, workers=args.workers,
                 shard_size=args.shard_size, seed=args.seed,
-                opponents=args.opponents, value_ckpt=args.value_ckpt)
+                opponents=args.opponents, value_ckpt=args.value_ckpt,
+                vs_margin=args.vs_margin)
+    elif args.cmd == "relabel":
+        relabel(args.data, args.ckpt, weight=args.weight,
+                suffix=args.suffix, batch_size=args.batch_size)
     else:
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
-              init_v3h=args.init_v3h, epochs=args.epochs, lr=args.lr,
+              init_v3h=args.init_v3h, init_v3o=args.init_v3o,
+              epochs=args.epochs, lr=args.lr,
               batch_size=args.batch_size, plan_weight=args.plan_weight)

@@ -236,9 +236,69 @@ def test_encode_option_v2_parity_and_ids():
         a_num, a_ids = old.encode_option_v2(opt, obs)
         b_num, b_ids = new.encode_option_v2(opt, obs)
         assert np.array_equal(a_num, b_num) and np.array_equal(a_ids, b_ids)
-        assert np.array_equal(a_num, old.encode_option(opt, obs))  # numeric == v1
+        assert a_num.shape == (old.OPTION_V3_DIM,)
+        # the v1 prefix stays byte-identical (M16 block is additive)
+        assert np.array_equal(a_num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.encode_option_v2(attach, obs)[1].tolist() == [0, 1]  # target = active card 1
     assert old.encode_option_v2(play, obs)[1].tolist() == [7, 0]    # acted card 7
+
+
+# --- M16 option-identity block ----------------------------------------------
+
+def test_play_option_resolves_hand_card():
+    """Live PLAY prompts carry ONLY a hand index (no area) — pre-M16 every
+    trainer in hand encoded to the same blank vector (the aliasing defect)."""
+    me = player(active=pokemon(1), hand=[hand_card(7), hand_card(6)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    p0 = option(OptionType.PLAY, index=0)
+    p1 = option(OptionType.PLAY, index=1)
+    lo, hi = old.N_OPTION_TYPES, old.N_OPTION_TYPES + old.FEAT_DIM
+    for mod in (old, new):
+        n0, i0 = mod.encode_option_v2(p0, obs)
+        n1, i1 = mod.encode_option_v2(p1, obs)
+        assert i0.tolist() == [7, 0] and i1.tolist() == [6, 0]
+        assert not np.array_equal(n0, n1)          # distinguishable now
+        assert np.array_equal(n0[lo:hi], old.FEAT[7])
+        assert not mod.encode_option(p0, obs)[lo:hi].any()  # v1 stays blank
+        # legacy path = exact pre-M16 encoding (pinned checkpoints)
+        ln, li = mod.encode_option_v2_legacy(p0, obs)
+        assert ln.shape == (old.OPTION_DIM,) and li.tolist() == [0, 0]
+        assert not ln[lo:hi].any()
+
+
+def test_attack_option_identity_block():
+    """ATTACK options encode (printed dmg, cost, effective dmg vs opp active)
+    — attackId was previously not encoded at all."""
+    base = old.OPTION_DIM
+    # card 1 (Fighting) attacks card 2, which RESISTS Fighting (-30)
+    me = player(active=pokemon(1, energies=[FIGHTING, FIGHTING]))
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    a101 = option(OptionType.ATTACK, attack_id=101)   # 50 dmg, 1 cost
+    a102 = option(OptionType.ATTACK, attack_id=102)   # 120 dmg, 2 cost
+    for mod in (old, new):
+        n1, _ = mod.encode_option_v2(a101, obs)
+        n2, _ = mod.encode_option_v2(a102, obs)
+        assert not np.array_equal(n1, n2)          # distinguishable now
+        assert n1[base] == np.float32(50 / 300) and n1[base + 1] == np.float32(1 / 5)
+        assert n1[base + 2] == np.float32((50 - 30) / 300)      # resisted
+        assert n2[base] == np.float32(120 / 300)
+        assert n2[base + 2] == np.float32((120 - 30) / 300)
+    # weakness doubling: card 4 (Psychic) attacks card 1 (weak to Psychic)
+    obs2 = observation(me=player(active=pokemon(4)),
+                       opponent=player(active=pokemon(1)))
+    a104 = option(OptionType.ATTACK, attack_id=104)   # 30 dmg
+    for mod in (old, new):
+        n, _ = mod.encode_option_v2(a104, obs2)
+        assert n[base + 2] == np.float32(60 / 300)
+
+
+def test_number_option_identity_block():
+    o = option(OptionType.NUMBER)
+    o.number = 3
+    obs = observation()
+    for mod in (old, new):
+        n, _ = mod.encode_option_v2(o, obs)
+        assert n[old.OPTION_DIM + 3] == np.float32(0.3)
 
 
 def test_board_ids_layout_and_padding():

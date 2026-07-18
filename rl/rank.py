@@ -262,7 +262,7 @@ def train(data_dirs: list, name: str, epochs: int = 6, lr: float = 3e-4,
     val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                         collate_fn=collate_rank)
 
-    model = OptionScorerV3()
+    model = OptionScorerV3(option_dim=ds.options.shape[1])  # M16: shard width
     zeros = None
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best = 0.0

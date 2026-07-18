@@ -141,13 +141,15 @@ class OptionScorerV3(nn.Module):
     mismatch in plan encoding. All-zeros plan == "no plan"."""
 
     def __init__(self, hidden: int = 256, embed: int = EMBED_DIM,
-                 plan_dim: int | None = None, n_state_ids: int = N_STATE_IDS):
+                 plan_dim: int | None = None, n_state_ids: int = N_STATE_IDS,
+                 option_dim: int = OPTION_V2_DIM):
         super().__init__()
         if plan_dim is None:
             from rl.plan import PLAN_DIM
             plan_dim = PLAN_DIM
         self.plan_dim = plan_dim
         self.n_state_ids = n_state_ids     # M15: 12 legacy | 20 hand-aware
+        self.option_dim = option_dim       # M16: OPTION_V2_DIM legacy | OPTION_V3_DIM
         self.embedding = nn.Embedding(N_CARD_IDS, embed, padding_idx=0)
         self.state_enc = nn.Sequential(
             nn.Linear(STATE_V2_DIM + N_CONTEXTS + plan_dim + n_state_ids * embed,
@@ -156,7 +158,7 @@ class OptionScorerV3(nn.Module):
             nn.Linear(hidden, hidden), nn.ReLU(),
         )
         self.option_enc = nn.Sequential(
-            nn.Linear(OPTION_V2_DIM + N_OPTION_IDS * embed, hidden), nn.ReLU(),
+            nn.Linear(option_dim + N_OPTION_IDS * embed, hidden), nn.ReLU(),
         )
         self.score_head = nn.Sequential(
             nn.Linear(2 * hidden, hidden), nn.ReLU(),
@@ -238,6 +240,14 @@ class OptionScorerV3(nn.Module):
             noise = rng.dirichlet([0.5] * probs.shape[0]).astype(np.float32)
             probs = (1 - dirichlet_eps) * probs + dirichlet_eps * torch.from_numpy(noise)
         return int(torch.multinomial(probs, 1).item())
+
+
+def option_dim_of(sd: dict, embed: int = EMBED_DIM) -> int:
+    """Infer a v2/v3 checkpoint's numeric option width from option_enc.0 —
+    M16: OPTION_V2_DIM (pre-identity, pinned baselines) vs OPTION_V3_DIM.
+    Loaders pass this to OptionScorerV3 and pick the matching option encoder
+    (encode_option_v2 vs encode_option_v2_legacy)."""
+    return sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * embed
 
 
 def save_npz(model: OptionScorer, path: str) -> None:

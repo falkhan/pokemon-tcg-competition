@@ -218,19 +218,25 @@ def make_pilot(spec: OpponentSpec, instance: str):
         import numpy as np
         import torch
         from cg.api import SelectContext, to_observation_class
-        from rl.encoders import (encode_context, encode_option_v2,
+        from rl.encoders import (OPTION_V3_DIM, encode_context,
+                                 encode_option_v2, encode_option_v2_legacy,
                                  encode_state_v2)
         from rl.generic_pilot import make_generic_pilot
         from rl.plan import PLAN_DIM
-        from rl.policy import OptionScorerV3
+        from rl.policy import OptionScorerV3, option_dim_of
         from rl.turn_solver import _candidate_actions, should_solve, solve_turn
         CONF_MARGIN = 1.0
         ckpt = Path(spec[1])
         if not ckpt.is_absolute() and not ckpt.exists():
             ckpt = ROOT / ckpt
-        net = OptionScorerV3()
-        net.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        rsd = torch.load(ckpt, map_location="cpu")
+        net = OptionScorerV3(option_dim=option_dim_of(rsd))
+        net.load_state_dict(rsd)
         net.eval()
+        # M16: pre-option-identity checkpoints get their exact encoding
+        encode_option_v2 = (encode_option_v2
+                            if net.option_dim >= OPTION_V3_DIM
+                            else encode_option_v2_legacy)
         ids = resolve_deck(spec[2])
         inner = make_generic_pilot(ids)
 
@@ -327,17 +333,23 @@ def make_pilot(spec: OpponentSpec, instance: str):
             # (pilots are built once, line ~318) — reset on a turn-counter
             # drop (new game, direct loop) and on select-None (kaggle path).
             from cg.api import SelectContext
-            from rl.encoders import (EMBED_DIM, encode_option_v2,
+            from rl.encoders import (EMBED_DIM, OPTION_V3_DIM,
+                                     encode_option_v2, encode_option_v2_legacy,
                                      encode_state_v2, encode_state_v3)
             from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
-            from rl.policy import OptionScorerV3
+            from rl.policy import OptionScorerV3, option_dim_of
             from rl.encoders import N_CONTEXTS as _NC, STATE_V2_DIM as _SV2
             n_ids = (sd["state_enc.0.weight"].shape[1] - _SV2 - _NC
                      - PLAN_DIM) // EMBED_DIM
-            m3 = OptionScorerV3(n_state_ids=n_ids)
+            opt_dim = option_dim_of(sd)
+            m3 = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
             m3.load_state_dict(sd)
             m3.eval()
             enc_state = encode_state_v3 if n_ids > 12 else encode_state_v2
+            # M16: pre-option-identity checkpoints (pinned baselines) get the
+            # exact encoding they trained on — sniffed width picks the encoder.
+            enc_opt = (encode_option_v2 if opt_dim >= OPTION_V3_DIM
+                       else encode_option_v2_legacy)
             deck_ids = resolve_deck(spec[2])
             pstate = {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
                       "last_turn": -1}
@@ -370,7 +382,7 @@ def make_pilot(spec: OpponentSpec, instance: str):
                     pstate.update(key=key, vec=mat[idx].copy())
                 plan = (pstate["vec"] if pstate["key"] == key
                         else np.zeros(PLAN_DIM, np.float32))
-                pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+                pairs = [enc_opt(o, obs) for o in obs.select.option]
                 opts = np.stack([n for n, _ in pairs]).astype(np.float32)
                 oids = np.stack([i for _, i in pairs])
                 return m3.act(sc, plan, sids, opts, oids,
@@ -380,7 +392,11 @@ def make_pilot(spec: OpponentSpec, instance: str):
         if "embedding.weight" in sd:
             # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
             # deck-context pools — the pilot closes over its own deck list.
-            from rl.encoders import encode_option_v2, encode_state_v2
+            # M16: legacy option encoding — these checkpoints predate the
+            # option-identity block.
+            from rl.encoders import (encode_option_v2_legacy as
+                                     encode_option_v2)
+            from rl.encoders import encode_state_v2
             from rl.policy import OptionScorerV2
             m2 = OptionScorerV2()
             m2.load_state_dict(sd)

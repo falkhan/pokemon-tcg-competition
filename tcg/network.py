@@ -144,10 +144,12 @@ class OptionScorerV3(nn.Module):
     rl/policy.py OptionScorerV3 (see its docstring; parity-tested)."""
 
     def __init__(self, hidden: int = 256, embed: int = EMBED_DIM,
-                 plan_dim: int = PLAN_DIM, n_state_ids: int = N_STATE_IDS):
+                 plan_dim: int = PLAN_DIM, n_state_ids: int = N_STATE_IDS,
+                 option_dim: int = OPTION_V2_DIM):
         super().__init__()
         self.plan_dim = plan_dim
         self.n_state_ids = n_state_ids     # M15 twin: 12 legacy | 20 hand-aware
+        self.option_dim = option_dim       # M16 twin: OPTION_V2_DIM | OPTION_V3_DIM
         self.embedding = nn.Embedding(N_CARD_IDS, embed, padding_idx=0)
         self.state_enc = nn.Sequential(
             nn.Linear(STATE_V2_DIM + N_CONTEXTS + plan_dim + n_state_ids * embed,
@@ -156,7 +158,7 @@ class OptionScorerV3(nn.Module):
             nn.Linear(hidden, hidden), nn.ReLU(),
         )
         self.option_enc = nn.Sequential(
-            nn.Linear(OPTION_V2_DIM + N_OPTION_IDS * embed, hidden), nn.ReLU(),
+            nn.Linear(option_dim + N_OPTION_IDS * embed, hidden), nn.ReLU(),
         )
         self.score_head = nn.Sequential(
             nn.Linear(2 * hidden, hidden), nn.ReLU(),

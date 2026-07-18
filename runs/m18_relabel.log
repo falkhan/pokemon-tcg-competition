@@ -1,0 +1,26 @@
+shard_w00_0000.npz: disagreement 589/2502
+shard_w01_0000.npz: disagreement 397/1889
+shard_w02_0000.npz: disagreement 325/1665
+shard_w03_0000.npz: disagreement 644/2479
+shard_w04_0000.npz: disagreement 433/2063
+shard_w05_0000.npz: disagreement 414/2005
+shard_w06_0000.npz: disagreement 649/2918
+shard_w07_0000.npz: disagreement 494/2256
+shard_w08_0000.npz: disagreement 481/2359
+shard_w09_0000.npz: disagreement 470/2252
+shard_w10_0000.npz: disagreement 461/2081
+shard_w11_0000.npz: disagreement 449/1946
+data/plan_m16: disagreement 5806/26415 = 0.220 -> data/plan_m16_w
+shard_w00_0000.npz: disagreement 398/2323
+shard_w01_0000.npz: disagreement 515/2561
+shard_w02_0000.npz: disagreement 511/2385
+shard_w03_0000.npz: disagreement 382/2071
+shard_w04_0000.npz: disagreement 706/3113
+shard_w05_0000.npz: disagreement 590/2857
+shard_w06_0000.npz: disagreement 382/2161
+shard_w07_0000.npz: disagreement 506/2421
+shard_w08_0000.npz: disagreement 512/2692
+shard_w09_0000.npz: disagreement 532/2593
+shard_w10_0000.npz: disagreement 473/2458
+shard_w11_0000.npz: disagreement 552/2557
+data/plan_m15: disagreement 6059/30192 = 0.201 -> data/plan_m15_w

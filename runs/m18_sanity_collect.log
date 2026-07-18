@@ -1,0 +1,6 @@
+done: 60 games, 2425 decisions, 559 plan rows -> data/plan_m18_sanity
+plan coverage 0.986  (missed 8)  null 0.78  kill 35  SETUP 255  gust 0.00  derails 26
+value-solve: calls 429  errors 0  commits 255  margin p10/p50/p90/p99 = 8/1360/5999/500002976  (threshold 200)
+  vs ext: teacher seat 2/13 (0.15)
+  vs rule: teacher seat 2/18 (0.11)
+  vs self: teacher seat 19/29 (0.66)

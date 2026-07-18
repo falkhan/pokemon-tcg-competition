@@ -29,9 +29,9 @@ import torch.nn.functional as F
 from cg.api import SelectContext, to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
 from rl.bc import load_population
-from rl.encoders import encode_context, encode_state_v3
+from rl.encoders import encode_context, encode_state_v3, OPTION_V2_DIM
 from rl.plan import PLAN_DIM
-from rl.policy import OptionScorerV3
+from rl.policy import OptionScorerV3, option_dim_of
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -261,13 +261,23 @@ def train(data_dirs: list, name: str, init_v3: str | None = None,
                                          exclude_games=ok_train_games)
     print(f"train pairs {len(train_pairs)}, val pairs {len(val_pairs)}")
 
-    model = OptionScorerV3(n_state_ids=rows["state_ids"].shape[1])
+    # Setup-value shards carry no `options` column, so the option width must
+    # come from the init checkpoint (as every other loader does). This retrain
+    # was skipped in M15/M16, so the M16 `rows["options"]` line was never run.
     if init_v3 is not None:
         p = Path(init_v3)
         if not p.is_absolute() and not p.exists():
             p = ROOT / p
-        model.load_state_dict(torch.load(p, map_location="cpu"))
-        print(f"warm-start trunk from {init_v3}")
+        init_sd = torch.load(p, map_location="cpu")
+        option_dim = option_dim_of(init_sd)
+        print(f"warm-start trunk from {init_v3} (option_dim={option_dim})")
+    else:
+        init_sd = None
+        option_dim = OPTION_V2_DIM
+    model = OptionScorerV3(n_state_ids=rows["state_ids"].shape[1],
+                           option_dim=option_dim)
+    if init_sd is not None:
+        model.load_state_dict(init_sd)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best = 0.0
 

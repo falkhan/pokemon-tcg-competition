@@ -77,10 +77,13 @@ def _write_old_shard(path, rng, n=4):
     )
 
 
-def _write_new_shard(path, rng, n=3):
-    """M11 shard: plan columns included; row 0 is a plan-decision row."""
+def _write_new_shard(path, rng, n=3, weights=None):
+    """M11 shard: plan columns included; row 0 is a plan-decision row.
+    weights (M18a) is written only when given — pre-M18 shards lack it."""
     menus = [2, 3, 2][:n]
     ncands = [2, 0, 0][:n]
+    extra = ({} if weights is None
+             else {"weights": np.asarray(weights, dtype=np.float32)})
     np.savez_compressed(
         path,
         states=rng.standard_normal(
@@ -99,6 +102,7 @@ def _write_new_shard(path, rng, n=3):
             (sum(ncands), PLAN_DIM)).astype(np.float32),
         n_plan_cands=np.array(ncands, dtype=np.int32),
         plan_labels=np.array([1, -1, -1][:n], dtype=np.int32),
+        **extra,
     )
 
 
@@ -112,7 +116,8 @@ def test_dataset_mixes_old_and_new_shards(tmp_path):
     ds = pi.BCDatasetV3([old_dir, new_dir])
     assert len(ds) == 7
     # old rows: zero plans, no candidates, label -1
-    state, plan, sids, menu, oids, label, result, didx, cands, plabel = ds[0]
+    (state, plan, sids, menu, oids, label, result, didx, cands, plabel,
+     weight) = ds[0]
     assert not plan.any() and cands.shape == (0, PLAN_DIM) and plabel == -1
     # new plan row: candidates + label survive with correct ragged offsets
     row = ds[4]
@@ -121,11 +126,27 @@ def test_dataset_mixes_old_and_new_shards(tmp_path):
 
     batch = pi.collate_v3([ds[i] for i in range(len(ds))])
     (states, plans, sids_t, options, oids_t, valid, labels, results,
-     deck_idx, plan_cands, plan_valid, plan_labels) = batch
+     deck_idx, plan_cands, plan_valid, plan_labels, weights) = batch
     assert states.shape[0] == 7 and plans.shape == (7, PLAN_DIM)
     assert plan_cands.shape[1] >= 2
     assert plan_valid[4].sum() == 2 and plan_labels[4] == 1
     assert plan_valid[0].sum() == 0 and plan_labels[0] == -1
+    assert weights.tolist() == [1.0] * 7          # weightless shards -> ones
+
+
+def test_dataset_weights_default_and_passthrough(tmp_path):
+    rng = np.random.default_rng(9)
+    old_dir, new_dir = tmp_path / "old", tmp_path / "new"
+    old_dir.mkdir(), new_dir.mkdir()
+    _write_old_shard(old_dir / "shard_0000.npz", rng)          # no weights
+    _write_new_shard(new_dir / "shard_w00_0000.npz", rng,
+                     weights=[10.0, 1.0, 1.0])
+    ds = pi.BCDatasetV3([old_dir, new_dir])
+    assert ds[0][10] == 1.0                       # weightless -> default 1
+    assert ds[4][10] == 10.0                      # stored weight passes through
+    weights = pi.collate_v3([ds[i] for i in range(len(ds))])[12]
+    assert weights.shape == (7,)
+    assert weights[4] == 10.0 and weights[0] == 1.0
 
 
 class _FakeStudent:
@@ -233,6 +254,40 @@ def test_collect_ei_student_advances_teacher_labels(tmp_path, monkeypatch):
     assert shard["labels"].tolist() == [1, 1]    # teacher labels every prompt
 
 
+def test_v3o_masked_identity_equals_v3h():
+    # M16 warm-start invariant: option-identity net on legacy-encoded options
+    # (zero-padded numerics, unchanged ids) == pre-M16 net exactly.
+    from rl.encoders import OPTION_V3_DIM
+    torch.manual_seed(5)
+    v3h = OptionScorerV3()
+    v3o = pi.load_v3h_into_v3o(v3h.state_dict())
+    assert v3o.option_dim == OPTION_V3_DIM
+    rng = np.random.default_rng(6)
+    sc, sids, opts, oids = _rand_inputs(rng)
+    pad = torch.zeros(opts.shape[0], opts.shape[1],
+                      OPTION_V3_DIM - opts.shape[2])
+    plan = torch.zeros(sc.shape[0], PLAN_DIM)
+    l_old, v_old = v3h(sc, plan, sids, opts, oids)
+    l_new, v_new = v3o(sc, plan, sids, torch.cat([opts, pad], dim=2), oids)
+    assert torch.allclose(l_old, l_new, atol=1e-6)
+    assert torch.allclose(v_old, v_new, atol=1e-6)
+    # plan head shares only state-side weights — must be untouched
+    cands = torch.from_numpy(rng.standard_normal(
+        (sc.shape[0], 4, PLAN_DIM)).astype(np.float32))
+    assert torch.allclose(v3h.plan_logits(sc, sids, cands),
+                          v3o.plan_logits(sc, sids, cands), atol=1e-6)
+
+
+def test_v3o_from_v3h_hand_aware_source():
+    # migration must preserve a 20-id source's state width too
+    from rl.encoders import N_STATE_IDS_V3, OPTION_V3_DIM
+    torch.manual_seed(7)
+    src = pi.load_v3_into_v3h(OptionScorerV3().state_dict())
+    v3o = pi.load_v3h_into_v3o(src.state_dict())
+    assert v3o.n_state_ids == N_STATE_IDS_V3
+    assert v3o.option_dim == OPTION_V3_DIM
+
+
 def test_v3h_zero_hand_equals_legacy_v3():
     # M15 warm-start invariant: hand-aware(zero hand ids) == legacy net.
     from rl.encoders import N_STATE_IDS_V3
@@ -250,6 +305,121 @@ def test_v3h_zero_hand_equals_legacy_v3():
     l_new, v_new = v3h(sc, plan, sids20, opts, oids)
     assert torch.allclose(l_old, l_new, atol=1e-6)
     assert torch.allclose(v_old, v_new, atol=1e-6)
+
+
+def _vs_stats():
+    return {"vs_calls": 0, "vs_errors": 0, "vs_margins": []}
+
+
+def _vs_harness(monkeypatch, score=1e6):
+    """Patch the solver imports _value_solve_factory binds at call time. The
+    fake solve CALLS leaf_value on the real obs — so the real state encoder
+    runs against the real vnet widths (the M17 crash path)."""
+    import rl.turn_solver as ts
+    from tests import builders as b
+
+    def fake_solve(obs_, deck_, deadline_s=0.0, dev=False, leaf_value=None,
+                   **kw):
+        leaf_value(obs_)
+        return score, [[0]], []
+
+    monkeypatch.setattr(ts, "solve_turn_line", fake_solve)
+    monkeypatch.setattr(
+        ts, "score_leaf",
+        lambda snap, obs_, dev=False, leaf_value=None, **kw: 0.0)
+    monkeypatch.setattr(ts, "_root_snapshot", lambda o: None)
+    obs = b.observation()
+    obs.search_begin_input = object()
+    return obs
+
+
+def test_value_solve_hand_aware_net_uses_v3_ids(monkeypatch):
+    # THE M17 regression test: a 20-id value net must be fed encode_state_v3
+    # states. Pre-fix, leaf_value hard-coded encode_state_v2 -> RuntimeError
+    # on every call, silently swallowed -> SETUP 0 across 10k games.
+    torch.manual_seed(9)
+    vnet = pi.load_v3_into_v3h(OptionScorerV3().state_dict())
+    obs = _vs_harness(monkeypatch)
+    stats = _vs_stats()
+    vs = pi._value_solve_factory(vnet, {"me": 0}, stats)
+    line, trail = vs(obs, [1] * 60)
+    assert line == [[0]]
+    assert stats["vs_errors"] == 0 and stats["vs_calls"] == 1
+    assert stats["vs_margins"] == [1e6]
+
+
+def test_value_solve_legacy_net_uses_v2_ids(monkeypatch):
+    # the M16 configuration (12-id osv3_setupval2) must keep working
+    torch.manual_seed(10)
+    vnet = OptionScorerV3()
+    obs = _vs_harness(monkeypatch)
+    stats = _vs_stats()
+    vs = pi._value_solve_factory(vnet, {"me": 0}, stats)
+    line, _ = vs(obs, [1] * 60)
+    assert line == [[0]]
+    assert stats["vs_errors"] == 0
+
+
+def test_value_solve_margin_gate(monkeypatch):
+    # a line below the margin is measured (margin recorded) but NOT committed;
+    # a lower --vs-margin threshold flips the same line to a commit
+    torch.manual_seed(11)
+    vnet = OptionScorerV3()
+    obs = _vs_harness(monkeypatch, score=100.0)
+    stats = _vs_stats()
+    vs = pi._value_solve_factory(vnet, {"me": 0}, stats)
+    assert vs(obs, [1] * 60) == (None, None)      # 100 < default 200
+    assert stats["vs_margins"] == [100.0]
+    vs_low = pi._value_solve_factory(vnet, {"me": 0}, _vs_stats(),
+                                     vs_margin=50.0)
+    line, _ = vs_low(obs, [1] * 60)
+    assert line == [[0]]
+
+
+def test_value_solve_errors_counted_not_swallowed(monkeypatch, capsys):
+    import rl.turn_solver as ts
+    from tests import builders as b
+
+    def boom(*a, **kw):
+        raise RuntimeError("width mismatch")
+
+    monkeypatch.setattr(ts, "solve_turn_line", boom)
+    monkeypatch.setattr(ts, "score_leaf", lambda *a, **kw: 0.0)
+    monkeypatch.setattr(ts, "_root_snapshot", lambda o: None)
+    obs = b.observation()
+    obs.search_begin_input = object()
+    stats = _vs_stats()
+    vs = pi._value_solve_factory(OptionScorerV3(), {"me": 0}, stats)
+    assert vs(obs, [1] * 60) == (None, None)
+    assert vs(obs, [1] * 60) == (None, None)
+    assert stats["vs_errors"] == 2 and stats["vs_calls"] == 2
+    assert "width mismatch" in capsys.readouterr().err   # first-error print
+
+
+def test_relabel_writes_disagreement_weights(tmp_path):
+    rng = np.random.default_rng(12)
+    src_dir = tmp_path / "plan"
+    src_dir.mkdir()
+    _write_new_shard(src_dir / "shard_w00_0000.npz", rng)
+    torch.manual_seed(13)
+    model = OptionScorerV3()
+    ckpt = tmp_path / "student.pt"
+    torch.save(model.state_dict(), ckpt)
+
+    pi.relabel([src_dir], str(ckpt), weight=10.0)
+
+    src = np.load(src_dir / "shard_w00_0000.npz")
+    dst = np.load(tmp_path / "plan_w" / "shard_w00_0000.npz")
+    for k in src.files:                     # original columns byte-identical
+        assert np.array_equal(src[k], dst[k])
+    assert dst["weights"].dtype == np.float32
+    starts = np.cumsum(src["n_options"]) - src["n_options"]
+    for i in range(len(src["labels"])):     # weights == per-row act() argmax
+        s, m = starts[i], src["n_options"][i]
+        pick = model.act(src["states"][i], src["plans"][i],
+                         src["state_ids"][i], src["options"][s:s + m],
+                         src["option_ids"][s:s + m], 1, greedy=True)[0]
+        assert dst["weights"][i] == (1.0 if pick == src["labels"][i] else 10.0)
 
 
 def test_encode_state_v3_hand_ids():

@@ -90,14 +90,26 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
                              save_npz)
 
     ckpt_path = ROOT / "checkpoints" / checkpoint
+    if not ckpt_path.exists() and Path(checkpoint).exists():
+        ckpt_path = Path(checkpoint)        # M16: accept full/relative paths too
+    if checkpoint and checkpoint != DEFAULT_CHECKPOINT and not ckpt_path.exists():
+        # M16 guard: an explicit --checkpoint that doesn't resolve used to
+        # fall through to the seeded-RANDOM export — a random agent one
+        # inattentive gate away from being shipped. Fail loudly instead.
+        raise FileNotFoundError(
+            f"--checkpoint {checkpoint!r} not found at {ckpt_path} — refusing "
+            "the seeded-random fallback (only the default name may fall back)")
     if ckpt_path.exists():
         state_dict = torch.load(ckpt_path, map_location="cpu")
         if "plan_enc.0.weight" in state_dict:      # M11 plan-conditioned v3
-            from tcg.encoders import EMBED_DIM, N_CONTEXTS, STATE_V2_DIM
+            from tcg.encoders import (EMBED_DIM, N_CONTEXTS, N_OPTION_IDS,
+                                      STATE_V2_DIM)
             from tcg.network import PLAN_DIM
             n_ids = (state_dict["state_enc.0.weight"].shape[1]
                      - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
-            model = OptionScorerV3(n_state_ids=n_ids)  # M15: 12 or 20
+            opt_dim = (state_dict["option_enc.0.weight"].shape[1]
+                       - N_OPTION_IDS * EMBED_DIM)   # M16: legacy | identity
+            model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
         elif "embedding.weight" in state_dict:
             model = OptionScorerV2()
         else:
@@ -163,13 +175,15 @@ def parity_check(main_path: str = SUBMISSION_MAIN) -> float:
         n_ids = (weights["state_enc.0.weight"].shape[1]
                  - encoders.STATE_V2_DIM - encoders.N_CONTEXTS
                  - PLAN_DIM) // encoders.EMBED_DIM   # M15: 12 or 20
-        model = OptionScorerV3(n_state_ids=n_ids)
+        opt_dim = (weights["option_enc.0.weight"].shape[1]
+                   - encoders.N_OPTION_IDS * encoders.EMBED_DIM)  # M16 width
+        model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
         model.load_state_dict(torch_weights)
         state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS,
                                dtype=np.float32)
         plan = rng.random(PLAN_DIM, dtype=np.float32)
         state_ids = rng.integers(0, encoders.N_CARD_IDS, size=n_ids)
-        options = rng.random((9, encoders.OPTION_V2_DIM), dtype=np.float32)
+        options = rng.random((9, opt_dim), dtype=np.float32)
         option_ids = rng.integers(0, encoders.N_CARD_IDS,
                                   size=(9, encoders.N_OPTION_IDS))
         cands = rng.random((7, PLAN_DIM), dtype=np.float32)

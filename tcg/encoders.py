@@ -22,10 +22,10 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from cg.api import AreaType
+from cg.api import AreaType, OptionType
 
-from tcg.combat import best_damage, can_afford
-from tcg.library import CARDS, known_attacks
+from tcg.combat import attack_available, best_damage, can_afford
+from tcg.library import ATTACKS, CARDS, known_attacks
 from tcg.models import UNKNOWN_CARD
 from tcg.pilot import card_at
 
@@ -269,6 +269,11 @@ N_RACE = 8                          # see race_features
 RACE_TURN_CAP = 10.0                # race turns normalized /10, capped
 STATE_V2_DIM = STATE_DIM + N_RACE + 2 * FEAT_DIM
 OPTION_V2_DIM = OPTION_DIM
+# M16 option-identity block — twin of rl/encoders.py (see its comment): PLAY
+# options resolve their hand card, ATTACK options encode their attack's
+# numbers, NUMBER options their count; appended so the v1 slice is unchanged.
+N_OPTION_EXTRA = 4   # [atk dmg/300, atk cost/5, atk eff-dmg vs opp active/300, number/10]
+OPTION_V3_DIM = OPTION_DIM + N_OPTION_EXTRA
 
 
 def race_features(state) -> np.ndarray:
@@ -350,8 +355,77 @@ def encode_state_v2(state, my_deck: list[int]) -> tuple[np.ndarray, np.ndarray]:
     return numeric.astype(np.float32), board_ids(state)
 
 
+def attack_extra(attack_id, observation) -> np.ndarray:
+    """[printed dmg/300, cost size/5, effective dmg vs opp active/300] — twin
+    of rl/encoders.py _attack_extra; weakness/resistance math mirrors
+    tcg.combat.charged_best (change BOTH if the rules change)."""
+    vector = np.zeros(3, dtype=np.float32)
+    attack = ATTACKS.get(attack_id)
+    if attack is None:
+        return vector
+    vector[0] = attack.damage / 300.0
+    vector[1] = len(attack.cost) / 5.0
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    attacker = me.active[0] if me.active and me.active[0] is not None else None
+    target = (opponent.active[0]
+              if opponent.active and opponent.active[0] is not None else None)
+    if attacker is None or target is None or attack.damage <= 0:
+        return vector
+    board = {p.id for p in [attacker] + list(me.bench or []) if p is not None}
+    if not attack_available(attack_id, board):
+        return vector
+    target_card = CARDS.get(target.id, UNKNOWN_CARD)
+    attacker_type = CARDS.get(attacker.id, UNKNOWN_CARD).energy_type
+    effective = attack.damage
+    if target_card.weakness is not None and int(target_card.weakness) == attacker_type:
+        effective *= 2
+    elif (target_card.resistance is not None
+          and int(target_card.resistance) == attacker_type):
+        effective = max(0, effective - 30)
+    vector[2] = effective / 300.0
+    return vector
+
+
 def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
-    """(numeric OPTION_V2_DIM f32, [acted_id, target_id] i32, 0 = none)."""
+    """(numeric OPTION_V3_DIM f32, [acted_id, target_id] i32, 0 = none).
+
+    M16 twin of rl/encoders.py encode_option_v2: PLAY options resolve their
+    hand card (FEAT block + embedding id), the appended block encodes attack
+    identity and NUMBER counts. Pre-M16 checkpoints: encode_option_v2_legacy."""
+    numeric = np.zeros(OPTION_V3_DIM, dtype=np.float32)
+    numeric[:OPTION_DIM] = encode_option(option, observation)
+    your_index = observation.current.yourIndex
+    card_id = option.cardId
+    if card_id is None and option.index is not None:
+        if option.area is not None:
+            player_index = (option.playerIndex if option.playerIndex is not None
+                            else your_index)
+            card_id = card_id_at(observation, option.area, option.index,
+                                 player_index)
+        elif option.type == OptionType.PLAY:
+            # PLAY carries only a hand index; v1 stays blank by design.
+            card_id = card_id_at(observation, AreaType.HAND, option.index,
+                                 your_index)
+            if card_id:
+                numeric[N_OPTION_TYPES:N_OPTION_TYPES + FEAT_DIM] = FEAT[card_id]
+    target_id = None
+    if option.inPlayArea is not None and option.inPlayIndex is not None:
+        target_id = card_id_at(observation, option.inPlayArea, option.inPlayIndex,
+                               your_index)
+    if option.type == OptionType.ATTACK:
+        numeric[OPTION_DIM:OPTION_DIM + 3] = attack_extra(option.attackId,
+                                                          observation)
+    elif getattr(option, "number", None) is not None:
+        numeric[OPTION_DIM + 3] = min(float(option.number), 10.0) / 10.0
+    ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
+    return numeric, ids
+
+
+def encode_option_v2_legacy(option, observation) -> tuple[np.ndarray, np.ndarray]:
+    """Pre-M16 v2 encoding (no option-identity block) — twin of
+    rl/encoders.py encode_option_v2_legacy; pinned checkpoints only."""
     your_index = observation.current.yourIndex
     card_id = option.cardId
     if card_id is None and option.index is not None and option.area is not None:
