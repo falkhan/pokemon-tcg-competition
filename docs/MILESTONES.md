@@ -1,9 +1,11 @@
 # Milestones at a glance — what was tried, what it measured, where it led
 
-High-level map of every milestone (M0–M10) for orientation; each section links to the
+High-level map of every milestone (M0–M21) for orientation; each section links to the
 full diary. **Campaign bar (M8→now):** any agent ≥ **0.55 vs `solver:lucario`** at n ≥ 800,
 zero G1 crashes, sane latency — plus, since M10, the **meta_v2 co-gate** on promotion
-(weighted win rate vs the frozen top-10 harvested-meta deck pool).
+(weighted win rate vs the frozen top-10 harvested-meta deck pool), and since M18 every gate
+baseline is **2-seed pooled**. Current champion: `ppo_best_m20legB` + lucario (sub 54836093),
+mirror **0.488** — 6.2pp short of the bar.
 
 ## Workflow
 
@@ -20,13 +22,38 @@ flowchart TD
     M7["M7 · Deck factory loop<br/>ingestion · league · race-math ·<br/>turn solver ✅ SHIPPED (54586430) ·<br/>PLAY-TIER BUG found+fixed ·<br/>PPO retry confounded<br/>✅ SHIPPED 5 fixes (54621283)"]
     M8["M8 · Beat-the-ship campaign<br/>clean re-clone osv2_bc2 0.345 ✅ ·<br/>dev-tier solver ❌ · PPO probe ⚖️ 0.359 ·<br/>sims ladder flat ❌<br/>❌ bar not cleared (0.359 &lt; 0.55)"]
     M10["M10 · Replay imitation<br/>2,123-ep harvest; G3 kills 0.318 / 0.292;<br/>fidelity saturates ~0.53<br/>❌ NO-GO (unobservable teachers)"]
-    M9["M9 · Pilot-fix + learning ladder<br/>Leg 1 pilot v2 fixes (lead) ∥<br/>Leg 2 DAgger-on-solver → Legs 3–5<br/>🚧 IN PROGRESS"]
+    M9["M9 · Pilot-fix + learning ladder<br/>own legs killed; buddy 0.615 found<br/>⚖️ no ship, teacher found"]
+    M11["M11 · Learned turn-planning<br/>plan-conditioned OptionScorerV3;<br/>bar-honoring labels 0.415 ·<br/>EI rounds 0.314/0.357 killed<br/>⚖️ +7pp, below bar"]
+    M12["M12 · Value-as-ranker<br/>pairwise acc 0.873 ✅ but<br/>pilot 0.383 ❌<br/>❌ score_leaf is the bottleneck"]
+    M13["M13 · Outcome-grounded setup value<br/>0.704 → 0.768 on 10k games ✅ ·<br/>3 override consumers 0.458/0.484/0.453<br/>⚖️ the override law"]
+    M14["M14 · Value feeds the PLANNER<br/>setup-plan labels + mixed opponents;<br/>mirror 0.383 · found energy-waste bug<br/>🔭 SHIPPED 54790886 (observation)"]
+    M15["M15 · Hand-aware encoding<br/>encode_state_v3, 20 ids;<br/>honest re-pin 0.357 → 0.384 · meta 0.419<br/>🔭 SHIPPED 54793851"]
+    M16["M16 · Option-identity encoding<br/>PLAY/ATTACK alias found in replays;<br/>mirror 0.424 · meta 0.534 (first &gt;0.5)<br/>✅ SHIPPED 54801291 — settled 519.8"]
+    M17["M17 · Value-first 10k scale-up<br/>val_acc 0.899 but mirror 0.380;<br/>SETUP=0 in 10,000 games<br/>🔴 NO-SHIP (encoder-width bug)"]
+    M18["M18 · Fix the value teacher<br/>leaf_value encoder dispatch;<br/>plan3 mirror 0.4844 · plan5 meta ~0.498<br/>🔭 SHIPPED 54817441 → 54817813 (deck fix)"]
+    M19["M19 · Repair the pilot defects<br/>reweighting dose-response:<br/>0.4275 / 0.3987 / 0.331<br/>🔴 NO-SHIP"]
+    M20["M20 · PPO revived on V3<br/>legB mirror 0.488 (+5.9pp, record);<br/>behavior objective unmoved<br/>🔭 SHIPPED 54836093"]
+    BAR(["Campaign bar 0.55<br/>still unmet — 6.2pp short"])
 
     M0 --> M1 --> M2 --> M3 --> M4 --> M5 --> CEIL --> M6 --> M7
     M7 -->|"L4 go/no-go: evidence confounded → fork"| M8
     M8 -->|"beyond-teacher bet taken first"| M10
     M8 -.->|"planned 07-14, reprioritized"| M9
     M10 -->|"closed 07-16 → restored"| M9
+    M9 -->|"learn the plan instead of porting it"| M11
+    M11 -->|"M9 Leg 4 on the M11 stack"| M12
+    M12 -->|"score_leaf must be replaced, not distilled"| M13
+    M13 -->|"value needs a non-override consumer"| M14
+    M14 -->|"teacher fixed → re-pin everything"| M15
+    M15 -->|"replay forensics: option aliasing"| M16
+    M16 -->|"scale the winning recipe"| M17
+    M17 -->|"root-cause the SETUP=0 collapse"| M18
+    M18 -->|"fix defects the replays still show"| M19
+    M19 -->|"reweighting taxes strength → try RL"| M20
+    M21["M21 · Encoder v4 + plan-head-in-PPO<br/>gust 0/27 · retreat 2/25 baselines;<br/>v4 memory + annealed-KL + mixture<br/>🚧 IN PROGRESS"]
+
+    M20 -->|"defects are policy, not encoding"| M21
+    M21 --> BAR
 
     style M0 fill:#e8f5e9,stroke:#2e7d32,color:#000
     style M1 fill:#e8f5e9,stroke:#2e7d32,color:#000
@@ -38,8 +65,20 @@ flowchart TD
     style M5 fill:#ffebee,stroke:#c62828,color:#000
     style M8 fill:#ffebee,stroke:#c62828,color:#000
     style M10 fill:#ffebee,stroke:#c62828,color:#000
-    style M9 fill:#e3f2fd,stroke:#1565c0,color:#000
+    style M9 fill:#fff8e1,stroke:#f9a825,color:#000
+    style M11 fill:#fff8e1,stroke:#f9a825,color:#000
+    style M13 fill:#fff8e1,stroke:#f9a825,color:#000
+    style M12 fill:#ffebee,stroke:#c62828,color:#000
+    style M17 fill:#ffebee,stroke:#c62828,color:#000
+    style M19 fill:#ffebee,stroke:#c62828,color:#000
+    style M16 fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style M14 fill:#e3f2fd,stroke:#1565c0,color:#000
+    style M15 fill:#e3f2fd,stroke:#1565c0,color:#000
+    style M18 fill:#e3f2fd,stroke:#1565c0,color:#000
+    style M20 fill:#e3f2fd,stroke:#1565c0,color:#000
+    style M21 fill:#e3f2fd,stroke:#1565c0,color:#000
     style CEIL fill:#eceff1,stroke:#546e7a,color:#000
+    style BAR fill:#eceff1,stroke:#546e7a,color:#000
 ```
 
 ## One-line summary table
@@ -66,7 +105,9 @@ flowchart TD
 | [M17](m17_portmortem.md) | 07-18 | value-first 10k scale-up | 10k-game collection with new 20-id value net → osv3o_plan2 | offline val_acc 0.899 but mirror **0.380** / meta **0.396** / h2h 0.400 vs plan1 → **NO-SHIP** | 🔴 killed | SETUP=0 signature; root cause found in M18: encoder-width BUG (12-id states fed to 20-id net, exception swallowed) — postmortem's miscalibration hypothesis retracted |
 | [M18](m18.md) | 07-18→19 | fix the value teacher + DAgger re-weighting | leaf_value encoder dispatch fix + vs_errors/margin instrumentation + `--vs-margin` + weights column + `relabel` subcommand; 800-game re-collect (SETUP 2843, 0 errors) → plan3/4/5/6 candidates | plan4 (offline DAgger W=10) killed 0.278; plan3 mirror **0.484** (best neural ever) but meta 0.378; **plan5 (m18+m16+m15)** mirror 0.4294, meta 2-seed **~0.498 vs champion ~0.465** (solrock 0.475 vs 0.442); champion's pins revealed seed-stale (its meta seed1 = 0.395, fails both floors) → **SHIPPED 54817441** (Piotr call) | 🔭 live observation | value-teacher SETUP labels buy mirror/cost meta; plan_m15 = meta regularizer; offline disagreement-weighting = dead end; **re-pin all gates 2-seed pooled** |
 | M18.1 | 07-19 | fix the accidental deck swap | replay audit proved M16+M18 shipped `kyogre.csv` (Mega Abomasnow ace, 6 basics/60, 35 energy — DEFAULT_DECK fossil) while all gates measured `:lucario`; re-ship plan5 with `--deck lucario` | **SHIPPED 54817813** = plan5 + lucario (measured pairing); accidental same-net two-deck live A/B vs 54817441 | 🔭 live observation | never ship without explicit `--deck`; monitor notebook now replay-audits deck identity |
+| [M19](M19-plan.md) | 07-19 | repair the two replay-observed pilot defects: over-attach + no save-the-active retreat (deck engineering deferred) | teacher tier fixes (saturated attach −150×surplus; retreat tier 2b 1450) + ATTACH/RETREAT encoder extras (width 94 unchanged) + `[over-attach]` flag + `NN\|` net logging; 800-game re-collect (SETUP 3.47/g, 0 vs_errors) → m19a/b/c with rare-class label weights | m19a mirror **0.4275 pooled n=800** (parity vs plan5 0.4294) but flags unmoved (retreat 0.07/g); m19b (retreat 8×) fixes behavior **retreat 0.93/g** at mirror **0.3987** (−3pp); m19c (+decline-sat 4×) mirror **0.331** (−10pp, KILL); meta 2-seed all ~0.46 vs pin ~0.498 → **NO-SHIP** | 🔴 killed (infra kept) | label-reweighting at high dose = dead end (cost ∝ reweighted-row fraction); never read strength from 40-game flag samples; teacher fixes + encoder extras + NN-log instrumentation all landed for future nets |
 | [M20](M20.md) | 07-19 | revive PPO: test over-attach penalty + KL-anchor as strength/behavior lever | leg A defect-penalty 0.1 clip-only vs leg B defect-penalty 0.1 + KL-anchor 0.1, both 8 iters × 400g on plan5 (V3 encoder), lucario/lucario | legB mirror **0.488 pooled n=800** (0.469/0.507, +5.9pp vs plan5 0.4294 — campaign record); meta_v2 2-seed **~0.494** (parity vs champion ~0.498); random:kyogre **0.920/0.915** (clears floor plan5 misses); rule:lucario 0.341 (no regression); behavior objective unmoved (over-attach 0.72/g vs plan5 ~0.58–0.75); **SHIPPED 54836093** (Piotr call) | 🔭 live observation | PPO-on-V3 is a live strength lever (M8.3's "PPO is dead" does not transfer from v2 nets); in-loop n=200 evals = promotion triggers only, never evidence (legA's in-loop 37% "collapse" did not reproduce at n=800); campaign 0.55 bar still unmet at 0.488 |
+| [M21](M21-plan.md) | 07-19→ | complete observable state (encoder v4: logs-derived opponent memory + gap features) + plan-head-in-PPO + annealed-KL legs + opponent-mixture curriculum | forensics (gust/promote baselines) → logs probe → v4 encoder + zero-init migration of legB champion → EI re-baseline (Gate A non-inferiority) → PPO legs B1 (v4 stabilize) / B2 (meta mixture + plan-PPO) / B3 (KL→0) | 🚧 in progress | 🚧 | plan-head gets PPO gradient for the first time (fix for never-gusts); DAgger demoted to migration-only |
 
 ## Per-milestone notes
 
@@ -408,8 +449,13 @@ flowchart LR
     style V10 fill:#ffebee,stroke:#c62828,color:#000
 ```
 
-### M9 — pilot-fix + learning ladder ([M9-plan.md](M9-plan.md)) 🚧 in progress
-Restored 2026-07-16 as lead track. **Leg 1 (lead):** pilot v2 fixes behind a default-off
+### M9 — pilot-fix + learning ladder ([M9.md](M9.md), spec [M9-plan.md](M9-plan.md)) ⚖️ closed
+Restored 2026-07-16 as lead track, closed 07-16 with no ship: **every one of its own legs was
+killed**, but Leg 0's external-agent probe found the milestone's real payload — the buddy agent
+at **0.615 mirror / 0.578 meta**, far above anything we had. That reframed the campaign: the
+next several milestones are about reproducing buddy-like behavior with a learned policy (M11
+onward), and the `ext:` spec plus [buddy-analysis.md](buddy-analysis.md) are what M9 handed
+forward. The plan as written was: **Leg 1 (lead):** pilot v2 fixes behind a default-off
 `fixes` flag — Fix A hand-discard (Carmine burned t1, 38/100) + Fix B gust (Boss's Orders
 hoarded, 21/100); `solver2:` vs `solver:` gate ≥0.53 at n=400, can clear the bar outright.
 **Leg 2 (top learning rung):** DAgger on the solver — the strongest *observable and
@@ -438,9 +484,559 @@ flowchart LR
         J9["Leg 1 go ≥0.53 · imitation legs go ≥0.375"]
         K9["promotion: ≥0.55 pooled n≥1200, both seeds<br/>&gt;0.52 + floors + meta_v2 co-gate"]
     end
-    V9["🚧 IN PROGRESS — Leg 1 lead ∥ Leg 2;<br/>restored 07-16 after M10 NO-GO"]
+    V9["⚖️ CLOSED — own legs killed; Leg 0 found<br/>buddy 0.615 mirror / 0.578 meta → the M11+ target"]
     IN9 --> RUN9 --> ART9 --> GATE9 --> V9
-    style V9 fill:#e3f2fd,stroke:#1565c0,color:#000
+    style V9 fill:#fff8e1,stroke:#f9a825,color:#000
+```
+
+### M11 — learned turn-planning ([M11.md](M11.md), spec [M11-plan.md](M11-plan.md)) ⚖️
+The first attempt to make plan coherence *learned* rather than hand-coded: `solve_turn_line`
+emits per-step observations, `rl/plan.py` adds a PLAN_DIM=27 block, and `OptionScorerV3`
+scores plans-as-options alongside actions. Rung 0 gated at **0.278** and a protocol fix (plan
+once per turn, then hold) only reached 0.328 — the cause was label quality, not architecture:
+the "expert" was the solver with its override bars *bypassed*. Relabelling with bar-honoring
+semantics (label = `line[0]` only above `MIN_OVERRIDE_SCORE`, else greedy + null plan) lifted
+null-plan rate 0.57→0.93 and derails 422→60, and `osv3_plan0c` gated **0.415** (n=400 seed 1,
+confirmed 0.415 at n=800 seed 2, pooled 0.415 n=1200) — the campaign's best neural checkpoint
+at the time, +7pp over `osv2_bc2`. Expert iteration on top then died twice: round 1 **0.314**
+(per-prompt Gumbel noise stacked on τ=1.0 + Dirichlet, trained on junk states), redesigned
+round 2 **0.357** — two consecutive misses vs the 0.445 gate killed the EI ladder. A later
+live-observation round on 54779834 confirmed a Solrock over-attach bug, but all three
+inference-time guards (0.359 / 0.372 / 0.385) were killed and reverted.
+
+```mermaid
+flowchart LR
+    subgraph IN11["Data / inputs"]
+        A11["teacher: widened solve_turn_line 2.0s<br/>bars bypassed → bar-honoring"]
+        B11["warm start osv2_bc2.pt via load_v2_into_v3"]
+        C11["data/bc_v2b · league population.json"]
+    end
+    subgraph RUN11["Code that ran"]
+        D11["rl/plan.py — PLAN_DIM 27 (+risk/trade 23:27)"]
+        E11["rl/plan_iter.py collect --mode expert|ei · train"]
+        F11["rl/policy.py OptionScorerV3 — plan_logits"]
+        G11M["rl/matchrunner.py play — v3 model: branch"]
+    end
+    subgraph ART11["Artifacts"]
+        H11["osv3_plan0 · 0b · 0c · osv3_ei1 · osv3_ei2"]
+        I11["data/plan_ei0b · plan_ei2<br/>(plan_ei0, plan_ei1 quarantined)"]
+        J11["runs/m11_r0c_s1.jsonl · m11_r0c_s2.jsonl"]
+    end
+    subgraph GATE11["Gates / eval"]
+        K11["coverage ≥0.85: 0.952 / 0.993 PASS"]
+        L11["Rung 0 KILL 0.278 → 0.328 → 0.325"]
+        M11N["Rung 0'' 0.415 GO · pooled 0.415 n=1200"]
+        N11["EI ≥0.445: 0.314 · 0.357 KILL ×2"]
+        O11["meta co-gate 0.406"]
+    end
+    V11["⚖️ +7pp over BC, below ship bar —<br/>plan infra kept, EI ladder dead"]
+    IN11 --> RUN11 --> ART11 --> GATE11 --> V11
+    style V11 fill:#fff8e1,stroke:#f9a825,color:#000
+```
+
+### M12 — value-as-ranker ([M12.md](M12.md), spec [M12-plan.md](M12-plan.md)) ❌ NO-GO
+M9's Leg 4, run on the M11 stack: `score_siblings` (one-ply expansion + shared-budget `_dfs`
+per root candidate) feeds `rl/rank.py`, which collects from greedy on-distribution self-play
+and trains a pairwise-logistic head at RANK_MARGIN=200; the `rank:` pilot then overrides the
+solver when confident (CONF_MARGIN 1.0). Collection gave 400 games / 12,685 ranked prompts /
+~43.9k margin pairs in ~14 min. **Gate 1 passed decisively — held-out pairwise accuracy
+0.873 vs a 0.70 bar**, settling the long-running M8.4 question: "a value head can't rank
+siblings" was a *loss-function* problem, not an architecture problem. Gate 2 killed it anyway:
+the `rank:` pilot scored **0.383** (153W-247L, n=400) against a 0.415 kill line and a 0.500
+mirror null — the overrides cost ~12pp. The ranker reproduces the search's preferences almost
+perfectly, and those preferences still lose, which triangulated the real bottleneck with M8.1
+(0.314) and M11's flat EI rounds: **`score_leaf`'s development scoring is not an improvement
+signal on non-lethal turns**. A latent `_dev_facts` crash on turn-passed leaves (hand is None
+for the non-observer side, masked by `make_solver_pilot`'s exception swallowing) was fixed en
+route — the same swallow-pattern that would cost M17 a whole milestone.
+
+```mermaid
+flowchart LR
+    subgraph IN12["Data / inputs"]
+        A12["teacher: widened solve_turn_line sibling scores"]
+        B12["greedy solver self-play states (on-distribution)"]
+        C12["warm start: none — fresh V3-shaped net, plan=zeros"]
+    end
+    subgraph RUN12["Code that ran"]
+        D12["rl/turn_solver.py::score_siblings"]
+        E12["rl/rank.py collect · train (pairwise logistic)"]
+        F12["rl/matchrunner.py play --a rank:..."]
+    end
+    subgraph ART12["Artifacts"]
+        G12M["checkpoints/osv3_rank1.pt"]
+        H12["data/rank1 — 12,685 prompts · ~43.9k pairs"]
+        I12["runs/m12_g2_s1.jsonl · tests/test_rank.py"]
+    end
+    subgraph GATE12["Gates / eval"]
+        J12["Gate 1 pairwise acc ≥0.70: 0.873 PASS"]
+        K12["Gate 2 wr ≥0.445 / kill &lt;0.415: 0.383 KILL"]
+        L12["null reference: 0.500 mirror → overrides ≈ −12pp"]
+    end
+    V12["❌ NO-GO — ranking loss works,<br/>score_leaf is the bottleneck"]
+    IN12 --> RUN12 --> ART12 --> GATE12 --> V12
+    style V12 fill:#ffebee,stroke:#c62828,color:#000
+```
+
+### M13 — outcome-grounded setup value ([M13.md](M13.md), spec [M13-plan.md](M13-plan.md)) ⚖️
+If `score_leaf`'s heuristic tail is the bottleneck, replace it with something learned from
+actual game outcomes. Rung 0 landed CONDITIONAL_ATTACKS (Solrock/Lunatone card facts threaded
+through both combat twins), collected 2,000 games → 27,621 setup states, and trained on
+**matched pairs** — same turn bucket, same prize counts, same matchup — to held-out
+matched-pair accuracy **0.704** vs a 0.62 GO bar. The user-run 10k-game safari
+(`m13_collect.sh --target 10000`: 138,247 setup states, 86 shards) then lifted that to
+**0.768**, with the setup phase t4–15 at 0.79–0.80 — clean data-scaling, and the milestone's
+durable asset. The consumer died three times: threading `leaf_value` into `score_leaf`/`_dfs`
+gave **0.458**; recalibrating the override margin from the heuristic-era 900 to **200**
+(smallest LAMBDA·|ΔV| gap with ordering accuracy ≥0.80) gave **0.484**; the turn-gated variant
+gave **0.453** — all at or below the 0.500 mirror null. Together with M8.1 and M12 that is
+five measurements across three milestones, and it hardened into a campaign law: **override-style
+consumption of any evaluation signal on non-lethal turns does not work — the greedy tier system
+is locally optimal against itself.** The value was proven; only its consumer was dead, which set
+up M14.
+
+```mermaid
+flowchart LR
+    subgraph IN13["Data / inputs"]
+        A13["self-play states at live budgets + outcome labels"]
+        B13["warm trunk osv3_plan0c (value pathway, plan=0)"]
+        C13["data/setupval — 2k then 10k games, 86 shards"]
+        D13["CONDITIONAL_ATTACKS facts (Solrock/Lunatone)"]
+    end
+    subgraph RUN13["Code that ran"]
+        E13["rl/setup_value.py collect · train (matched pairs)"]
+        F13["m13_collect.sh --target 10000 — safari pipeline"]
+        G13M["rl/turn_solver.py leaf_value / dev_margin"]
+        H13["rl/matchrunner.py play --a vsolver:..."]
+    end
+    subgraph ART13["Artifacts"]
+        I13["osv3_setupval1.pt · osv3_setupval2.pt"]
+        J13["data/setupval — 138,247 setup states"]
+        K13["runs/m13_s1{,v2,v3}_screen.jsonl"]
+    end
+    subgraph GATE13["Gates / eval"]
+        L13["V0 matched-pair ≥0.62: 0.704 GO → 0.768"]
+        M13N["S1 v1 (go ≥0.53 / kill ≤0.50): 0.458 KILL"]
+        N13["S1 v2 margin 200: 0.484 KILL"]
+        O13["S1 v3 turn-gated: 0.453 KILL — null 0.500"]
+    end
+    V13["⚖️ value proven, override consumer dead ×3;<br/>the override law"]
+    IN13 --> RUN13 --> ART13 --> GATE13 --> V13
+    style V13 fill:#fff8e1,stroke:#f9a825,color:#000
+```
+
+### M14 — value feeds the PLANNER ([M14.md](M14.md), spec [M14-plan.md](M14-plan.md)) 🔭
+The correct consumer for M13's value: not an override at play time, but **plan-head training
+targets** — so the plan head learns what to *build* on the ~93% of turns that were previously
+plan-blind. The collector gained an `--opponents` rotation (solver mirror / `ext:` buddy /
+`rule:lucario`, teacher seat recorded only vs externals per M10's no-third-party-imitation ban)
+and a `--value-ckpt` setup-plan commit path (margin 200, turn <32). Collection hung on one
+worker stuck ~2.5h in a never-terminating external matchup — killed by exact PID, 730/800 games
+kept, and a **runaway-game cap** (600 prompts → draw) added as the durable fix. `osv3_plan2`
+trained to val_acc 0.896 / plan_acc 0.932 and **shipped as 54790886 with the win-rate gate
+user-waived** as an observation run; for the record it measured *below* baseline (mirror
+**0.383** vs plan0c 0.415, meta **0.403** vs 0.406, LB settled 427.3). The real payload came
+from the observation round: a behavioral diff over live replays showed attaches to *saturated*
+recipients rising 0.51 → 0.63 and Solrock-fed-without-Lunatone 0.9 → 1.8/game, diagnosing
+**energy waste as the dominant defect** and root-causing it to MAIN-phase `score_attach` never
+receiving `board_ids`. Fixing it in both twins made `solver:lucario` — the canonical opponent —
+about 6pp stronger, invalidating every pre-fix pin in the campaign.
+
+```mermaid
+flowchart LR
+    subgraph IN14["Data / inputs"]
+        A14["osv3_setupval2 value ckpt (12-id, margin 200)"]
+        B14["warm start osv3_plan0c.pt"]
+        C14["data/plan_m14 + plan_ei0b + bc_v2b"]
+        D14["opponents: solver mirror · ext:buddy · rule:lucario"]
+    end
+    subgraph RUN14["Code that ran"]
+        E14["rl/plan_iter.py collect --opponents --value-ckpt"]
+        F14["rl/plan_iter.py train (5ep 1e-4)"]
+        G14M["tcg.shipping export · gate --agent neural"]
+        H14["build_submission.sh"]
+    end
+    subgraph ART14["Artifacts"]
+        I14["osv3_plan2.pt (val_acc 0.896 / plan_acc 0.932)"]
+        J14["data/plan_m14 — 730/800 games"]
+        K14["runs/m14_record_s1.jsonl · monitor MODELS row"]
+    end
+    subgraph GATE14["Gates / eval"]
+        L14["technical gates green; win-rate gate WAIVED"]
+        M14N["mirror 0.383 (plan0c 0.415) — regression"]
+        N14["meta co-gate 0.403 (plan0c 0.406) · LB 427.3"]
+        O14["observation: saturated-attach 0.51 → 0.63"]
+    end
+    V14["🔭 SHIPPED 54790886 as observation run —<br/>found+fixed the energy-waste teacher bug"]
+    IN14 --> RUN14 --> ART14 --> GATE14 --> V14
+    style V14 fill:#e3f2fd,stroke:#1565c0,color:#000
+```
+
+### M15 — the net finally sees its hand ([M15.md](M15.md), spec [M15-plan.md](M15-plan.md)) 🔭
+`encode_state_v3` extends the state to **20 ids** (12 board + 8 sorted, zero-padded hand-card
+ids), `OptionScorerV3` becomes parameterized on `n_state_ids`, and `load_v3_into_v3h` migrates
+zero-init so hand-aware-with-zero-hand ≡ the old net — the warm-start invariant's third use.
+The honest re-pin landed first and cost 5.8pp on paper: `osv3_plan0c` scores **0.357** against
+the *post*-attach-fix `solver:lucario`, confirming the canonical opponent's ~6pp gain. Collection
+ran clean for the first time in three milestones — 800/800 games, 30,192 states, no hung workers
+— and `osv3h_plan1` screened **0.384** (+2.7pp over the honest 0.357 re-pin) with a meta co-gate
+of **0.419**, the best neural meta to that point. Shipped as **54793851**, the first hand-aware
+bundle (1708-wide `state_enc`, 3.57MB), later settling at 422.9. Two gotchas pinned here still
+matter: the raw screen jsonl codes **0=WIN** (naively summing reads 0.620 and is wrong), and a
+fresh Kaggle submission's 600.0 is the starting μ, not a result.
+
+```mermaid
+flowchart LR
+    subgraph IN15["Data / inputs"]
+        A15["warm start osv3_plan0c via load_v3_into_v3h"]
+        B15["data/plan_m15 — 800 games, 30,192 states"]
+        C15["legacy 12-id shards via pad shim"]
+        D15["fixed teacher (post score_attach fix)"]
+    end
+    subgraph RUN15["Code that ran"]
+        E15["rl/encoders.py encode_state_v3 (N_HAND_IDS=8)"]
+        F15["rl/policy.py OptionScorerV3(n_state_ids=...)"]
+        G15M["rl/plan_iter.py collect · train (5ep 1e-4)"]
+        H15["tcg/shipping.py gate · build_submission.sh"]
+    end
+    subgraph ART15["Artifacts"]
+        I15["osv3h_plan1.pt — 1708-wide state_enc, 3.57MB"]
+        J15["runs/m15_repin_plan0c.jsonl"]
+        K15["runs/m15_screen_s1.jsonl · m15_meta_s1.log"]
+    end
+    subgraph GATE15["Gates / eval"]
+        L15["re-pin plan0c 0.357 (n=400, post-fix solver)"]
+        M15N["mirror 0.384 = 153W/246L/1D, +2.7pp"]
+        N15["meta_v2 0.419 — best neural to date"]
+        O15["technical gates green (re-verified post-crash)"]
+    end
+    V15["🔭 SHIPPED 54793851 — hand-aware,<br/>honest +2.7pp; LB settled 422.9"]
+    IN15 --> RUN15 --> ART15 --> GATE15 --> V15
+    style V15 fill:#e3f2fd,stroke:#1565c0,color:#000
+```
+
+### M16 — see WHICH card an option plays ([M16.md](M16.md), spec [M16-plan.md](M16-plan.md)) ✅
+Replay forensics over 31 episodes of 54793851 indicted a defect present since v1 and never
+diagnosed: PLAY options carry only a hand index, so `encode_option` produced **byte-identical
+vectors for "Play Boss's Orders" and "play Poké Pad"** — 431/1353 live decision states (~14/game,
+32%) offered ≥2 indistinguishable trainers — and ATTACK options never encoded `attackId`. Worse,
+**all 5,628 PLAY labels in plan_m15 had acted-id 0**: identity was discarded at collection, so a
+re-collect was mandatory. The v3o fix resolves the played card from `hand[opt.index]` into the
+acted-card FEAT block plus an embedding id, and appends `N_OPTION_EXTRA = 4` identity features
+(printed dmg/300, cost/5, effective dmg vs opp active/300, number/10), keeping
+`encode_option_v2_legacy` selected by sniffed checkpoint width so pinned baselines stay
+reproducible. Trained on a deliberately **clean mix — plan_m16 + plan_m15 only**, dropping the
+pre-attach-fix energy-waste corpora — `osv3o_plan1` delivered the campaign's biggest single
+jump: mirror **0.427/0.421 → 0.424 pooled n=800** and meta_v2 **0.534**, +11.5pp over the prior
+neural best and the **first neural score above 0.5 on the 0.90-weight `mega_lucario_ex+solrock`
+archetype** (0.517). Shipped as **54801291**, settled **519.8**. Watch-list answers were honest
+about what did *not* move: energy waste was not unlearned (saturated-attach 0.49 vs plan0c 0.50).
+
+```mermaid
+flowchart LR
+    subgraph IN16["Data / inputs"]
+        A16["forensics: 31 eps of 54793851 (12W ≈ 0.39 live)"]
+        B16["warm start osv3h_plan1 via load_v3h_into_v3o"]
+        C16["clean mix: data/plan_m16 + data/plan_m15 ONLY"]
+        D16["data/external/buddy durable bundle copy"]
+    end
+    subgraph RUN16["Code that ran"]
+        E16["rl/encoders.py encode_option_v2 / _v2_legacy"]
+        F16["rl/policy.py option_dim_of(sd) width sniff"]
+        G16M["rl/plan_iter.py collect · train --init-v3o"]
+        H16["forensic_m16.py · label_audit_m16.py"]
+    end
+    subgraph ART16["Artifacts"]
+        I16["osv3o_plan1.pt (val_acc 0.769 / plan_acc 0.845)"]
+        J16["data/plan_m16 — 26,415 states, all PLAY ids resolved"]
+        K16["runs/m16_screen_s1.jsonl · _s2.jsonl · m16_meta_s1.log"]
+    end
+    subgraph GATE16["Gates / eval"]
+        L16["mirror 0.427 s1 / 0.421 s2 → 0.424 pooled n=800"]
+        M16N["vs v3h_plan1 0.384 · plan0c 0.357 (+4pp)"]
+        N16["meta_v2 0.534 (prev 0.419, +11.5pp)"]
+        O16["lucario+solrock 0.517 — first neural &gt;0.5"]
+    end
+    V16["✅ SHIPPED 54801291 — biggest gain of the<br/>campaign; LB settled 519.8"]
+    IN16 --> RUN16 --> ART16 --> GATE16 --> V16
+    style V16 fill:#e8f5e9,stroke:#2e7d32,color:#000
+```
+
+### M17 — value-first 10k scale-up ([m17_portmortem.md](m17_portmortem.md)) 🔴 killed
+The approved safari: 10k games collected with the new 20-id value net as setup-plan teacher,
+then retrain the option-identity policy. Offline metrics improved dramatically — val_acc
+0.769 → **0.899**, plan_acc 0.845 → 0.968 — and live play regressed on **every** axis: mirror
+**0.380** pooled n=800 (vs champion 0.424), meta **0.396/0.404** (vs 0.534), head-to-head vs
+plan1 only **0.400**. The 0.90-weight `mega_lucario_ex+solrock` archetype collapsed to 0.367
+from M16's 0.517 and single-handedly sank the meta score. The smoking gun was a counter:
+M16 committed 2,420 SETUP plans in 800 games (~3.0/game); M17b committed **0 across 10,000
+games**. The postmortem blamed value-net miscalibration against the margin-200 gate — **that
+hypothesis was retracted in M18**, which found the real cause: an encoder-width bug feeding
+12-id states to a 20-id net, with the exception swallowed. NO-SHIP; the gate correctly blocked
+a −4.4pp mirror regression, and the champion stayed at M16's 54801291.
+
+```mermaid
+flowchart LR
+    subgraph IN17["Data / inputs"]
+        A17["data/plan_m17b — 50 shards, 10k games"]
+        B17["data/plan_m17 — 32 shards, 6.4k games"]
+        C17["data/plan_m16 — 800 games"]
+        D17["osv3o_setupval1.pt value teacher (20-id, acc 0.800)"]
+    end
+    subgraph RUN17["Code that ran"]
+        E17["rl/plan_iter.py leaf_value · value_solve"]
+        F17["rl/bc.py train — 10k expert imitation"]
+        G17M["rl/matchrunner.py mirror screens + h2h"]
+        H17["forensic_m16.py"]
+    end
+    subgraph ART17["Artifacts"]
+        I17["checkpoints/osv3o_plan2.pt — NO-SHIP"]
+        J17["runs/m17_screen_s1.jsonl · _s2.jsonl"]
+        K17["runs/m17_meta_plan2.log · m17_h2h.jsonl"]
+    end
+    subgraph GATE17["Gates / eval"]
+        L17["mirror pooled n=800 0.380 KILL (champ 0.424)"]
+        M17N["meta_v2 0.404 / 0.396 KILL (champ 0.534)"]
+        N17["h2h vs plan1 0.400 (160W/240L) KILL"]
+        O17["SETUP plans committed: 0 in 10,000 games"]
+    end
+    V17["🔴 NO-SHIP — offline +13pp, live −4.4pp;<br/>root cause found only in M18"]
+    IN17 --> RUN17 --> ART17 --> GATE17 --> V17
+    style V17 fill:#ffebee,stroke:#c62828,color:#000
+```
+
+### M18 — fix the value teacher ([m18.md](m18.md)) 🔭 shipped
+Forensics overturned M17's postmortem outright. `leaf_value` (`rl/plan_iter.py:73`) hard-coded
+`encode_state_v2` (12 ids, 1580-wide) while `osv3o_setupval1.pt` is 20-id (1708-wide), so every
+call raised `RuntimeError` — swallowed by a bare `except Exception: pass` at
+`rl/plan_iter.py:99`. `value_solve` always returned `(None, None)`; **the value net was never
+evaluated once**, and M17's regression was pure volume dilution. The fix dispatches on
+`vnet.n_state_ids` and adds the instrumentation whose absence hid it for a milestone:
+`vs_calls`/`vs_errors` counters with tracebacks, margin percentile reporting, a `--vs-margin`
+flag, a `weights` shard column, and a `relabel` subcommand. Re-collection confirmed it — 800
+games, **SETUP 2843 = 3.55/game, vs_errors 0**. Of four candidates, offline
+disagreement-weighted DAgger (`plan4`, W=10) was **killed at 0.2775**, −15pp; `plan3` (m18+m16)
+posted the best mirror screen in campaign history (**0.4844 pooled**) but its meta collapsed to
+0.378; `plan5` (m18+m16+m15) won on the axis that matters, mirror 0.4294 pooled with meta
+2-seed **~0.498 vs champion ~0.465**. That comparison only became visible because re-measuring
+the champion revealed **its own pinned gates were seed-stale** — the champion's meta seed 1 is
+0.395 and it fails both of its own floors. Piotr shipped plan5 as **54817441**. The durable law:
+*every gate baseline must be 2-seed pooled.*
+
+```mermaid
+flowchart LR
+    subgraph IN18["Data / inputs"]
+        A18["data/plan_m18 — 800 games, SETUP 2843, vs_errors 0"]
+        B18["data/plan_m16 · data/plan_m15 (meta regularizer)"]
+        C18["data/plan_m16_w · plan_m15_w (W=10 relabel)"]
+        D18["osv3o_setupval1.pt — 20-id, now actually running"]
+    end
+    subgraph RUN18["Code that ran"]
+        E18["rl/plan_iter.py leaf_value encoder dispatch"]
+        F18["vs_calls/vs_errors + margin p10/50/90/99 + --vs-margin"]
+        G18M["rl/bc.py relabel · weighted policy-CE"]
+        H18["build_submission.sh --checkpoint osv3o_plan5.pt"]
+    end
+    subgraph ART18["Artifacts"]
+        I18["osv3o_plan3 · plan4 · plan5 · plan6 .pt"]
+        J18["runs/m18_collect.log · m18_relabel.log"]
+        K18["runs/m18a_screen_s1.jsonl · m18b{,2,3}_meta.log"]
+    end
+    subgraph GATE18["Gates / eval"]
+        L18["plan4 (offline DAgger W=10) 0.2775 KILL"]
+        M18N["plan3 mirror 0.4844 PASS · meta 0.378 KILL"]
+        N18["plan5 mirror 0.4375/0.4213 = 0.4294 pooled"]
+        O18["plan5 meta 2-seed ~0.498 vs champ ~0.465"]
+    end
+    V18["🔭 SHIPPED 54817441 (Piotr call) —<br/>champion's pins were seed-stale"]
+    IN18 --> RUN18 --> ART18 --> GATE18 --> V18
+    style V18 fill:#e3f2fd,stroke:#1565c0,color:#000
+```
+
+### M18.1 — the accidental deck swap 🔭 shipped
+Piotr spotted Mega Abomasnow ex in live replays of a bundle that was supposed to be piloting
+Lucario. Three things lined up: `tcg/shipping.py` carries an M1-era fossil
+`DEFAULT_DECK = "kyogre"`, `build_submission.sh` passes `--deck` only when given, and
+`decks/kyogre.csv` is a water deck whose ace is 4× Mega Abomasnow ex — the M1 "don't trust deck
+file names" trap, again. A `dist/` tarball audit by `deck.csv` md5 showed M11/M14/M15 bundles
+were Lucario (those builds passed `--deck` explicitly) while **M16's 54801291 was the first
+kyogre/abomasnow bundle** — the flag was dropped during that session's dry-build firefight and
+the omission was then codified into the train-ship skill, so M18 inherited it. No gate caught
+this, because the ship gate only checks bundle *self*-consistency while all offline measurement
+pairs the net with `:lucario` via spec strings outside the bundle. Re-shipping plan5 with an
+explicit `--deck lucario` as **54817813**, 37 minutes later, created an accidental clean A/B on
+the deck variable. The audit also reframed the record: **M16→M18 is the clean same-deck net A/B;
+M15→M16 is the confounded pair**, so M16's 422.7→519.8 jump may be substantially deck, not
+encoder.
+
+```mermaid
+flowchart LR
+    subgraph IN181["Data / inputs"]
+        A181["decks/kyogre.csv — actually 4× Mega Abomasnow ex"]
+        B181["decks/lucario.csv — the measured pairing"]
+        C181["dist/ tarball audit — deck.csv md5 per bundle"]
+        D181["live replays ep 86653767 (M16) · ep 86776210 (M18)"]
+    end
+    subgraph RUN181["Code that ran"]
+        E181["tcg/shipping.py DEFAULT_DECK = kyogre (fossil)"]
+        F181["build_submission.sh — DECK='' , --deck optional"]
+        G181M["notebooks/model_monitor.ipynb replay audit"]
+    end
+    subgraph ART181["Artifacts"]
+        H181["Kaggle 54817813 = plan5 + LUCARIO"]
+        I181["Kaggle 54817441 = plan5 + ABOMASNOW (A/B arm)"]
+        J181["docs/M19-plan.md replay post-mortem"]
+    end
+    subgraph GATE181["Gates / eval"]
+        K181["bundle deck verified LUCARIO by tarball md5"]
+        L181["measured pairing: mirror 0.4294 pooled n=800"]
+        M181N["meta 2-seed ~0.498 vs champion ~0.465"]
+        N181["M15→M16 now known CONFOUNDED (deck changed)"]
+    end
+    V181["🔭 SHIPPED 54817813 — never ship without<br/>an explicit --deck"]
+    IN181 --> RUN181 --> ART181 --> GATE181 --> V181
+    style V181 fill:#e3f2fd,stroke:#1565c0,color:#000
+```
+
+### M19 — repair the two piloting defects ([M19.md](M19.md), spec [M19-plan.md](M19-plan.md)) 🔴 killed
+Both replay-observed defects turned out to be dual-layer. The greedy teacher scored a saturated
+ATTACH tier at a flat 600 with no surplus penalty and its escape tier required lethal already on
+board; the encoder gave ATTACH options only the target's printed features and RETREAT a bare
+type one-hot. Fixes landed in both twins (saturated tier = 600 + dmg-bonus − 150×min(surplus,3);
+retreat tier 2b = 1450 for a ≥2-prize active at hp ≤0.4 with an attack-READY bench; ATTACH and
+RETREAT identity extras at unchanged width 94), 469 tests green. But a 40+40-game teacher A/B
+showed **the teacher was already mostly clean** (over-attach 0.10 → 0.05/game) — so the live
+defect was an *imitation* failure: the net was offered retreat 21×/game and took it 0.11×/game.
+Three candidates trained warm from plan5 mapped the trade precisely. `m19a` (no reweight) held
+mirror parity at **0.4275 pooled n=800** but the flags did not move at all (retreat 0.07/g).
+`m19b` (retreat rows 8×, 2.2% of rows) fixed the behavior outright — **retreat 0.93/g** — and
+paid **−3pp** mirror (0.3987). `m19c` (+decline-saturated 4×, 10.4% of rows) moved both axes and
+**collapsed to 0.331**, −10pp. The dose-response is the finding: cost scales with the reweighted-row
+fraction, generalizing M18's disagreement-weighting dead end into a law about label reweighting
+as such. Nothing shipped; champion stayed plan5. A second rule fell out of `m19c` reading 0.475
+at n=40 and 0.331 at n=800: **never read strength from a 40-game flag sample.**
+
+```mermaid
+flowchart LR
+    subgraph IN19["Data / inputs"]
+        A19["data/plan_m19 — 800 games seed 3, value-teacher"]
+        B19["data/plan_m16 + plan_m15 (meta regularizer)"]
+        C19["data/plan_m19_rw · plan_m19_rw2 (reweighted)"]
+        D19["warm start + pin: osv3o_plan5.pt"]
+    end
+    subgraph RUN19["Code that ran"]
+        E19["tcg/constants.py score_attach / score_retreat tiers"]
+        F19["encode_option_v2 ATTACH+RETREAT extras (width 94)"]
+        G19M["rl/plan_iter.py collect · train (rare-class weights)"]
+        H19["rl/postmortem.py [over-attach] · main.py NN|{json} log"]
+    end
+    subgraph ART19["Artifacts"]
+        I19["osv3o_m19a.pt · m19b.pt · m19c.pt (none shipped)"]
+        J19["runs/m19_collect.log · m19{a,b,c}_train.log"]
+        K19["40-game defect-measurement harness"]
+    end
+    subgraph GATE19["Gates / eval"]
+        L19["m19a mirror 0.4275 n=800 = parity, flags unmoved"]
+        M19N["m19b mirror 0.3987 (−3pp), retreat 0.93/g FIXED"]
+        N19["m19c mirror 0.331 (−10pp) KILL"]
+        O19["meta 2-seed all ≈0.46 vs pin ~0.498"]
+    end
+    V19["🔴 NO-SHIP — behavior↔strength trade quantified;<br/>reweighting dose-response is the law"]
+    IN19 --> RUN19 --> ART19 --> GATE19 --> V19
+    style V19 fill:#ffebee,stroke:#c62828,color:#000
+```
+
+### M20 — PPO revived on V3 ([M20.md](M20.md), spec [M20-plan.md](M20-plan.md)) 🔭 shipped
+If label reweighting buys behavior with strength (M19), try RL instead: over-attach as a dense
+negative reward, with a KL-anchor to plan5 as the second arm. V3 support was threaded through
+the whole PPO stack — `_load_model` v3 sniff, a `plans` shard column, duck-typed `_forward`
+dispatch, a KL term in `ppo_update` (both twins), a V3 collector path with a turn-scoped plan
+state machine, and an `_is_over_attach` live-obs detector feeding the penalty — 473 tests green.
+Two legs ran 8 iters × 400 games from plan5 at lr 3e-5. Verification overturned the in-loop
+story completely: leg B measured **0.488 pooled mirror at n=800** (0.469 / 0.507), **+5.9pp over
+plan5 and the largest mirror result of the campaign**, while leg A — whose in-loop eval had read
+a scary 37.0% — landed 0.481 at n=400. That phantom 13pp "collapse" did not reproduce, which
+pinned the rule: **in-loop n=200 evals are promotion triggers only, never evidence.** Meta_v2
+2-seed came in at ~0.494, parity with the champion's ~0.498; floors passed with room
+(`random:kyogre` 0.920/0.915 — which plan5 actually misses at 0.815/0.870 — and `rule:lucario`
+0.341, no regression). The honest caveat is that **the objective it was built for did not move**:
+over-attach stayed at 0.72/g vs plan5's ~0.58–0.75, so penalty 0.1 was under-dosed in both arms.
+It shipped on strength alone as **54836093**. The larger result is that M8.3's "PPO is dead on
+this loop" is now explicitly scoped to v2 nets — **PPO-on-V3 is a live strength lever** — and the
+campaign bar remains unmet, 6.2pp short at 0.488.
+
+```mermaid
+flowchart LR
+    subgraph IN20["Data / inputs"]
+        A20["osv3o_plan5.pt — start policy AND frozen KL ref"]
+        B20["on-policy rollouts: 400 games/iter × 8 × 2 legs"]
+        C20["decks/lucario.csv — learn and eval deck"]
+    end
+    subgraph RUN20["Code that ran"]
+        D20["rl/ppo.py — KL-anchor, V3 _load_model, --tag"]
+        E20["rl/collector.py — V3 path, plans col, _is_over_attach"]
+        F20["rl/matchrunner.py V3 pilot — verify battery"]
+        G20M["build_submission.sh --checkpoint ... --deck lucario"]
+    end
+    subgraph ART20["Artifacts"]
+        H20["ppo_best_m20legB.pt (shipped)"]
+        I20["ppo_m20legB_it0005.pt · ppo_current_m20legA.pt"]
+        J20["dist/submission_neural_20260719_182911.tar.gz"]
+    end
+    subgraph GATE20["Gates / eval"]
+        K20["legB mirror 0.488 pooled n=800 (0.469/0.507)"]
+        L20["legA 0.481 n=400 — in-loop 37.0% did NOT reproduce"]
+        M20N["meta_v2 2-seed ≈0.494 vs champion ~0.498 (parity)"]
+        N20["floors: random 0.920/0.915 · rule 0.341 PASS"]
+        O20["behavior objective UNMOVED: over-attach 0.72/g"]
+    end
+    V20["🔭 SHIPPED 54836093 (Piotr call) — PPO-on-V3 is<br/>a live strength lever; 0.55 bar still 6.2pp away"]
+    IN20 --> RUN20 --> ART20 --> GATE20 --> V20
+    style V20 fill:#e3f2fd,stroke:#1565c0,color:#000
+```
+
+### M21 — complete observable state + plan-head-in-PPO ([M21.md](M21.md), spec [M21-plan.md](M21-plan.md)) 🚧 in progress
+Kicked off 2026-07-19 on `feature/m21`, pinned against champion `ppo_best_m20legB` + lucario
+(mirror 0.488, sub 54836093). Step-0 forensics over 22 episodes of the live champion quantified
+two defects Piotr spotted in replays, and the numbers are stark: **Boss's Orders was in hand in
+136 MAIN states across 16 of 22 games and played exactly zero times**, missing all 27 kill-shot
+gust opportunities; retreats were taken 2/25 (92% missed). An encoding-awareness check on a
+specific missed retreat (ep 86926859 step 137, active 130/340 vs a full-HP benched twin)
+confirmed bench HP and all board ids *are* present in the v3 state vector — **the net is not
+blind here, so these are policy failures, not representation failures**, which is a different
+diagnosis from M15/M16/M19. The root-cause hypothesis: the plan head has never received a PPO
+gradient and plans are selected greedily at collection, so gust plans are never sampled. Scope
+follows from that — encoder v4 (logs-derived opponent memory + gap features) with a zero-init
+migration of the legB champion, an EI re-baseline behind a non-inferiority Gate A, then PPO legs
+B1 (v4 stabilize) / B2 (meta mixture + plan-PPO) / B3 (KL→0). Leg gate baselines are pinned at
+**gust-conversion 0/27 = 0.00** and **retreat-conversion 2/25 = 0.08**; B2 promotion requires
+strict improvement on gust-conversion. DAgger is demoted to migration-only.
+
+```mermaid
+flowchart LR
+    subgraph IN21["Data / inputs — planned"]
+        A21["champion pin ppo_best_m20legB.pt + decks/lucario.csv"]
+        B21["22 live episodes of sub 54836093 (12W–10L)"]
+        C21["turn logs → opponent memory + gap features"]
+    end
+    subgraph RUN21["Code to run — planned"]
+        D21["encoder v4 + zero-init migration of legB"]
+        E21["EI re-baseline behind Gate A non-inferiority"]
+        F21["PPO leg B1 v4 stabilize · B2 meta mixture + plan-PPO"]
+        G21M["PPO leg B3 annealed KL→0"]
+    end
+    subgraph ART21["Artifacts — planned"]
+        H21["docs/M21.md diary · m21_forensics.py"]
+        I21["v4 checkpoints · opponent-mixture curriculum"]
+    end
+    subgraph GATE21["Gates"]
+        J21["baselines: gust-conversion 0/27 · retreat 2/25"]
+        K21["Gate A: EI non-inferior to legB champion"]
+        L21["B2 promotion: strict gust-conversion improvement"]
+        M21N["campaign bar unchanged: 0.55, n≥800 2-seed pooled"]
+    end
+    V21["🚧 IN PROGRESS — plan head gets a PPO<br/>gradient for the first time"]
+    IN21 --> RUN21 --> ART21 --> GATE21 --> V21
+    style V21 fill:#e3f2fd,stroke:#1565c0,color:#000
 ```
 
 ## Cross-cutting findings
@@ -452,14 +1048,47 @@ flowchart LR
   reasoning is **observable** — and now *queryable*: the solver.
 - **A win/loss classifier can't rank sibling actions:** the same value-head failure sighted in
   M5 (hybrid), M2/M8.4 (MCTS), motivating M9 Leg 4's pairwise ranking head.
-- **Measured dead ends (do not re-propose):** more PPO iterations on the current loop
-  (M8.3, reproduced 07-14) · inference-time MCTS on the current value head (M8.4) ·
-  dev-tier solver (M8.1) · rule-pilot BC teacher (M1–M3) · BC from replays of search-based
-  agents (M10).
-- **Pinned baselines vs `solver:lucario`:** `osv2_bc2` 0.345 · `ppo_m83_legB_it5` 0.359 ·
-  solver mirror 0.500. Meta_v2 co-gate: ship 0.448 · `osv2_bc2` 0.405.
+- **The override law (M8.1, M12, M13 — five measurements, three milestones):** override-style
+  consumption of *any* evaluation signal on non-lethal turns loses. 0.314 · 0.383 ·
+  0.458/0.484/0.453, all at or below the 0.500 mirror null. The greedy tier system is locally
+  optimal against itself; a learned signal must enter as **training targets** (M14 onward),
+  not as a play-time override.
+- **The reweighting dose-response (M18, M19):** upweighting rare label classes buys behavior
+  and pays in strength, roughly in proportion to the fraction of rows touched — 2.2% → −3pp,
+  10.4% → −10pp, W=10 offline DAgger → −15pp. Not disagreement-specific; a property of label
+  reweighting as such.
+- **Encoder blindness is the recurring root cause.** Three milestones in a row found the net
+  could not *see* the thing it was failing at: its hand (M15), which card a PLAY option plays
+  (M16, aliased since v1 and undiagnosed for fifteen milestones), and attach/retreat context
+  (M19). Suspect representation before algorithm.
+- **Instrument the silent path.** M17 lost an entire milestone to a `RuntimeError` swallowed
+  by a bare `except Exception: pass`; the value net was never evaluated once and the
+  postmortem blamed the wrong component. The same swallow-pattern hid a crash in M12. Any
+  swallowed exception needs a counter.
+- **Measurement discipline (M18, M19, M20):** every gate baseline must be **2-seed pooled** —
+  the champion's own single-seed pins turned out not to replicate. Never read strength from a
+  40-game flag sample (M19: 0.475 at n=40, 0.331 at n=800). In-loop n=200 evals are
+  **promotion triggers only, never evidence** (M20: a phantom 13pp collapse).
+- **Measured dead ends (do not re-propose):** inference-time MCTS on the current value head
+  (M8.4) · dev-tier solver (M8.1) · rule-pilot BC teacher (M1–M3) · BC from replays of
+  search-based agents (M10) · expert iteration on a teacher whose improvement operator fires
+  rarely (M11) · distilling `score_leaf` preferences into a confident override (M12, M13) ·
+  offline disagreement-weighted BC repair (M18) · high-dose label reweighting (M19) ·
+  high-volume plain expert imitation without a working value teacher (M17). **Un-made:**
+  M8.3's "more PPO is dead" is scoped to v2 nets and does **not** transfer — PPO-on-V3 is a
+  confirmed strength lever (M20).
+- **Current pinned baselines (2-seed pooled, vs post-attach-fix `solver:lucario`):** champion
+  `ppo_best_m20legB` mirror **0.488** · meta_v2 **~0.494** · `random:kyogre` 0.920/0.915 ·
+  `rule:lucario` 0.341. Predecessor `osv3o_plan5` 0.4294 / ~0.498. Historic, on the *pre*-fix
+  solver and not comparable: `osv2_bc2` 0.345, `osv3_plan0c` 0.415.
 - **Ship history:** 54444045 (bc_v1, M1) → 54474043 (rules probe, M6) → 54586430
-  (solver-on, M7.4a) → 54621283 (solver + 5 pilot fixes, M7.5 — current live).
+  (solver-on, M7.4a) → 54621283 (solver + 5 pilot fixes, M7.5) → 54790886 (osv3_plan2, M14
+  observation) → 54793851 (osv3h_plan1 hand-aware, M15, settled 422.9) → 54801291
+  (osv3o_plan1 option-identity, M16, settled 519.8 — but see M18.1: this bundle piloted the
+  abomasnow deck) → 54817441 (osv3o_plan5, M18) → 54817813 (same net + lucario, M18.1) →
+  **54836093 (ppo_best_m20legB, M20 — current live)**.
+- **Where the campaign stands:** 0.488 vs the 0.55 bar, 6.2pp short. The largest untouched
+  lever is **deck surgery** — every milestone since M11 has moved the policy, not the deck.
 
 ## Glossary
 
@@ -521,3 +1150,39 @@ flowchart LR
   mirrored after a change survives measurement.
 - **dead end** — a lever measured to a NO-GO that must not be re-proposed; the list lives in
   Cross-cutting findings above.
+- **encoder generations** — **v2** (12 state ids), **v3 / hand-aware / v3h** (20 ids = 12 board
+  + 8 sorted hand-card ids, `encode_state_v3`, M15), **v3o / option-identity** (v3h plus
+  `N_OPTION_EXTRA = 4` identity features and a resolved acted-card id, M16). Checkpoints are
+  prefixed accordingly (`osv3_`, `osv3h_`, `osv3o_`). Legacy encoders are kept and selected by
+  sniffing checkpoint width so pinned baselines stay reproducible.
+- **warm-start invariant** — every encoder migration (`load_v2_into_v3`, `load_v3_into_v3h`,
+  `load_v3h_into_v3o`) zero-inits the new inputs so the migrated net is *exactly* equivalent to
+  its predecessor on day one; the gain is then attributable to the new features alone.
+- **plan-conditioned policy / plans-as-options** — the M11 architecture: the turn's attack plan
+  is a PLAN_DIM=27 feature block scored like an option, chosen once per turn and held.
+  **bar-honoring labels** — plan labels taken from the solver line only when it clears
+  `MIN_OVERRIDE_SCORE`, else greedy + null plan; the fix that took M11 from 0.328 to 0.415.
+- **setup plan** (vs kill plan) — a plan committed for what to *build* rather than what to
+  attack, labelled by the setup-value net at data-gen (M14). **SETUP=0** is the M17 failure
+  signature: zero setup plans committed across 10,000 games.
+- **matched pairs** — the M13 training signal for setup value: two states from the same turn
+  bucket, prize counts and matchup, ranked by which one won.
+- **value-teacher** — a value net used at *collection* time to label plans, never as a
+  play-time override (the distinction the override law forces).
+- **meta regularizer** — keeping an older corpus (`plan_m15`) in the training mix because it
+  holds up the meta co-gate even when it costs mirror strength; the M18 dose-response was
+  0% → 0.378, 33% → 0.487.
+- **KL-anchor** — a penalty pulling the PPO policy toward a frozen reference (plan5), the
+  "rubber band" that let M20 run 8 iterations without the peak-then-decay drift.
+  **defect penalty** — dense negative reward on an observed behavioral defect (over-attach).
+- **defect/g, retreat-taken/g** — behavioral rates measured per game from replays, the axis
+  M19/M20 tried to move independently of win rate.
+- **seed-stale pin** — a baseline measured on one seed that does not replicate; M18 found the
+  champion's own gates were seed-stale, which is why all baselines are now 2-seed pooled.
+- **0=WIN gotcha** — the raw screen jsonl codes a win as `0`; naively summing the results array
+  inverts the win rate (M15).
+- **runaway-game cap** — 600 prompts → scored as a draw, added in M14 after an external matchup
+  hung a worker for ~2.5h.
+- **net × deck pairing** — the shipped bundle's deck must equal the deck the net was *measured*
+  with. The ship gate only checks bundle self-consistency, so M16 and M18 shipped a net measured
+  on lucario while piloting the abomasnow deck (M18.1). Always pass `--deck` explicitly.

@@ -7,6 +7,21 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-19 · Dragapult ex company sample agent ≈ Lucario-expert strength → third archetype package added
+**Observation:** the Pokemon-company "Dragapult ex" rule agent (repo-root
+`a-sample-rule-based-agent-dragapult-ex-deck.ipynb`, "Advanced Level" — Phantom Dive
+multi-KO planning with card counting and turn-log inference) integrated as
+`sample-agent-dragapult/` + `decks/dragapult.csv`, same extraction as Iono (M2).
+Slot-fair series, n=200 × 2 seeds, 0 pilot errors in 1200 games:
+vs `rule:iono` **0.657** pooled; vs `rule:lucario` **0.495**; vs `rule:tuned` 0.477 —
+parity with our strongest teacher, far above Iono.
+**Pivot:** registered as teacher + deck in `rl/teacher.py` / `tcg/teachers.py` and as a
+`dragapult_expert` league anchor. NOT yet added to the `rl/collector.py` opponent pool or
+any collection mix — changing the training distribution is a milestone-level decision
+(M7.5 "you become what you train against"). Candidate levers for the next milestone:
+dragapult as expert teacher for plan_iter collection, and the dragapult deck itself
+(deck surgery remains the top strength lever).
+
 ### 2026-07-11 · The turn solver is a WRAPPER around the pilot, not a scorer hook — and boost items are detected empirically, not classified
 **Decisions (M7.4a):** (1) `rl/turn_solver.py` wraps `make_generic_pilot` (the rl/hybrid.py
 shape) instead of hooking `score_option`: the shipping pilot and its `tcg/pilot.py` twin stay
