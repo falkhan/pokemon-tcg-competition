@@ -1,0 +1,1 @@
+model:checkpoints/osv3o_plan4.pt:lucario vs solver:lucario: 110W 288L 2D over 400 (wr=0.278)

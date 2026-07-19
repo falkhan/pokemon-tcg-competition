@@ -1,0 +1,5 @@
+[w1] game 25: 2.1s/game -> projected 89 min
+[w3] game 25: 2.9s/game -> projected 119 min
+[w2] game 25: 3.8s/game -> projected 157 min
+[w0] game 25: 4.1s/game -> projected 171 min
+done: 1122 games, 15135 setup states -> data/setupval

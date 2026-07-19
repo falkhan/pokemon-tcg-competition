@@ -1,0 +1,16 @@
+[w0] game 25: 3.5s/game -> projected 49 min for this worker's 834 games
+[w10] game 25: 5.7s/game -> projected 79 min for this worker's 834 games
+[w3] game 25: 6.5s/game -> projected 90 min for this worker's 834 games
+[w4] game 25: 7.6s/game -> projected 106 min for this worker's 834 games
+[w6] game 25: 8.1s/game -> projected 112 min for this worker's 834 games
+[w8] game 25: 10.2s/game -> projected 142 min for this worker's 834 games
+[w5] game 25: 13.6s/game -> projected 189 min for this worker's 834 games
+[w11] game 25: 13.8s/game -> projected 190 min for this worker's 826 games
+[w9] game 25: 14.7s/game -> projected 204 min for this worker's 834 games
+[w2] game 25: 14.7s/game -> projected 205 min for this worker's 834 games
+[w7] game 25: 16.4s/game -> projected 227 min for this worker's 834 games
+[w1] game 25: 16.8s/game -> projected 234 min for this worker's 834 games
+free(): invalid pointer
+free(): invalid pointer
+/home/falkhan/.local/share/uv/python/cpython-3.12.8-linux-x86_64-gnu/lib/python3.12/multiprocessing/resource_tracker.py:254: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
