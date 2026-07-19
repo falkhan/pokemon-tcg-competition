@@ -301,6 +301,48 @@ def test_number_option_identity_block():
         assert n[old.OPTION_DIM + 3] == np.float32(0.3)
 
 
+# --- M19 attach/retreat extra block ------------------------------------------
+
+def test_attach_option_energy_sufficiency_block():
+    """ATTACH options encode the target's CURRENT energy state — previously
+    printed features only (the live Solrock over-attach blind spot)."""
+    base = old.OPTION_DIM
+    # active card 1 with 2 energies: charged-best (102, cost 2) is paid
+    me = player(active=pokemon(1, energies=[FIGHTING, FIGHTING]),
+                bench=[pokemon(4)])                      # bench card 4: 1-cost, empty
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    sat = option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE, in_play_index=0)
+    hungry = option(OptionType.ATTACH, in_play_area=AreaType.BENCH, in_play_index=0)
+    for mod in (old, new):
+        n_sat, _ = mod.encode_option_v2(sat, obs)
+        assert n_sat[base:base + 3].tolist() == [
+            np.float32(2 / 5), np.float32(0.0), np.float32(1.0)]
+        n_hungry, _ = mod.encode_option_v2(hungry, obs)
+        assert n_hungry[base:base + 3].tolist() == [
+            np.float32(0.0), np.float32(1 / 5), np.float32(0.0)]
+
+
+def test_retreat_option_utility_block():
+    """RETREAT options encode (damage fraction, prizes at risk, bench-ready)
+    — previously a bare type one-hot (the save-the-active blind spot)."""
+    base = old.OPTION_DIM
+    me = player(active=pokemon(3, hp=100, max_hp=340),   # damaged 3-prize Mega
+                bench=[pokemon(1, energies=[FIGHTING, FIGHTING])])
+    obs = observation(me=me, opponent=player(active=pokemon(5, hp=999)))
+    o = option(OptionType.RETREAT)
+    for mod in (old, new):
+        n, _ = mod.encode_option_v2(o, obs)
+        assert n[base] == np.float32(1.0 - 100 / 340)
+        assert n[base + 1] == np.float32(1.0)            # 3 prizes / 3
+        assert n[base + 2] == np.float32(1.0)            # ready bench
+    # unready bench zeroes the flag
+    me2 = player(active=pokemon(3, hp=100, max_hp=340), bench=[pokemon(1)])
+    obs2 = observation(me=me2, opponent=player(active=pokemon(5, hp=999)))
+    for mod in (old, new):
+        n, _ = mod.encode_option_v2(o, obs2)
+        assert n[base + 2] == np.float32(0.0)
+
+
 def test_board_ids_layout_and_padding():
     me = player(active=pokemon(1), bench=[pokemon(3), None, pokemon(5)])
     obs = observation(me=me, opponent=player())

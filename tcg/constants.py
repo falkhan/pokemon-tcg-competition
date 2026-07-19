@@ -75,6 +75,11 @@ SCORE_ATTACH_ACTIVE_BASE = 2600         # loading a real attacker that still nee
 SCORE_ATTACH_BENCH_BASE = 2400
 SCORE_ATTACH_ALREADY_LOADED = 600       # BEST damaging attack already charged (M7.2b: was
                                         # the cheapest — which stopped charging too early)
+ATTACH_SURPLUS_PENALTY = 150            # M19: per energy beyond the charged-best cost —
+                                        # the flat 600 tier kept overfeeding a 1-cost
+                                        # Solrock (live: 3+ energies) while the Mega
+                                        # active starved of retreat fuel
+ATTACH_SURPLUS_CAP = 3                  # penalty saturates: 600/450/300/150 floor
 SCORE_ATTACH_NO_TARGET = 500            # couldn't resolve the target Pokémon
 SCORE_ATTACH_NON_ATTACKER = 400         # don't waste energy on benchwarmers
 ATTACH_DAMAGE_BONUS_CAP = 300           # tiny tiebreaker: prefer the harder hitter
@@ -84,6 +89,12 @@ ATTACH_DAMAGE_BONUS_DIVISOR = 100
 
 SCORE_RETREAT_PROMOTE_LETHAL = 2900  # bench has a KO the active can't deliver
 SCORE_RETREAT_ESCAPE_KO = 1500       # active would be KO'd; save it
+SCORE_RETREAT_SAVE_VALUABLE = 1450   # M19: damaged multi-prize active (Mega/ex) rotates
+                                     # out into an attack-READY bench BEFORE the lethal
+                                     # is on board (live prize-race losses end with the
+                                     # opponent taking 3 off our Mega)
+SAVE_ACTIVE_HP_FRACTION = 0.4        # ... "damaged" bar for that tier
+SAVE_ACTIVE_MIN_PRIZES = 2           # ... only actives worth 2+ prizes justify the swap
 SCORE_RETREAT_NEVER = -1             # healthy active or empty bench: stay put
 SCORE_RETREAT_HURT_BASE = 100        # hurt active: mildly consider rotating out
 RETREAT_BENCH_DAMAGE_DIVISOR = 20    # ... a bit more if a strong bench attacker wants in

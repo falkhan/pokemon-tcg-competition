@@ -9,7 +9,14 @@ bundle never imports polars. Greedy argmax matches evaluation
 (rl/matchrunner.py model pilot, greedy=True).
 
 Built by `python -m tcg.shipping export --checkpoint <ckpt> --deck <deck>`.
+
+Per-decision net-internals log (M19): one compact `NN|{json}` line per agent
+call on stderr — Kaggle stores agent stderr per step (episode agent logs,
+`rl.kaggle_ingest agent-logs`), and the replay JSON itself carries the option
+menu but none of the net's scores. Joined back to the replay by the obs
+`step` field (`rl/postmortem.py`). Disable with PKM_AGENT_LOG=0.
 """
+import json
 import os
 import sys
 
@@ -57,6 +64,23 @@ if _IS_V3:
     # each turn's FIRST own MAIN prompt, hold for the turn. Reset on the
     # deck-return call and on a turn-counter drop (new game, reused process).
     _PSTATE = {"key": None, "vec": None, "last_turn": -1}
+
+
+_LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
+
+
+def _log_net(rec: dict) -> None:
+    """Emit one `NN|{json}` line on stderr. Must never kill a live game, but
+    failures are not swallowed silently either (M18 lesson) — they surface as
+    an NN|ERR| line in the same log."""
+    try:
+        sys.stderr.write("NN|" + json.dumps(rec, separators=(",", ":")) + "\n")
+    except Exception as exc:
+        sys.stderr.write(f"NN|ERR|{exc!r}\n")
+
+
+def _r3(arr) -> list[float]:
+    return [round(float(x), 3) for x in arr]
 
 
 def _linear(x, name):    # torch Linear stores weight as (out, in) -> transpose!
@@ -111,6 +135,8 @@ def agent(obs_dict: dict) -> list[int]:
     if obs.select is None:  # game start: return the deck list
         if _IS_V3:
             _PSTATE.update(key=None, vec=None, last_turn=-1)
+        if _LOG_NET:
+            _log_net({"ev": "start", "v3": _IS_V3})
         return DECK
     numeric, state_ids = (_encode_state if _IS_V3
                           else encode_state_v2)(obs.current, DECK)
@@ -119,23 +145,31 @@ def agent(obs_dict: dict) -> list[int]:
     pairs = [encode_option_v2(o, obs) for o in obs.select.option]
     options = np.stack([n for n, _ in pairs]).astype(np.float32)
     option_ids = np.stack([i for _, i in pairs])
+    plan_rec = None
     if not _IS_V3:
         scores = score_options_v2(state_ctx, state_ids, options, option_ids)
-        order = np.argsort(scores)[::-1]
-        return [int(i) for i in order[:obs.select.maxCount]]
-
-    t = obs.current.turn
-    if t < _PSTATE["last_turn"]:                 # new game in a reused process
-        _PSTATE.update(key=None, vec=None)
-    _PSTATE["last_turn"] = t
-    key = (t, obs.current.yourIndex)
-    if obs.select.context == SelectContext.MAIN and _PSTATE["key"] != key:
-        cands = enumerate_plans(obs)
-        mat = np.stack([encode_plan(c) for c in cands]).astype(np.float32)
-        idx = int(np.argmax(score_plans(state_ctx, state_ids, mat)))
-        _PSTATE.update(key=key, vec=mat[idx].copy())
-    plan = (_PSTATE["vec"] if _PSTATE["key"] == key and _PSTATE["vec"] is not None
-            else np.zeros(PLAN_DIM, dtype=np.float32))
-    scores = score_options_v3(state_ctx, plan, state_ids, options, option_ids)
+    else:
+        t = obs.current.turn
+        if t < _PSTATE["last_turn"]:             # new game in a reused process
+            _PSTATE.update(key=None, vec=None)
+        _PSTATE["last_turn"] = t
+        key = (t, obs.current.yourIndex)
+        if obs.select.context == SelectContext.MAIN and _PSTATE["key"] != key:
+            cands = enumerate_plans(obs)
+            mat = np.stack([encode_plan(c) for c in cands]).astype(np.float32)
+            plan_scores = score_plans(state_ctx, state_ids, mat)
+            idx = int(np.argmax(plan_scores))
+            _PSTATE.update(key=key, vec=mat[idx].copy())
+            plan_rec = {"p": idx, "psc": _r3(plan_scores)}
+        plan = (_PSTATE["vec"] if _PSTATE["key"] == key and _PSTATE["vec"] is not None
+                else np.zeros(PLAN_DIM, dtype=np.float32))
+        scores = score_options_v3(state_ctx, plan, state_ids, options, option_ids)
     order = np.argsort(scores)[::-1]
-    return [int(i) for i in order[:obs.select.maxCount]]
+    acts = [int(i) for i in order[:obs.select.maxCount]]
+    if _LOG_NET:
+        rec = {"s": obs_dict.get("step"), "t": obs.current.turn,
+               "c": int(obs.select.context), "a": acts, "sc": _r3(scores)}
+        if plan_rec:
+            rec.update(plan_rec)
+        _log_net(rec)
+    return acts

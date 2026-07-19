@@ -288,8 +288,18 @@ def score_retreat(obs):
     if in_danger and bench_best > 0:
         return 1500
 
-    # 3) Otherwise low; ~0 when healthy, a bit higher if a strong bench attacker wants in
+    # 2b) Save a valuable damaged active (M19): a multi-prize Mega/ex at low
+    #     HP rotates out into an attack-READY bench member BEFORE the lethal
+    #     is on board — live prize-race losses ended with the opponent taking
+    #     3 prizes off our chipped-down Mega while an energized bench watched.
+    #     Constants mirrored from tcg/constants.py — change BOTH.
     hp_frac = my_active.hp / max(1, my_active.maxHp)
+    if (hp_frac <= 0.4                                    # SAVE_ACTIVE_HP_FRACTION
+            and _CARD.get(my_active.id, (None, None, 0, [], 1))[4] >= 2
+            and any(_turns_to_ready(b, op_active) == 0 for b in bench)):
+        return 1450                                       # SCORE_RETREAT_SAVE_VALUABLE
+
+    # 3) Otherwise low; ~0 when healthy, a bit higher if a strong bench attacker wants in
     if hp_frac > 0.75:
         return -1
     return 100 + bench_best // 20
@@ -379,14 +389,20 @@ def score_attach(o, obs, me):
     if not damaging:
         return 400
 
+    best_dmg = max(d for d, _ in damaging)
+    bonus = min(best_dmg, 300) // 100
+
     if _turns_to_ready(target_pokemon, opponent_active_card,
                        board_ids=my_board_ids) == 0:
         # The BEST attack is charged (M7.2b — was the cheapest, which stopped
         # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
-        return 600
-
-    best_dmg = max(d for d, _ in damaging)
-    bonus = min(best_dmg, 300) // 100
+        # M19: penalize per SURPLUS energy so the least-fed charged target
+        # wins the tier and heavy surplus drops below NON_ATTACKER — the flat
+        # 600 kept feeding a 1-cost Solrock 3+ energies live. Constants
+        # mirrored from tcg/constants.py — change BOTH.
+        best_cost = min(c for d, c in damaging if d == best_dmg)
+        surplus = len(getattr(target_pokemon, "energies", ()) or ()) - best_cost
+        return 600 + bonus - 150 * min(max(surplus, 0), 3)
 
     # 3) Race math (M7.2b): charge THE ONE attacker that closes first. The
     #    target's own turns-to-first-KO must match the board minimum; ties

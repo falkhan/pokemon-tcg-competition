@@ -283,9 +283,20 @@ def score_retreat(observation) -> float:
     if in_danger and bench_best_damage > 0:
         return constants.SCORE_RETREAT_ESCAPE_KO
 
+    # 2b) Save a valuable damaged active (M19): a multi-prize Mega/ex at low
+    #     HP rotates out into an attack-READY bench member BEFORE the lethal
+    #     is on board — live prize-race losses ended with the opponent taking
+    #     3 prizes off our chipped-down Mega while an energized bench watched.
+    hp_fraction = my_active.hp / max(1, my_active.maxHp)
+    if (hp_fraction <= constants.SAVE_ACTIVE_HP_FRACTION
+            and CARDS.get(my_active.id, UNKNOWN_CARD).prize_count
+                >= constants.SAVE_ACTIVE_MIN_PRIZES
+            and any(turns_to_ready(pokemon, opponent_active) == 0
+                    for pokemon in bench)):
+        return constants.SCORE_RETREAT_SAVE_VALUABLE
+
     # 3) Otherwise low; ~0 when healthy, a bit higher if a strong bench
     #    attacker wants in.
-    hp_fraction = my_active.hp / max(1, my_active.maxHp)
     if hp_fraction > constants.HEALTHY_HP_FRACTION:
         return constants.SCORE_RETREAT_NEVER
     return (constants.SCORE_RETREAT_HURT_BASE
@@ -366,14 +377,23 @@ def score_attach(option, observation) -> float:
     if not damaging_attacks:
         return constants.SCORE_ATTACH_NON_ATTACKER
 
-    if turns_to_ready(target, opponent_active, board_ids=my_board_ids) == 0:
-        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
-        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
-        return constants.SCORE_ATTACH_ALREADY_LOADED
-
     best_dmg = max(damage for damage, _ in damaging_attacks)
     bonus = (min(best_dmg, constants.ATTACH_DAMAGE_BONUS_CAP)
              // constants.ATTACH_DAMAGE_BONUS_DIVISOR)
+
+    if turns_to_ready(target, opponent_active, board_ids=my_board_ids) == 0:
+        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
+        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
+        # M19: penalize per SURPLUS energy so the least-fed charged target
+        # wins the tier and heavy surplus drops below NON_ATTACKER — the flat
+        # 600 kept feeding a 1-cost Solrock 3+ energies live. The damage
+        # bonus tie-breaks toward the harder hitter (Mega over Solrock).
+        best_cost = min(cost for damage, cost in damaging_attacks
+                        if damage == best_dmg)
+        surplus = len(getattr(target, "energies", ()) or ()) - best_cost
+        return (constants.SCORE_ATTACH_ALREADY_LOADED + bonus
+                - constants.ATTACH_SURPLUS_PENALTY
+                * min(max(surplus, 0), constants.ATTACH_SURPLUS_CAP))
 
     # 3) Race math (M7.2b): charge THE ONE attacker that closes first. The
     #    target's own turns-to-first-KO must match the board minimum; ties

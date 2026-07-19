@@ -20,6 +20,7 @@ submission/cg/**
 # Kaggle episode-replay cache (rl/kaggle_ingest.py): immutable gzip blobs, can be
 # hundreds of MB and are re-fetchable. The derived parquets/snapshots ARE committed.
 data/kaggle/raw/
+data/kaggle/logs/
 
 # M7.3 generic-teacher BC shards: large, regenerable from the committed
 # population.json (`python -m rl.bc collect --teacher generic`).

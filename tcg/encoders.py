@@ -388,12 +388,68 @@ def attack_extra(attack_id, observation) -> np.ndarray:
     return vector
 
 
+def _my_pokemon_at(observation, in_play_area, in_play_index):
+    """Twin of rl/encoders.py _my_poke_at — the in-play Pokémon OBJECT."""
+    me = observation.current.players[observation.current.yourIndex]
+    zone = {int(AreaType.ACTIVE): me.active,
+            int(AreaType.BENCH): me.bench}.get(int(in_play_area))
+    if zone is None or in_play_index is None or in_play_index >= len(zone):
+        return None
+    return zone[in_play_index]
+
+
+def attach_extra(option, observation) -> np.ndarray:
+    """[target attached-energy/5, energy gap/5, saturated flag] — M19 twin of
+    rl/encoders.py _attach_extra (change BOTH)."""
+    from tcg.combat import turns_to_ready
+
+    vector = np.zeros(3, dtype=np.float32)
+    target = _my_pokemon_at(observation, option.inPlayArea, option.inPlayIndex)
+    if target is None:
+        return vector
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    opponent_active = (opponent.active[0]
+                       if opponent.active and opponent.active[0] is not None else None)
+    board_ids = {p.id for p in list(me.active or []) + list(me.bench or [])
+                 if p is not None}
+    gap = turns_to_ready(target, opponent_active, board_ids)
+    vector[0] = min(len(target.energies or ()), 5) / 5.0
+    vector[1] = min(gap, 5) / 5.0
+    vector[2] = float(gap == 0)
+    return vector
+
+
+def retreat_extra(observation) -> np.ndarray:
+    """[active damage fraction, active prizes-on-KO/3, bench-ready flag] —
+    M19 twin of rl/encoders.py _retreat_extra (change BOTH)."""
+    from tcg.combat import turns_to_ready
+
+    vector = np.zeros(3, dtype=np.float32)
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    active = me.active[0] if me.active and me.active[0] is not None else None
+    if active is None:
+        return vector
+    opponent_active = (opponent.active[0]
+                       if opponent.active and opponent.active[0] is not None else None)
+    vector[0] = 1.0 - active.hp / max(1, active.maxHp)
+    vector[1] = CARDS.get(active.id, UNKNOWN_CARD).prize_count / 3.0
+    vector[2] = float(any(turns_to_ready(pokemon, opponent_active) == 0
+                          for pokemon in me.bench or [] if pokemon is not None))
+    return vector
+
+
 def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     """(numeric OPTION_V3_DIM f32, [acted_id, target_id] i32, 0 = none).
 
     M16 twin of rl/encoders.py encode_option_v2: PLAY options resolve their
     hand card (FEAT block + embedding id), the appended block encodes attack
-    identity and NUMBER counts. Pre-M16 checkpoints: encode_option_v2_legacy."""
+    identity and NUMBER counts; M19 adds ATTACH energy-sufficiency and
+    RETREAT utility in the same 3 slots (mutually exclusive types).
+    Pre-M16 checkpoints: encode_option_v2_legacy."""
     numeric = np.zeros(OPTION_V3_DIM, dtype=np.float32)
     numeric[:OPTION_DIM] = encode_option(option, observation)
     your_index = observation.current.yourIndex
@@ -417,6 +473,10 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     if option.type == OptionType.ATTACK:
         numeric[OPTION_DIM:OPTION_DIM + 3] = attack_extra(option.attackId,
                                                           observation)
+    elif option.type == OptionType.ATTACH and option.inPlayArea is not None:
+        numeric[OPTION_DIM:OPTION_DIM + 3] = attach_extra(option, observation)
+    elif option.type == OptionType.RETREAT:
+        numeric[OPTION_DIM:OPTION_DIM + 3] = retreat_extra(observation)
     elif getattr(option, "number", None) is not None:
         numeric[OPTION_DIM + 3] = min(float(option.number), 10.0) / 10.0
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)

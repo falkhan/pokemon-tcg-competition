@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 
 from rl.collector import collect
-from rl.policy import OptionScorer, OptionScorerV2
+from rl.policy import OptionScorer, OptionScorerV2, OptionScorerV3
 
 ROOT = Path(__file__).resolve().parent.parent
 PPO_DIR = ROOT / "data" / "ppo"
@@ -54,7 +54,8 @@ def load_shards(ppo_dir: Path = PPO_DIR) -> dict[str, np.ndarray]:
         for k in ("states", "options", "n_options", "actions", "logprobs",
                   "values", "rewards", "players"):
             cols.setdefault(k, []).append(z[k])
-        for k in ("state_ids", "option_ids", "deck_idx"):   # encoders-v2 shards (M7.4b)
+        for k in ("state_ids", "option_ids", "deck_idx",    # encoders-v2 shards (M7.4b)
+                  "plans"):                                 # v3 plan vectors (M20)
             if k in z:
                 cols.setdefault(k, []).append(z[k])
         option_base += len(z["options"])
@@ -96,6 +97,8 @@ def collate_ppo(data: dict[str, np.ndarray], rows: np.ndarray,
     valid = torch.zeros(B, maxN, dtype=torch.bool)
     state_ids = (torch.from_numpy(data["state_ids"][rows].astype(np.int64))
                  if has_ids else None)
+    plans = (torch.from_numpy(data["plans"][rows]).float()
+             if "plans" in data else None)               # v3 shards (M20)
     option_ids = (torch.zeros(B, maxN, data["option_ids"].shape[1], dtype=torch.long)
                   if has_ids else None)
     for i, r in enumerate(rows):
@@ -106,7 +109,7 @@ def collate_ppo(data: dict[str, np.ndarray], rows: np.ndarray,
                 data["option_ids"][s:s + n].astype(np.int64))
         valid[i, :n] = True
 
-    return (states, state_ids, options, option_ids, valid,
+    return (states, state_ids, options, option_ids, plans, valid,
             torch.from_numpy(data["actions"][rows]).long(),
             torch.from_numpy(data["logprobs"][rows]).float(),
             torch.from_numpy(advantages[rows]).float(),
@@ -146,10 +149,24 @@ def compute_gae(rewards: np.ndarray, values: np.ndarray,
     return advantages, returns
 
 
+def _forward(model, states, state_ids, options, option_ids, plans):
+    """Dispatch the right forward signature: v1 (2 args), v2 (4), v3 (5 — the
+    plan tensor, M20). Duck-typed on plan_enc so either twin's V3 class works
+    (the parity tests drive rl models through tcg's update and vice versa)."""
+    if hasattr(model, "plan_enc"):
+        if plans is None:                      # v2-era shards under a v3 net
+            plans = torch.zeros(len(states), model.plan_dim)
+        return model(states, plans, state_ids, options, option_ids)
+    if state_ids is None:
+        return model(states, options)
+    return model(states, state_ids, options, option_ids)
+
+
 def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
                data: dict[str, np.ndarray], advantages: np.ndarray,
                returns: np.ndarray, epochs: int = 4, batch_size: int = 256,
-               entropy_coef: float = ENTROPY_COEF) -> dict:
+               entropy_coef: float = ENTROPY_COEF,
+               ref_model=None, kl_coef: float = 0.0) -> dict:
     """The clipped PPO update over all collected decisions.
 
     Per minibatch (use collate_ppo above; shuffle rows each epoch):
@@ -169,17 +186,17 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
     adv = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
     n = len(data["actions"])
     logs = {"policy_loss": [], "value_loss": [], "entropy": [], "ratio": []}
+    if kl_coef:
+        logs["kl"] = []
 
     for _ in range(epochs):
         perm = np.random.permutation(n)
         for i in range(0, n, batch_size):
             rows = perm[i:i + batch_size]
-            states, state_ids, options, option_ids, valid, actions, old_lp, adv_b, ret_b = \
+            states, state_ids, options, option_ids, plans, valid, actions, old_lp, adv_b, ret_b = \
                 collate_ppo(data, rows, adv, returns)
-            if state_ids is None:
-                logits, value = model(states, options)
-            else:                       # encoders-v2 shards -> OptionScorerV2
-                logits, value = model(states, state_ids, options, option_ids)
+            logits, value = _forward(model, states, state_ids, options,
+                                     option_ids, plans)
             logits = logits.masked_fill(~valid, -1e9)
             logp = torch.log_softmax(logits, dim=1)
             new_lp = logp.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -198,6 +215,23 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
             # gradient scales with the value error (and flips sign with it)
             # instead of the documented additive PPO objective.
             loss = policy_loss + VALUE_COEF * value_loss - entropy_coef * entropy
+
+            if ref_model is not None and kl_coef:
+                # M20 KL-anchor (the M8-plan leg C, finally spent): a rubber
+                # band to the frozen start policy. KL(pi_new || pi_ref) over
+                # each decision's REAL options — the defect penalty pushes
+                # down over-attach, this term pulls everything else back
+                # toward the anchor (the strength-loss mode M19 measured in
+                # BC reweighting, addressed structurally).
+                with torch.no_grad():
+                    ref_logits, _ = _forward(ref_model, states, state_ids,
+                                             options, option_ids, plans)
+                    ref_logp = torch.log_softmax(
+                        ref_logits.masked_fill(~valid, -1e9), dim=1)
+                kl = (probs * (logp - ref_logp)).masked_fill(~valid, 0.0) \
+                    .sum(dim=1).mean()
+                loss = loss + kl_coef * kl
+                logs["kl"].append(kl.item())
 
             opt.zero_grad()
             loss.backward()
@@ -229,10 +263,22 @@ def warm_start_value(model, value_ckpt: Path) -> list[str]:
 
 
 def _load_model(ckpt_path: Path):
-    """Build the right architecture for a checkpoint: OptionScorerV2 when the
-    state dict carries the id-embedding table (M7.3 checkpoints), else v1."""
+    """Build the right architecture for a checkpoint: OptionScorerV3 for
+    plan-conditioned checkpoints (M11+, dims sniffed from the weights — the
+    rl/matchrunner formula), OptionScorerV2 when the state dict carries the
+    id-embedding table (M7.3), else v1."""
     sd = torch.load(ckpt_path, map_location="cpu")
-    model = OptionScorerV2() if "embedding.weight" in sd else OptionScorer()
+    if "plan_enc.0.weight" in sd:                       # M20: v3 support
+        from rl.encoders import EMBED_DIM, N_CONTEXTS, STATE_V2_DIM
+        from rl.plan import PLAN_DIM
+        from rl.policy import option_dim_of
+        n_ids = (sd["state_enc.0.weight"].shape[1] - STATE_V2_DIM - N_CONTEXTS
+                 - PLAN_DIM) // EMBED_DIM
+        model = OptionScorerV3(n_state_ids=n_ids, option_dim=option_dim_of(sd))
+    elif "embedding.weight" in sd:
+        model = OptionScorerV2()
+    else:
+        model = OptionScorer()
     model.load_state_dict(sd)
     return model
 
@@ -270,27 +316,37 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           lr: float = 1e-4, eval_every: int = 5, start: str = "bc_v1.pt",
           value_ckpt: str | None = None, decks_file: str | None = None,
           eval_deck: str = "kyogre", entropy_coef: float = ENTROPY_COEF,
-          race_shaping: float = 0.0, shaping: str = "race"):
+          race_shaping: float = 0.0, shaping: str = "race",
+          defect_penalty: float = 0.0, kl_coef: float = 0.0,
+          learn_deck: str | None = None, tag: str = "", eval_games: int = 200):
     from torch.utils.tensorboard import SummaryWriter
     from rl.eval import play_games
     from rl.teacher import load_teacher
 
-    writer = SummaryWriter(str(ROOT / "runs" / "ppo"))
-    best_path = CKPT_DIR / "ppo_best.pt"
+    suffix = f"_{tag}" if tag else ""       # M20: namespace runs so the M8-era
+    writer = SummaryWriter(str(ROOT / "runs" / f"ppo{suffix}"))  # artifacts survive
+    best_path = CKPT_DIR / f"ppo_best{suffix}.pt"
     if not best_path.exists():
-        shutil.copy(CKPT_DIR / start, best_path)       # bc_v1 is the initial champion
+        shutil.copy(CKPT_DIR / start, best_path)       # the start is the initial champion
 
     model = _load_model(CKPT_DIR / start)
     if value_ckpt:
         loaded = warm_start_value(model, Path(value_ckpt))
         print(f"critic warm-start from {value_ckpt}: {loaded}", flush=True)
+    ref_model = None
+    if kl_coef:
+        # M20 leg B: the KL anchor is the FROZEN start policy.
+        ref_model = _load_model(CKPT_DIR / start)
+        ref_model.eval()
+        for p_ in ref_model.parameters():
+            p_.requires_grad_(False)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
 
     # M7.5 attempt 2: promotion tracks the FIXED goal opponent (the solver ship
     # agent), not the drifting mirror champion. Bar = the current best's own
     # measured rate, so a fresh warm start must genuinely improve to promote.
     best_wr, _ = play_games(_as_kaggle_agent(best_path, eval_deck, "ppo_bp_base"),
-                            _solver_opponent(eval_deck, "ppo_sv_base"), 200,
+                            _solver_opponent(eval_deck, "ppo_sv_base"), eval_games,
                             names=("best", "solver"))
     print(f"baseline: current best vs_solver {best_wr:.1%}", flush=True)
 
@@ -298,10 +354,14 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         # 1. fresh self-play data with the CURRENT policy
         for old in PPO_DIR.glob("ppo_shard_*.npz"):
             old.unlink()                                # on-policy: stale data is poison
-        work = CKPT_DIR / "ppo_current.pt"
+        work = CKPT_DIR / f"ppo_current{suffix}.pt"
         torch.save(model.state_dict(), work)
-        collect(games_per_iter, str(work), workers, decks_file=decks_file,
-                race_shaping=race_shaping, shaping=shaping)
+        _, defect_rate = collect(
+            games_per_iter, str(work), workers, decks_file=decks_file,
+            race_shaping=race_shaping, shaping=shaping,
+            defect_penalty=defect_penalty,
+            **({"learn_deck": learn_deck} if learn_deck else {}))
+        writer.add_scalar("train/defect_rate", defect_rate, it)
         data = load_shards()
 
         # 2. advantages per (game, seat) trajectory  [Piotr's compute_gae]
@@ -311,18 +371,19 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             adv, ret = compute_gae(data["rewards"][rows], data["values"][rows])
             advantages[rows], returns[rows] = adv, ret
 
-        # 3. clipped update  [Piotr's ppo_update]
+        # 3. clipped update  [Piotr's ppo_update; M20 adds the KL anchor]
         stats = ppo_update(model, opt, data, advantages, returns,
-                           entropy_coef=entropy_coef)
+                           entropy_coef=entropy_coef,
+                           ref_model=ref_model, kl_coef=kl_coef)
         for k, v in stats.items():
             writer.add_scalar(f"train/{k}", v, it)
-        print(f"iter {it}: {stats}")
+        print(f"iter {it}: defect/g {defect_rate:.2f}  {stats}", flush=True)
 
         # 4. periodic evaluation + promotion vs the fixed goal opponent
         if (it + 1) % eval_every == 0:
             challenger = _as_kaggle_agent(work, eval_deck, f"ppo_ch{it}")
             wr, _ = play_games(challenger, _solver_opponent(eval_deck, f"ppo_sv{it}"),
-                               200, names=("challenger", "solver"))
+                               eval_games, names=("challenger", "solver"))
             wr_teacher, _ = play_games(challenger, load_teacher(f"ev{it}"), 100,
                                        names=("challenger", "teacher"))
             writer.add_scalar("eval/vs_solver", wr, it)
@@ -331,7 +392,7 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             if wr > best_wr:
                 best_wr = wr
                 torch.save(model.state_dict(), best_path)
-                torch.save(model.state_dict(), CKPT_DIR / f"ppo_it{it:04d}.pt")
+                torch.save(model.state_dict(), CKPT_DIR / f"ppo{suffix}_it{it:04d}.pt")
                 print(f"iter {it}: PROMOTED (best vs_solver {wr:.1%})")
 
 
@@ -357,9 +418,26 @@ if __name__ == "__main__":
                         "dev potential (race+ready+evo+bench)")
     p.add_argument("--eval-every", type=int, default=5,
                    help="iterations between evals (M8.3 decay probes use 2)")
+    p.add_argument("--defect-penalty", type=float, default=0.0,
+                   help="M20: per-step reward dock for over-attach actions "
+                        "(0.1 = one prize-shaping unit); 0 = off")
+    p.add_argument("--kl-coef", type=float, default=0.0,
+                   help="M20 leg B: KL(pi_new || frozen start) anchor coef; "
+                        "0 = clip only")
+    p.add_argument("--learn-deck", type=str, default=None,
+                   help="learner's fixed deck (default: collector's LEARN_DECK); "
+                        "the M20 probe uses lucario (the measured pairing)")
+    p.add_argument("--tag", type=str, default="",
+                   help="namespaces ppo_best/ppo_it checkpoints + the TB run "
+                        "dir (keeps M8-era artifacts intact)")
+    p.add_argument("--eval-games", type=int, default=200,
+                   help="games per baseline/promotion eval (sequential — the "
+                        "wall-clock bottleneck; smoke runs use small values)")
     args = p.parse_args()
     train(args.iterations, args.games_per_iter, args.workers, lr=args.lr,
           start=args.start, value_ckpt=args.value_ckpt, decks_file=args.decks,
           eval_deck=args.eval_deck, entropy_coef=args.entropy_coef,
           race_shaping=args.race_shaping, shaping=args.shaping,
-          eval_every=args.eval_every)
+          eval_every=args.eval_every, defect_penalty=args.defect_penalty,
+          kl_coef=args.kl_coef, learn_deck=args.learn_deck, tag=args.tag,
+          eval_games=args.eval_games)

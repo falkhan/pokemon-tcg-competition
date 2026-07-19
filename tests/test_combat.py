@@ -184,6 +184,30 @@ class TestConditionalAttacks:
         assert tp.score_attach(opt, obs2) > tc.SCORE_ATTACH_NON_ATTACKER
         assert rlp.score_attach(opt, obs2, me2) > 400
 
+    def test_m19_surplus_and_save_retreat_twins_agree(self):
+        # M19 twins parity: surplus-penalized saturated attach + the
+        # save-the-valuable-active retreat tier (constants mirrored as
+        # literals in rl/generic_pilot — change BOTH).
+        import rl.generic_pilot as rlp
+        import tcg.pilot as tp
+        from tcg import constants as tc
+        from tests import builders as b
+        from tests.fake_cg import AreaType, EnergyType, OptionType
+        w = EnergyType.WATER
+        me = b.player(active=b.pokemon(4, energies=[w, w, w]))  # 1-cost, surplus 2
+        obs = b.observation(me=me)
+        opt = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                       in_play_index=0)
+        expected = tc.SCORE_ATTACH_ALREADY_LOADED - 2 * tc.ATTACH_SURPLUS_PENALTY
+        assert tp.score_attach(opt, obs) == expected
+        assert rlp.score_attach(opt, obs, me) == expected
+        f = EnergyType.FIGHTING
+        me2 = b.player(active=b.pokemon(3, hp=100, max_hp=340),
+                       bench=[b.pokemon(1, energies=[f, f])])
+        obs2 = b.observation(me=me2, opponent=b.player(active=b.pokemon(5, hp=999)))
+        assert tp.score_retreat(obs2) == tc.SCORE_RETREAT_SAVE_VALUABLE
+        assert rlp.score_retreat(obs2) == tc.SCORE_RETREAT_SAVE_VALUABLE
+
     def _patch_single(self, monkeypatch):
         import rl.combat as rc
         import tcg.combat as tc_

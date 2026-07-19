@@ -1,0 +1,1 @@
+model:checkpoints/osv3o_m19c.pt:lucario vs solver:lucario: 133W 265L 2D over 400 (wr=0.335)
