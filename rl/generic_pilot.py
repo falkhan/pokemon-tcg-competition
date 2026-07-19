@@ -23,6 +23,8 @@ _EVOLVES_FROM = {c.cardId: getattr(c, "evolvesFrom", None) for c in all_card_dat
 _HAND_DISCARD_TRAINER_NAMES = ("Carmine",)   # HAND_DISCARD_TRAINER_NAMES
 _HAND_DISCARD_IDS = {cid for cid, n in _NAME.items()
                      if n in _HAND_DISCARD_TRAINER_NAMES}
+_GUST_TRAINER_NAMES = ("Boss’s Orders",)  # GUST_TRAINER_NAMES — U+2019 in card data, not ASCII '
+_GUST_IDS = {cid for cid, n in _NAME.items() if n in _GUST_TRAINER_NAMES}
 
 # --- card-selection context categories (for score_card) ---
 _PROMOTE_CTX = {SelectContext.SETUP_ACTIVE_POKEMON, SelectContext.SETUP_BENCH_POKEMON,
@@ -121,19 +123,24 @@ def _attach_recipient_value(card, me, op_active):
     profile = (SimpleNamespace(id=evolution.id,
                                energies=list(getattr(card, "energies", ()) or ()))
                if evolution is not None else card)
-    energy_gap = _turns_to_ready(profile, op_active)
+    # M13 0a: pass own board ids so CONDITIONAL_ATTACKS gate the charged-best
+    # (a Solrock without Lunatone in play is not the attacker its table row
+    # claims — the live ep-85607769/86469359 overfeeding at the source).
+    board_ids = {p.id for p in (list(me.active or []) + list(me.bench or []))
+                 if p is not None}
+    energy_gap = _turns_to_ready(profile, op_active, board_ids)
     if energy_gap == 0:
         return 50                          # ATTACH_RECIPIENT_CHARGED
     quality = min(_attacker_quality(profile.id), 300)   # ATTACKER_QUALITY_CAP
     return 300 + quality - 50 * min(energy_gap - 1, 4)  # BASE - PENALTY*min(gap-1, CAP)
 
 
-def make_generic_pilot(deck):
+def make_generic_pilot(deck, fixes: frozenset = frozenset()):
     def agent(obs_dict):
         obs = to_observation_class(obs_dict)
         if obs.select is None:
             return deck
-        scores = [score_option(o, obs) for o in obs.select.option]
+        scores = [score_option(o, obs, fixes) for o in obs.select.option]
         order = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
         return [int(i) for i in order[:obs.select.maxCount]]
     return agent
@@ -145,7 +152,7 @@ def _card_at(obs, area, index, player):
     try: return zone[index]
     except (TypeError, IndexError): return None
 
-def score_option(o, obs):
+def score_option(o, obs, fixes: frozenset = frozenset()):
     st = obs.current; me = st.players[st.yourIndex]; op = st.players[1 - st.yourIndex]
     my_active = me.active[0] if me.active else None
     op_active = op.active[0] if op.active else None
@@ -155,13 +162,13 @@ def score_option(o, obs):
     if t == OptionType.ATTACH: return score_attach(o, obs, me)
     if t == OptionType.ABILITY: return 3000
     if t == OptionType.EVOLVE: return 2800
-    if t == OptionType.PLAY: return score_play(o, obs)
+    if t == OptionType.PLAY: return score_play(o, obs, fixes)
     if t == OptionType.RETREAT: return score_retreat(obs)
-    if t == OptionType.CARD: return score_card(o, obs)
+    if t == OptionType.CARD: return score_card(o, obs, fixes)
     return _PRIORITY.get(t, 0)
 
 
-def score_card(o, obs):
+def score_card(o, obs, fixes: frozenset = frozenset()):
     """Card-selection contexts (SETUP/SWITCH/TO_HAND/DISCARD/...) — no more coin flips."""
     st = obs.current
     op = st.players[1 - st.yourIndex]
@@ -187,8 +194,35 @@ def score_card(o, obs):
     if ctx in _DISCARD_CTX:                       # discard the LEAST useful
         return -_card_usefulness(card.id)
     if ctx in _TARGET_CTX:                        # damage the highest-prize opponent Pokémon
-        return 100 * _CARD.get(card.id, (0, 0, 0, [], 1))[4]
+        prize_score = 100 * _CARD.get(card.id, (0, 0, 0, [], 1))[4]
+        if ("gust" in fixes and ctx == SelectContext.EFFECT_TARGET
+                and player != st.yourIndex
+                and getattr(card, "hp", None) is not None):
+            # Fix B2 (M9): the gust PLAY fired because a faster-KO target
+            # exists — pick by fastest KO (race math), prize tie-break.
+            # Unknown/unKOable targets keep the plain prize ranking.
+            me = st.players[st.yourIndex]
+            board = [p for p in (list(me.active or []) + list(me.bench or []))
+                     if p is not None]
+            ttk = min((_turns_to_first_ko(p, card) for p in board),
+                      default=UNREACHABLE)
+            return 1000 * max(0, 12 - min(ttk, 12)) + prize_score
+        return prize_score
     return 50                                     # unknown card context: neutral
+
+
+def _gust_has_better_target(me, op):
+    """M9 Fix B predicate: the opponent bench holds a target my board KOs
+    strictly faster than their active. Unknown/unKOable targets never qualify
+    (_turns_to_first_ko returns UNREACHABLE for them)."""
+    op_active = op.active[0] if op.active and op.active[0] is not None else None
+    bench = [p for p in (op.bench or []) if p is not None]
+    board = [p for p in (list(me.active or []) + list(me.bench or [])) if p is not None]
+    if op_active is None or not bench or not board:
+        return False
+    active_ttk = min(_turns_to_first_ko(p, op_active) for p in board)
+    return any(min(_turns_to_first_ko(p, t) for p in board) < min(active_ttk, UNREACHABLE)
+               for t in bench)
 
 
 def _op_board_harmless(op_active, op_bench=()):
@@ -254,13 +288,23 @@ def score_retreat(obs):
     if in_danger and bench_best > 0:
         return 1500
 
-    # 3) Otherwise low; ~0 when healthy, a bit higher if a strong bench attacker wants in
+    # 2b) Save a valuable damaged active (M19): a multi-prize Mega/ex at low
+    #     HP rotates out into an attack-READY bench member BEFORE the lethal
+    #     is on board — live prize-race losses ended with the opponent taking
+    #     3 prizes off our chipped-down Mega while an energized bench watched.
+    #     Constants mirrored from tcg/constants.py — change BOTH.
     hp_frac = my_active.hp / max(1, my_active.maxHp)
+    if (hp_frac <= 0.4                                    # SAVE_ACTIVE_HP_FRACTION
+            and _CARD.get(my_active.id, (None, None, 0, [], 1))[4] >= 2
+            and any(_turns_to_ready(b, op_active) == 0 for b in bench)):
+        return 1450                                       # SCORE_RETREAT_SAVE_VALUABLE
+
+    # 3) Otherwise low; ~0 when healthy, a bit higher if a strong bench attacker wants in
     if hp_frac > 0.75:
         return -1
     return 100 + bench_best // 20
 
-def score_play(o, obs):
+def score_play(o, obs, fixes: frozenset = frozenset()):
     my_index = obs.current.yourIndex
     me = obs.current.players[my_index]
     # Engine quirk (found 2026-07-12, kaggle ep 85467275 + local repro): PLAY
@@ -282,7 +326,14 @@ def score_play(o, obs):
         return 2400                       # developing the board is always good
 
     if card.id in _HAND_DISCARD_IDS and _hand_holds_keepers(me):
+        if "handdiscard" in fixes:
+            return -100                   # SCORE_HAND_DISCARD_REFUSED: below END — pass instead
         return 150                        # SCORE_HAND_DISCARD_BLOCKED: below near-deckout
+
+    if "gust" in fixes and card.id in _GUST_IDS:
+        op = obs.current.players[1 - my_index]
+        if _gust_has_better_target(me, op):
+            return 2450                   # SCORE_GUST_KILLSHOT: above taper/develop, below KO tier
 
     has_board = (bool(me.active) and me.active[0] is not None) or any(p for p in me.bench)
     if not has_board:
@@ -311,30 +362,47 @@ def score_attach(o, obs, me):
         return 500
 
     is_active = o.inPlayArea == AreaType.ACTIVE
+    # M14 replay finding (51-63% of live attaches went to saturated
+    # recipients; Solrock fed without Lunatone up to 1.8x/game): this path
+    # never learned the CONDITIONAL_ATTACKS card facts — thread board_ids so
+    # a conditional attacker without its requirement stops counting.
+    from rl.combat import _attack_available
+    my_board_ids = {p.id for p in (list(me.active or []) + list(me.bench or []))
+                    if p is not None}
 
     # 1) Lookahead: does this attach UNBLOCK a KO on the opponent's active?
 
     if opponent_active_card is not None:
-        now = _best_damage(target_pokemon, opponent_active_card, extra_energy=0)
-        after = _best_damage(target_pokemon, opponent_active_card, extra_energy=1)
+        now = _best_damage(target_pokemon, opponent_active_card, extra_energy=0,
+                           board_ids=my_board_ids)
+        after = _best_damage(target_pokemon, opponent_active_card, extra_energy=1,
+                             board_ids=my_board_ids)
         if now < opponent_active_card.hp <= after:
             return  4000 if is_active else 2900    # active can cash it this turn -> top priority
 
     # 2) Otherwise is target a real attacker that still needs energy?
 
     damaging = [(_ATK[a][0], len(_ATK[a][1])) for a in _CARD[target_pokemon.id][3]
-                if a in _ATK and _ATK[a][0] > 0]
+                if a in _ATK and _ATK[a][0] > 0
+                and _attack_available(a, my_board_ids)]
 
     if not damaging:
         return 400
 
-    if _turns_to_ready(target_pokemon, opponent_active_card) == 0:
-        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
-        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
-        return 600
-
     best_dmg = max(d for d, _ in damaging)
     bonus = min(best_dmg, 300) // 100
+
+    if _turns_to_ready(target_pokemon, opponent_active_card,
+                       board_ids=my_board_ids) == 0:
+        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
+        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
+        # M19: penalize per SURPLUS energy so the least-fed charged target
+        # wins the tier and heavy surplus drops below NON_ATTACKER — the flat
+        # 600 kept feeding a 1-cost Solrock 3+ energies live. Constants
+        # mirrored from tcg/constants.py — change BOTH.
+        best_cost = min(c for d, c in damaging if d == best_dmg)
+        surplus = len(getattr(target_pokemon, "energies", ()) or ()) - best_cost
+        return 600 + bonus - 150 * min(max(surplus, 0), 3)
 
     # 3) Race math (M7.2b): charge THE ONE attacker that closes first. The
     #    target's own turns-to-first-KO must match the board minimum; ties

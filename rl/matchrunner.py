@@ -21,6 +21,9 @@ Opponent specs (picklable tuples; deck = decks/ name | csv path | list of ids):
   ("solver", deck)          generic pilot + within-turn combo solver (M7.4a)
   ("solver-dev", deck)      solver + the development tier (M8.1: setup search)
   ("random", deck)          uniform-random legal moves
+  ("generic2"/"solver2", deck)   pilot v2: base pilot + M9 Leg 1 fixes; the
+                            a/b variants carry one fix each for attribution
+  ("ext", path, deck)       external kaggle-style main.py agent (M9 Leg 0 probe)
 
 Usage:
   python -m rl.matchrunner play --a generic:lucario --b random:kyogre -n 60
@@ -36,6 +39,17 @@ ROOT = Path(__file__).resolve().parent.parent
 DECK_DIR = ROOT / "decks"
 
 OpponentSpec = tuple
+
+# M9 Leg 1 pilot-v2 spec kinds -> (base kind, fixes). Separable a/b variants
+# keep the two fixes individually measurable for attribution.
+_FIXED_KINDS = {
+    "generic2":  ("generic", frozenset({"handdiscard", "gust"})),
+    "generic2a": ("generic", frozenset({"handdiscard"})),
+    "generic2b": ("generic", frozenset({"gust"})),
+    "solver2":   ("solver",  frozenset({"handdiscard", "gust"})),
+    "solver2a":  ("solver",  frozenset({"handdiscard"})),
+    "solver2b":  ("solver",  frozenset({"gust"})),
+}
 
 
 def resolve_deck(deck) -> list[int]:
@@ -54,7 +68,8 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model") else spec[1]
+    return spec[2] if spec[0] in ("rule", "model", "ext", "rank", "vsolver") \
+        else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -62,8 +77,15 @@ def parse_spec(s: str) -> OpponentSpec:
     "model:checkpoints/bc_v1.pt:kyogre", "random:kyogre"."""
     parts = s.split(":")
     kind = parts[0]
-    if kind in ("generic", "random", "solver", "solver-dev") and len(parts) == 2:
+    if kind in ("generic", "random", "solver", "solver-dev", *_FIXED_KINDS) \
+            and len(parts) == 2:
         return (kind, parts[1])
+    if kind == "ext" and len(parts) == 3:
+        return ("ext", parts[1], parts[2])
+    if kind == "rank" and len(parts) == 3:
+        return ("rank", parts[1], parts[2])
+    if kind == "vsolver" and len(parts) == 3:
+        return ("vsolver", parts[1], parts[2])
     if kind == "mcts" and len(parts) == 4:
         return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
@@ -87,6 +109,176 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # kaggle-env deck return, unused in direct loops) and accepts names only;
         # the battle deck is resolved from the spec's own deck slot below.
         return load_teacher(instance, agent=spec[1], deck=spec[1]), resolve_deck(spec[2])
+    if kind in _FIXED_KINDS:
+        base, fixes = _FIXED_KINDS[kind]
+        ids = resolve_deck(spec[1])
+        if base == "generic":
+            from rl.generic_pilot import make_generic_pilot
+            return make_generic_pilot(ids, fixes=fixes), ids
+        from rl.turn_solver import make_solver_pilot
+        return make_solver_pilot(ids, instance=instance, fixes=fixes), ids
+    if kind == "ext":
+        # External kaggle-style bundle: import OUR engine first so cg is pinned
+        # in sys.modules, then exec the bundle's main.py and grab its agent.
+        import importlib.util
+        import cg.api  # noqa: F401
+        main_py = Path(spec[1])
+        if main_py.is_dir():
+            main_py = main_py / "main.py"
+        mspec = importlib.util.spec_from_file_location(f"ext_{instance}", main_py)
+        mod = importlib.util.module_from_spec(mspec)
+        mspec.loader.exec_module(mod)
+        fn = getattr(mod, "agent", None)
+        if fn is None:
+            candidates = [v for v in vars(mod).values() if callable(v)]
+            if not candidates:
+                raise ValueError(f"no callable agent found in {main_py}")
+            fn = candidates[-1]
+        return fn, resolve_deck(spec[2])
+    if kind == "vsolver":
+        # M13 Rung 1: the solver pilot with the OUTCOME-GROUNDED setup value
+        # as the search leaf on non-lethal turns. Lethal tier unchanged
+        # (heuristic prize hunting stays exact); on other own MAIN prompts a
+        # dev-mode solve runs with leaf_value replacing the heuristic tail,
+        # overriding greedy only past DEV_OVERRIDE_MARGIN. Turn-passed leaves
+        # are encoded from the flipped perspective and NEGATED (zero-sum) —
+        # exact in the mirror, approximate cross-deck (logged limitation).
+        import numpy as np
+        import torch
+        from cg.api import SelectContext, to_observation_class
+        from rl.encoders import encode_context, encode_state_v2
+        from rl.plan import PLAN_DIM
+        from rl.policy import OptionScorerV3
+        from rl.generic_pilot import make_generic_pilot
+        from rl.turn_solver import should_solve, solve_turn
+        LAMBDA = 3000.0
+        # Calibrated 2026-07-18 on osv3_setupval2's held-out pairs (scratchpad
+        # calibrate_margin.py): smallest LAMBDA*|dV| gap with ordering acc
+        # >= 0.80 (measured 0.804 at coverage 0.84). One value, no sweep.
+        VS_MARGIN = 200.0
+        # v3 (S1 re-gate 2, user-approved): trust the value only where its own
+        # held-out per-bucket report says it can rank — t4-15 buckets 0.79-0.80
+        # vs near-chance past turn ~32. Greedy handles the long grind.
+        VS_MAX_TURN = 32
+        ckpt = Path(spec[1])
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt
+        net = OptionScorerV3()
+        net.load_state_dict(torch.load(ckpt, map_location="cpu"))
+        net.eval()
+        ids = resolve_deck(spec[2])
+        inner = make_generic_pilot(ids)
+        ctx_main = encode_context(SelectContext.MAIN)
+        cell = {"me": 0}
+
+        def leaf_value(obs):
+            num, sids = encode_state_v2(obs.current, ids)
+            sc = np.concatenate([num, ctx_main]).astype(np.float32)
+            with torch.no_grad():
+                se = net.embedding(
+                    torch.from_numpy(sids).long().unsqueeze(0)).flatten(-2)
+                zeros = torch.zeros(1, PLAN_DIM)
+                s = net.state_enc(torch.cat(
+                    [torch.from_numpy(sc).unsqueeze(0), zeros, se], dim=-1))
+                v = float(net.value_head(s).squeeze())
+            sign = 1.0 if obs.current.yourIndex == cell["me"] else -1.0
+            return LAMBDA * sign * v
+
+        def fnv(od):
+            obs = to_observation_class(od)
+            if obs.select is None:
+                return ids
+            if should_solve(obs):
+                try:
+                    pick = solve_turn(obs, ids)
+                except Exception:
+                    pick = None
+                if pick is not None:
+                    return pick
+            elif obs.select.context == SelectContext.MAIN \
+                    and obs.current.turn < VS_MAX_TURN:
+                cell["me"] = obs.current.yourIndex
+                try:
+                    pick = solve_turn(obs, ids, dev=True,
+                                      leaf_value=leaf_value,
+                                      dev_margin=VS_MARGIN)
+                except Exception:
+                    pick = None
+                if pick is not None:
+                    return pick
+            return inner(od)
+        return fnv, ids
+    if kind == "rank":
+        # M12 consumer: the solver pilot, plus a CONFIDENT ranker override on
+        # single-pick MAIN prompts the solver tiers pass on. The net was
+        # trained to predict widened-search sibling preferences from the root
+        # prompt — inference is one forward pass, no engine calls. Overrides
+        # only when top1-top2 logit gap >= CONF_MARGIN (no sweep), restricted
+        # to the greedy beam (unbeamed options were never labeled).
+        import numpy as np
+        import torch
+        from cg.api import SelectContext, to_observation_class
+        from rl.encoders import (OPTION_V3_DIM, encode_context,
+                                 encode_option_v2, encode_option_v2_legacy,
+                                 encode_state_v2)
+        from rl.generic_pilot import make_generic_pilot
+        from rl.plan import PLAN_DIM
+        from rl.policy import OptionScorerV3, option_dim_of
+        from rl.turn_solver import _candidate_actions, should_solve, solve_turn
+        CONF_MARGIN = 1.0
+        ckpt = Path(spec[1])
+        if not ckpt.is_absolute() and not ckpt.exists():
+            ckpt = ROOT / ckpt
+        rsd = torch.load(ckpt, map_location="cpu")
+        net = OptionScorerV3(option_dim=option_dim_of(rsd))
+        net.load_state_dict(rsd)
+        net.eval()
+        # M16: pre-option-identity checkpoints get their exact encoding
+        encode_option_v2 = (encode_option_v2
+                            if net.option_dim >= OPTION_V3_DIM
+                            else encode_option_v2_legacy)
+        ids = resolve_deck(spec[2])
+        inner = make_generic_pilot(ids)
+
+        def fnr(od):
+            obs = to_observation_class(od)
+            if obs.select is None:
+                return ids
+            if should_solve(obs):
+                try:
+                    pick = solve_turn(obs, ids)
+                except Exception:
+                    pick = None
+                if pick is not None:
+                    return pick
+            if obs.select.context == SelectContext.MAIN \
+                    and obs.select.maxCount == 1 \
+                    and len(obs.select.option) >= 2:
+                beam = [a[0] for a in _candidate_actions(obs) if len(a) == 1]
+                if len(beam) >= 2:
+                    num, sids = encode_state_v2(obs.current, ids)
+                    sc = np.concatenate(
+                        [num, encode_context(obs.select.context)]
+                    ).astype(np.float32)
+                    pairs = [encode_option_v2(o, obs)
+                             for o in obs.select.option]
+                    opts = np.stack([x for x, _ in pairs]).astype(np.float32)
+                    oids = np.stack([i for _, i in pairs])
+                    with torch.no_grad():
+                        logits, _ = net(
+                            torch.from_numpy(sc).unsqueeze(0),
+                            torch.zeros(1, PLAN_DIM),
+                            torch.from_numpy(sids).long().unsqueeze(0),
+                            torch.from_numpy(opts).unsqueeze(0),
+                            torch.from_numpy(oids).long().unsqueeze(0))
+                    l = logits.squeeze(0)
+                    ranked = sorted(beam, key=lambda i: float(l[i]),
+                                    reverse=True)
+                    if float(l[ranked[0]]) - float(l[ranked[1]]) \
+                            >= CONF_MARGIN:
+                        return [int(ranked[0])]
+            return inner(od)
+        return fnr, ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])
@@ -134,10 +326,77 @@ def make_pilot(spec: OpponentSpec, instance: str):
             ckpt = ROOT / ckpt          # league specs store ROOT-relative paths
         sd = torch.load(ckpt, map_location="cpu")
 
+        if "plan_enc.0.weight" in sd:
+            # Plan-conditioned v3 checkpoint (OptionScorerV3, M11): replan at
+            # every own MAIN prompt, hold the plan for submenus keyed on
+            # (turn, yourIndex). Closure state persists across a whole series
+            # (pilots are built once, line ~318) — reset on a turn-counter
+            # drop (new game, direct loop) and on select-None (kaggle path).
+            from cg.api import SelectContext
+            from rl.encoders import (EMBED_DIM, OPTION_V3_DIM,
+                                     encode_option_v2, encode_option_v2_legacy,
+                                     encode_state_v2, encode_state_v3)
+            from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+            from rl.policy import OptionScorerV3, option_dim_of
+            from rl.encoders import N_CONTEXTS as _NC, STATE_V2_DIM as _SV2
+            n_ids = (sd["state_enc.0.weight"].shape[1] - _SV2 - _NC
+                     - PLAN_DIM) // EMBED_DIM
+            opt_dim = option_dim_of(sd)
+            m3 = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
+            m3.load_state_dict(sd)
+            m3.eval()
+            enc_state = encode_state_v3 if n_ids > 12 else encode_state_v2
+            # M16: pre-option-identity checkpoints (pinned baselines) get the
+            # exact encoding they trained on — sniffed width picks the encoder.
+            enc_opt = (encode_option_v2 if opt_dim >= OPTION_V3_DIM
+                       else encode_option_v2_legacy)
+            deck_ids = resolve_deck(spec[2])
+            pstate = {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
+                      "last_turn": -1}
+
+            def fn3(od):
+                obs = to_observation_class(od)
+                if obs.select is None:
+                    pstate.update(key=None, last_turn=-1)
+                    return deck_ids
+                t = obs.current.turn
+                if t < pstate["last_turn"]:          # new game in this series
+                    pstate.update(key=None)
+                pstate["last_turn"] = t
+                key = (t, obs.current.yourIndex)
+                num, sids = enc_state(obs.current, deck_ids)
+                sc = np.concatenate(
+                    [num, encode_context(obs.select.context)]
+                ).astype(np.float32)
+                if obs.select.context == SelectContext.MAIN \
+                        and pstate["key"] != key:
+                    # Plan ONCE at the turn's first MAIN and hold it (M11 fix
+                    # 2026-07-17): training plan rows exist only at first-MAIN
+                    # states — replanning every MAIN is off-distribution for
+                    # the head AND flip-flops the plan mid-turn (measured:
+                    # 0.278 vs 0.345 base at Rung 0 before this fix).
+                    cands = enumerate_plans(obs)
+                    mat = np.stack([encode_plan(c) for c in cands]
+                                   ).astype(np.float32)
+                    idx = m3.act_plan(sc, sids, mat)          # argmax at eval
+                    pstate.update(key=key, vec=mat[idx].copy())
+                plan = (pstate["vec"] if pstate["key"] == key
+                        else np.zeros(PLAN_DIM, np.float32))
+                pairs = [enc_opt(o, obs) for o in obs.select.option]
+                opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+                oids = np.stack([i for _, i in pairs])
+                return m3.act(sc, plan, sids, opts, oids,
+                              obs.select.maxCount, greedy=True)
+            return fn3, deck_ids
+
         if "embedding.weight" in sd:
             # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
             # deck-context pools — the pilot closes over its own deck list.
-            from rl.encoders import encode_option_v2, encode_state_v2
+            # M16: legacy option encoding — these checkpoints predate the
+            # option-identity block.
+            from rl.encoders import (encode_option_v2_legacy as
+                                     encode_option_v2)
+            from rl.encoders import encode_state_v2
             from rl.policy import OptionScorerV2
             m2 = OptionScorerV2()
             m2.load_state_dict(sd)

@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from tcg.decks import ROOT
-from tcg.network import MASKED_LOGIT, OptionScorer, OptionScorerV2
+from tcg.network import MASKED_LOGIT, OptionScorer, OptionScorerV2, OptionScorerV3
 from tcg.selfplay import collect
 
 PPO_DIR = ROOT / "data" / "ppo"
@@ -56,7 +56,8 @@ def load_shards(ppo_dir: Path = PPO_DIR) -> dict[str, np.ndarray]:
         for name in ("states", "options", "n_options", "actions", "logprobs",
                      "values", "rewards", "players"):
             cols.setdefault(name, []).append(shard[name])
-        for name in ("state_ids", "option_ids", "deck_idx"):   # encoders-v2 shards
+        for name in ("state_ids", "option_ids", "deck_idx",    # encoders-v2 shards
+                     "plans"):                                 # v3 plan vectors (M20)
             if name in shard:
                 cols.setdefault(name, []).append(shard[name])
         option_base += len(shard["options"])
@@ -98,6 +99,8 @@ def collate_ppo(data: dict[str, np.ndarray], rows: np.ndarray,
     valid = torch.zeros(batch_size, max_options, dtype=torch.bool)
     state_ids = (torch.from_numpy(data["state_ids"][rows].astype(np.int64))
                  if has_ids else None)
+    plans = (torch.from_numpy(data["plans"][rows]).float()
+             if "plans" in data else None)               # v3 shards (M20)
     option_ids = (torch.zeros(batch_size, max_options, data["option_ids"].shape[1],
                               dtype=torch.long)
                   if has_ids else None)
@@ -109,11 +112,24 @@ def collate_ppo(data: dict[str, np.ndarray], rows: np.ndarray,
                 data["option_ids"][start:start + n].astype(np.int64))
         valid[i, :n] = True
 
-    return (states, state_ids, options, option_ids, valid,
+    return (states, state_ids, options, option_ids, plans, valid,
             torch.from_numpy(data["actions"][rows]).long(),
             torch.from_numpy(data["logprobs"][rows]).float(),
             torch.from_numpy(advantages[rows]).float(),
             torch.from_numpy(returns[rows]).float())
+
+
+def _forward(model, states, state_ids, options, option_ids, plans):
+    """Dispatch the right forward signature: v1 (2 args), v2 (4), v3 (5 — the
+    plan tensor, M20). Duck-typed on plan_enc so either twin's V3 class works.
+    Twin of rl/ppo.py _forward — change BOTH."""
+    if hasattr(model, "plan_enc"):
+        if plans is None:                      # v2-era shards under a v3 net
+            plans = torch.zeros(len(states), model.plan_dim)
+        return model(states, plans, state_ids, options, option_ids)
+    if state_ids is None:
+        return model(states, options)
+    return model(states, state_ids, options, option_ids)
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +166,8 @@ def compute_gae(rewards: np.ndarray, values: np.ndarray,
 def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
                data: dict[str, np.ndarray], advantages: np.ndarray,
                returns: np.ndarray, epochs: int = 4, batch_size: int = 256,
-               entropy_coef: float = ENTROPY_COEF) -> dict:
+               entropy_coef: float = ENTROPY_COEF,
+               ref_model=None, kl_coef: float = 0.0) -> dict:
     """The clipped PPO update over all collected decisions.
 
     Per minibatch (use collate_ppo above; shuffle rows each epoch):
@@ -172,18 +189,18 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
                              / (advantages.std() + ADVANTAGE_NORM_EPS))
     n_rows = len(data["actions"])
     logs = {"policy_loss": [], "value_loss": [], "entropy": [], "ratio": []}
+    if kl_coef:
+        logs["kl"] = []
 
     for _ in range(epochs):
         perm = np.random.permutation(n_rows)
         for i in range(0, n_rows, batch_size):
             rows = perm[i:i + batch_size]
-            (states, state_ids, options, option_ids, valid, actions, old_logprob,
-             batch_advantages, batch_returns) = \
+            (states, state_ids, options, option_ids, plans, valid, actions,
+             old_logprob, batch_advantages, batch_returns) = \
                 collate_ppo(data, rows, normalized_advantages, returns)
-            if state_ids is None:
-                logits, value = model(states, options)
-            else:                       # encoders-v2 shards -> OptionScorerV2
-                logits, value = model(states, state_ids, options, option_ids)
+            logits, value = _forward(model, states, state_ids, options,
+                                     option_ids, plans)
             logits = logits.masked_fill(~valid, MASKED_LOGIT)
             logprobs = torch.log_softmax(logits, dim=1)
             new_logprob = logprobs.gather(1, actions.unsqueeze(1)).squeeze(1)
@@ -202,6 +219,20 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
             # gradient scales with the value error (and flips sign with it)
             # instead of the documented additive PPO objective.
             loss = policy_loss + VALUE_COEF * value_loss - entropy_coef * entropy
+
+            if ref_model is not None and kl_coef:
+                # M20 KL-anchor — twin of rl/ppo.py (change BOTH): a rubber
+                # band to the frozen start policy, KL(pi_new || pi_ref) over
+                # each decision's REAL options.
+                with torch.no_grad():
+                    ref_logits, _ = _forward(ref_model, states, state_ids,
+                                             options, option_ids, plans)
+                    ref_logprobs = torch.log_softmax(
+                        ref_logits.masked_fill(~valid, MASKED_LOGIT), dim=1)
+                kl = (probs * (logprobs - ref_logprobs)).masked_fill(~valid, 0.0) \
+                    .sum(dim=1).mean()
+                loss = loss + kl_coef * kl
+                logs["kl"].append(kl.item())
 
             opt.zero_grad()
             loss.backward()
@@ -234,10 +265,24 @@ def warm_start_value(model, value_ckpt: Path) -> list[str]:
 
 
 def load_model(ckpt_path: Path):
-    """Build the right architecture for a checkpoint: OptionScorerV2 when the
-    state dict carries the id-embedding table (M7.3 checkpoints), else v1."""
+    """Build the right architecture for a checkpoint: OptionScorerV3 for
+    plan-conditioned checkpoints (M11+, dims sniffed from the weights),
+    OptionScorerV2 when the state dict carries the id-embedding table (M7.3),
+    else v1. Twin of rl/ppo.py _load_model — change BOTH."""
     state_dict = torch.load(ckpt_path, map_location="cpu")
-    model = OptionScorerV2() if "embedding.weight" in state_dict else OptionScorer()
+    if "plan_enc.0.weight" in state_dict:               # M20: v3 support
+        from tcg.encoders import (EMBED_DIM, N_CONTEXTS, N_OPTION_IDS,
+                                  STATE_V2_DIM)
+        from tcg.network import PLAN_DIM
+        n_ids = (state_dict["state_enc.0.weight"].shape[1] - STATE_V2_DIM
+                 - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
+        option_dim = (state_dict["option_enc.0.weight"].shape[1]
+                      - N_OPTION_IDS * EMBED_DIM)
+        model = OptionScorerV3(n_state_ids=n_ids, option_dim=option_dim)
+    elif "embedding.weight" in state_dict:
+        model = OptionScorerV2()
+    else:
+        model = OptionScorer()
     model.load_state_dict(state_dict)
     return model
 

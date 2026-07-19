@@ -194,3 +194,50 @@ def test_no_hoard_flag_below_turn_threshold_or_when_played():
         options=[{"type": 7, "index": 0}, {"type": 14}], action=[0], turn=5)
     flags = pm.audit_flags(played_last, us=1)
     assert all(not f.startswith("[trainer-hoarded]") for f in flags)
+
+
+# ---------------------------------------------------------------------------
+# M19: NN| net-internals log parsing (submission/main.py stderr -> post-mortem)
+# ---------------------------------------------------------------------------
+def _log_payload(*stderrs):
+    """Kaggle agent-logs shape: list of per-call [{'duration','stdout','stderr'}]."""
+    return [[{"duration": 0.01, "stdout": "", "stderr": s}] for s in stderrs]
+
+
+def test_parse_net_log_joins_by_step():
+    payload = _log_payload(
+        'NN|{"ev":"start","v3":true}',                       # no "s" -> skipped
+        'NN|{"s":5,"t":1,"c":0,"a":[2],"sc":[0.1,-0.4,1.25],"p":3,"psc":[0.5,1.0]}',
+        'engine noise\nNN|{"s":9,"t":2,"c":0,"a":[0],"sc":[2.0]}',
+    )
+    recs = pm.parse_net_log(payload)
+    assert set(recs) == {5, 9}
+    assert recs[5]["a"] == [2] and recs[5]["p"] == 3
+    assert recs[9]["sc"] == [2.0]
+
+
+def test_parse_net_log_tolerates_err_lines_and_empty(capsys):
+    assert pm.parse_net_log(_log_payload("", "")) == {}      # pre-M19 logs
+    recs = pm.parse_net_log(_log_payload(
+        "NN|ERR|ValueError('boom')", 'NN|{"s":1,"sc":[0.0]}', "NN|not json"))
+    assert set(recs) == {1}
+    assert "unparseable" in capsys.readouterr().out          # warned, not hidden
+
+
+def test_flag_over_attach_onto_a_charged_target():
+    """M19: energy attached to a target whose charged-best is already paid.
+    fake_cg card 1: best attack (102) costs 2 — two energies = charged."""
+    charged = {"id": 1, "hp": 100, "maxHp": 100, "energies": [6, 6]}
+    cur = {"turn": 3, "players": [
+        _player(),
+        {**_player(), "active": [charged]},
+    ]}
+    steps = [[{}, {"observation": {"current": cur, "select": {"context": 0,
+              "option": [{"type": 8, "inPlayArea": 4, "inPlayIndex": 0}]}}}],
+             [{}, {"action": [0]}]]
+    flags = pm.audit_flags(steps, us=1)
+    assert any(f.startswith("[over-attach]") for f in flags)
+    # one energy short: no flag
+    cur["players"][1]["active"][0]["energies"] = [6]
+    assert not any(f.startswith("[over-attach]")
+                   for f in pm.audit_flags(steps, us=1))

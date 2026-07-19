@@ -39,7 +39,18 @@ def can_afford(attached_energies: Sequence[int], cost: Sequence[int]) -> bool:
 # UNREACHABLE_TURNS marks "can never KO" as a large int, keeping scorer
 # comparisons branch-free.
 
-def charged_best(attacker, target=None) -> tuple[int, int]:
+# Card FACTS the tables can't otherwise see (M13 Rung 0a — mirrored from
+# rl/combat.py CONDITIONAL_ATTACKS, change BOTH): attack -> required own-board
+# card id. Enforced only when callers pass board_ids; None = legacy behavior.
+CONDITIONAL_ATTACKS = {980: 675}   # Solrock's attack needs Lunatone in play
+
+
+def attack_available(attack_id, board_ids) -> bool:
+    required = CONDITIONAL_ATTACKS.get(attack_id)
+    return required is None or board_ids is None or required in board_ids
+
+
+def charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
     """Best attack by damage vs ``target`` assuming FULL charge: (damage, cost_total).
 
     Unlike ``best_damage`` this skips affordability — it answers "what is this
@@ -56,7 +67,7 @@ def charged_best(attacker, target=None) -> tuple[int, int]:
 
     best = (0, 0)
     for attack_id in attacker_card.attack_ids:
-        if attack_id not in ATTACKS:
+        if attack_id not in ATTACKS or not attack_available(attack_id, board_ids):
             continue
         attack = ATTACKS[attack_id]
         damage = attack.damage
@@ -71,14 +82,14 @@ def charged_best(attacker, target=None) -> tuple[int, int]:
     return best
 
 
-def turns_to_ready(pokemon, target=None) -> int:
+def turns_to_ready(pokemon, target=None, board_ids=None) -> int:
     """Attaches still needed before ``pokemon`` can fire its charged-best attack
     (attach 1/turn). Total cost, not typed: own-type energy pays typed AND
     colorless slots, so the gap is cost_total - attached (off-type costs are
     undercounted — accepted approximation; ``can_afford`` stays the exact check).
     Works on hand cards (no ``.energies`` -> 0 attached). UNREACHABLE_TURNS if
     it can never deal damage."""
-    damage, cost_total = charged_best(pokemon, target)
+    damage, cost_total = charged_best(pokemon, target, board_ids)
     if damage <= 0:
         return UNREACHABLE_TURNS
     return max(0, cost_total - len(getattr(pokemon, "energies", ())))
@@ -103,7 +114,7 @@ def turns_to_first_ko(attacker, target) -> int:
     return min(UNREACHABLE_TURNS, max(gap, 1) + hits - 1)
 
 
-def best_damage(attacker, target, extra_energy: int = 0) -> int:
+def best_damage(attacker, target, extra_energy: int = 0, board_ids=None) -> int:
     """Max damage ``attacker`` can deal to ``target`` this turn.
 
     Best affordable attack, after weakness/resistance against the attacker's
@@ -120,7 +131,7 @@ def best_damage(attacker, target, extra_energy: int = 0) -> int:
 
     best = 0
     for attack_id in attacker_card.attack_ids:
-        if attack_id not in ATTACKS:
+        if attack_id not in ATTACKS or not attack_available(attack_id, board_ids):
             continue
         attack = ATTACKS[attack_id]
         damage = attack.damage

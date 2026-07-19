@@ -35,7 +35,8 @@ from types import SimpleNamespace
 
 from cg.api import AreaType, CardType, OptionType, SelectContext, all_card_data
 
-from rl.kaggle_ingest import RAW_DIR, deck_hash, fetch_episode, parse_episode
+from rl.kaggle_ingest import (RAW_DIR, deck_hash, fetch_agent_logs,
+                              fetch_episode, parse_episode)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -151,6 +152,45 @@ def describe_option(opt: dict, cur: dict, us: int) -> str:
         else:
             target = f"[{idx}]"
     return t + target
+
+
+def parse_net_log(payload: list) -> dict[int, dict]:
+    """Parse `NN|{json}` net-internals lines (submission/main.py, M19) out of a
+    Kaggle agent-logs payload into {obs step -> decision record}.
+
+    Records carry: s=obs step, t=turn, c=SelectContext, a=chosen indices,
+    sc=per-option logits; on the turn's plan commit also p=plan index and
+    psc=plan logits. `NN|ERR|` lines are counted, printed once, and skipped
+    (the shipped logger never hides its own failures)."""
+    recs, errs = {}, []
+    for entry in payload or []:
+        for cell in entry if isinstance(entry, list) else [entry]:
+            for line in (cell.get("stderr") or "").splitlines():
+                if not line.startswith("NN|"):
+                    continue
+                if line.startswith("NN|ERR|"):
+                    errs.append(line)
+                    continue
+                try:
+                    rec = json.loads(line[3:])
+                except ValueError:
+                    errs.append(line)
+                    continue
+                if isinstance(rec, dict) and rec.get("s") is not None:
+                    recs[int(rec["s"])] = rec
+    if errs:
+        print(f"WARNING: {len(errs)} unparseable NN| lines, first: {errs[0][:120]}")
+    return recs
+
+
+def load_net_log(episode_id: int, us: int) -> dict[int, dict] | None:
+    """Cached-first agent-log load; [NET] fetch on miss (like `_load`), but a
+    fetch failure degrades to None — the rest of the report still works."""
+    try:
+        return parse_net_log(fetch_agent_logs(episode_id, us))
+    except RuntimeError as e:
+        print(f"(no agent log: {e})")
+        return None
 
 
 def _action_for(steps: list, i: int, us: int):
@@ -360,6 +400,37 @@ def _attach_off_racer(opt: dict, cur: dict, us: int, i: int, turn) -> str | None
             f"{card_name(racer[2].id)} was still unloaded")
 
 
+def _attach_saturated(opt: dict, cur: dict, us: int, i: int, turn) -> str | None:
+    """M19: energy attached to a target whose charged-best attack is ALREADY
+    paid (surplus attach — the live 3-energies-on-a-1-cost-Solrock defect).
+    Complements [attach-off-racer], which only catches misrouting while the
+    racer is unloaded, not overfeeding a charged one."""
+    from rl.combat import _turns_to_ready
+
+    me = cur["players"][us]
+    area, idx = opt.get("inPlayArea"), opt.get("inPlayIndex")
+    if area is None:
+        return None
+    zone = {int(AreaType.ACTIVE): [_active(me)],
+            int(AreaType.BENCH): me.get("bench") or []}.get(int(area))
+    if zone is None or idx is None or idx >= len(zone):
+        return None
+    target = zone[idx]
+    if not isinstance(target, dict) or not target.get("id"):
+        return None
+    shim = _poke_shim(target)
+    board_ids = {p.get("id") for p in [_active(me)] + (me.get("bench") or [])
+                 if isinstance(p, dict) and p.get("id")}
+    opponent = cur["players"][1 - us]
+    op_active = _active(opponent)
+    op_shim = _poke_shim(op_active) if op_active.get("id") else None
+    if _turns_to_ready(shim, op_shim, board_ids) == 0:
+        return (f"[over-attach] s{i} t{turn}: energy attached to "
+                f"{card_name(shim.id)} whose best attack was already charged "
+                f"({len(shim.energies)} energy attached)")
+    return None
+
+
 def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
     flags = []
     turn_evolve_left: dict = {}                    # turn -> declined EVOLVE names
@@ -377,14 +448,16 @@ def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
             turn_evolve_left[turn] = declined
 
             for j, o in enumerate(options):
-                # (4) attach off the racer (chosen ATTACH options only)
+                # (4) attach off the racer / onto a saturated target
+                # (chosen ATTACH options only)
                 if j in chosen and o.get("type") == int(OptionType.ATTACH):
-                    try:
-                        flag = _attach_off_racer(o, cur, us, i, turn)
-                    except Exception:              # forensics, not a rules engine
-                        flag = None
-                    if flag:
-                        flags.append(flag)
+                    for check in (_attach_off_racer, _attach_saturated):
+                        try:
+                            flag = check(o, cur, us, i, turn)
+                        except Exception:          # forensics, not a rules engine
+                            flag = None
+                        if flag:
+                            flags.append(flag)
                 # (6) trainer-hoarding bookkeeping (effect-text-free proxy for
                 # "discard-retrieval item unused": a PLAY-able trainer ignored
                 # for HOARD_MIN_TURNS distinct turns and never played)
@@ -525,13 +598,30 @@ def report(episode_id: int, seat: int | None = None, decisions: bool = False,
             print(f"          |     hand={hand}")
             print(f"          | OPP {_fmt_side(b_op)}")
 
+    net = load_net_log(episode_id, us)
+    if net is not None:
+        commits = sum(1 for r in net.values() if "p" in r)
+        print(f"\nnet log: {len(net)} decisions with net internals, "
+              f"{commits} plan commits"
+              + ("" if net else " — empty (pre-M19 submission?)"))
+
     if decisions:
         print("\n=== DECISIONS (context, options, chosen) ===")
         for i, turn, ctx, opts, action, _ in iter_decisions(steps, us):
+            rec = (net or {}).get(i)
             print(f"s{i:>3} t{turn:>2} {ctx:<12} chose={action}")
+            if rec and "p" in rec:
+                psc = rec.get("psc") or []
+                print(f"     plan committed: #{rec['p']} of {len(psc)} "
+                      f"(logit {psc[rec['p']]:+.2f}, "
+                      f"runner-up {max((x for k, x in enumerate(psc) if k != rec['p']), default=float('nan')):+.2f})")
+            logits = rec.get("sc") if rec else None
             for j, o in enumerate(opts):
                 mark = " <== " if (isinstance(action, list) and j in action) else "     "
-                print(f"    {mark}[{j}] {o}")
+                net_note = ""
+                if logits is not None and j < len(logits):
+                    net_note = f"  logit={logits[j]:+.2f}"
+                print(f"    {mark}[{j}] {o}{net_note}")
 
     print("\n=== VERDICT ===")
     if last_cur:

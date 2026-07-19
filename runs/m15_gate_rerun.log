@@ -1,0 +1,4 @@
+parity OK (v2, max diff 1.43e-06)
+bundle isolation OK (self-contained; 176 decisions, no polars/torch)
+deck legal (60 cards)
+gate game OK: rewards [-1, 1], 138 decisions

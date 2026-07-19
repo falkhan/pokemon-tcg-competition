@@ -1,0 +1,31 @@
+loading shard_w00_0000.npz
+loading shard_w01_0000.npz
+loading shard_w02_0000.npz
+loading shard_w03_0000.npz
+loading shard_w04_0000.npz
+loading shard_w05_0000.npz
+loading shard_w06_0000.npz
+loading shard_w07_0000.npz
+loading shard_w08_0000.npz
+loading shard_w09_0000.npz
+loading shard_w10_0000.npz
+loading shard_w11_0000.npz
+loading shard_w00_0000.npz
+loading shard_w01_0000.npz
+loading shard_w02_0000.npz
+loading shard_w03_0000.npz
+loading shard_w04_0000.npz
+loading shard_w05_0000.npz
+loading shard_w06_0000.npz
+loading shard_w07_0000.npz
+loading shard_w08_0000.npz
+loading shard_w09_0000.npz
+loading shard_w10_0000.npz
+loading shard_w11_0000.npz
+train 51271, val 5336
+warm-start from pre-option-identity v3 checkpoints/osv3h_plan1.pt (option-identity columns zero-init)
+epoch 0: train_loss 1.459  val_acc 0.760  plan_acc 0.842
+epoch 1: train_loss 1.372  val_acc 0.762  plan_acc 0.843
+epoch 2: train_loss 1.321  val_acc 0.760  plan_acc 0.838
+epoch 3: train_loss 1.281  val_acc 0.769  plan_acc 0.845
+epoch 4: train_loss 1.244  val_acc 0.767  plan_acc 0.832

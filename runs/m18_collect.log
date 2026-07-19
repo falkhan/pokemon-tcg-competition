@@ -1,0 +1,16 @@
+[w3] game 25: 3.7s/game -> projected 5 min for this worker's 80 games
+[w4] game 25: 5.3s/game -> projected 7 min for this worker's 80 games
+[w6] game 25: 5.8s/game -> projected 8 min for this worker's 80 games
+[w0] game 25: 7.0s/game -> projected 9 min for this worker's 80 games
+[w9] game 25: 8.7s/game -> projected 12 min for this worker's 80 games
+[w7] game 25: 9.6s/game -> projected 13 min for this worker's 80 games
+[w1] game 25: 10.0s/game -> projected 13 min for this worker's 80 games
+[w8] game 25: 12.8s/game -> projected 17 min for this worker's 80 games
+[w5] game 25: 13.3s/game -> projected 18 min for this worker's 80 games
+[w2] game 25: 25.5s/game -> projected 34 min for this worker's 80 games
+done: 800 games, 27054 decisions, 5509 plan rows -> data/plan_m18
+plan coverage 0.981  (missed 103)  null 0.78  kill 345  SETUP 2843  gust 0.00  derails 356
+value-solve: calls 4656  errors 0  commits 2843  margin p10/p50/p90/p99 = 3/1418/5961/500005088  (threshold 200)
+  vs ext: teacher seat 41/281 (0.15)
+  vs rule: teacher seat 29/259 (0.11)
+  vs self: teacher seat 145/260 (0.56)

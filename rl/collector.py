@@ -92,13 +92,37 @@ def _dev_potential(obs) -> float:
             + 0.15 * min(bench, 3) / 3.0)
 
 
-def _play_worker(args: tuple) -> str:
+def _is_over_attach(obs, option) -> bool:
+    """M20: the sampled action attaches energy to a Pokémon whose charged-best
+    attack is ALREADY paid (rl/combat._turns_to_ready == 0 — same primitive as
+    the [over-attach] postmortem flag, re-expressed against live obs objects).
+    This is the defect the per-step penalty docks."""
+    from cg.api import AreaType, OptionType
+    from rl.combat import _turns_to_ready
+
+    if int(option.type) != int(OptionType.ATTACH) or option.inPlayArea is None:
+        return False
+    me = obs.current.players[obs.current.yourIndex]
+    zone = {int(AreaType.ACTIVE): me.active,
+            int(AreaType.BENCH): me.bench}.get(int(option.inPlayArea))
+    idx = option.inPlayIndex
+    if zone is None or idx is None or idx >= len(zone) or zone[idx] is None:
+        return False
+    target = zone[idx]
+    opp = obs.current.players[1 - obs.current.yourIndex]
+    opp_active = opp.active[0] if opp.active and opp.active[0] is not None else None
+    board_ids = {p.id for p in list(me.active or []) + list(me.bench or [])
+                 if p is not None}
+    return _turns_to_ready(target, opp_active, board_ids) == 0
+
+
+def _play_worker(args: tuple) -> tuple:
     (worker_id, n_games, checkpoint, learn_deck_name, learn_decks, specs, weights,
-     out_dir, seed, race_shaping, shaping) = args
+     out_dir, seed, race_shaping, shaping, defect_penalty) = args
 
     import random
     import torch
-    from cg.api import to_observation_class
+    from cg.api import SelectContext, to_observation_class
     from cg.game import battle_start, battle_select, battle_finish
     from rl.encoders import (_race_features, encode_context, encode_option,
                              encode_option_v2, encode_state, encode_state_v2)
@@ -109,19 +133,62 @@ def _play_worker(args: tuple) -> str:
     torch.manual_seed(seed)
 
     sd = torch.load(checkpoint, map_location="cpu")
-    is_v2 = "embedding.weight" in sd
+    is_v3 = "plan_enc.0.weight" in sd
+    is_v2 = not is_v3 and "embedding.weight" in sd
     if is_v2 and not learn_decks:
         raise ValueError("encoders-v2 checkpoints need a deck population "
                          "(collect(..., decks_file=...)): the deck-context "
                          "features require the learner's deck list")
-    learner = OptionScorerV2() if is_v2 else OptionScorer()
+    if is_v3:
+        # M20: plan-conditioned v3 learner — arch sniff + encoders exactly as
+        # rl/matchrunner's model pilot (the serve-time twin).
+        from rl.encoders import (EMBED_DIM, N_CONTEXTS, OPTION_V3_DIM,
+                                 STATE_V2_DIM, encode_option_v2_legacy,
+                                 encode_state_v3)
+        from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+        from rl.policy import OptionScorerV3, option_dim_of
+        n_ids = (sd["state_enc.0.weight"].shape[1] - STATE_V2_DIM - N_CONTEXTS
+                 - PLAN_DIM) // EMBED_DIM
+        opt_dim = option_dim_of(sd)
+        learner = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
+        enc_state = encode_state_v3 if n_ids > 12 else encode_state_v2
+        enc_opt = (encode_option_v2 if opt_dim >= OPTION_V3_DIM
+                   else encode_option_v2_legacy)
+    else:
+        learner = OptionScorerV2() if is_v2 else OptionScorer()
     learner.load_state_dict(sd)
     learner.eval()
     fixed_deck = _deck(learn_deck_name)
+    pstate = {"key": None, "vec": None}     # v3 turn-scoped plan (reset per game)
 
     def run_learner(obs, deck):
-        """Sampled decision: (picks, action, logprob, value, sc, sids, opts, oids)."""
-        if is_v2:
+        """Sampled decision:
+        (picks, action, logprob, value, sc, sids, opts, oids, plan)."""
+        plan = None
+        if is_v3:
+            num, sids = enc_state(obs.current, deck)
+            sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
+            key = (obs.current.turn, obs.current.yourIndex)
+            if obs.select.context == SelectContext.MAIN and pstate["key"] != key:
+                # Plan once at the turn's first MAIN, hold for submenus —
+                # greedy like serve time; exploration stays option-level.
+                cands = enumerate_plans(obs)
+                mat = np.stack([encode_plan(c) for c in cands]).astype(np.float32)
+                idx = learner.act_plan(sc, sids, mat)
+                pstate.update(key=key, vec=mat[idx].copy())
+            plan = (pstate["vec"] if pstate["key"] == key and pstate["vec"] is not None
+                    else np.zeros(PLAN_DIM, dtype=np.float32))
+            pairs = [enc_opt(o, obs) for o in obs.select.option]
+            opts = np.stack([p[0] for p in pairs]).astype(np.float32)
+            oids = np.stack([p[1] for p in pairs])
+            with torch.no_grad():
+                logits, value = learner(
+                    torch.from_numpy(sc).unsqueeze(0),
+                    torch.from_numpy(plan).unsqueeze(0),
+                    torch.from_numpy(sids.astype(np.int64)).unsqueeze(0),
+                    torch.from_numpy(opts).unsqueeze(0),
+                    torch.from_numpy(oids.astype(np.int64)).unsqueeze(0))
+        elif is_v2:
             num, sids = encode_state_v2(obs.current, deck)
             sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
             pairs = [encode_option_v2(o, obs) for o in obs.select.option]
@@ -147,7 +214,7 @@ def _play_worker(args: tuple) -> str:
         logprob = float(torch.log(probs[action] + 1e-12))
         order = torch.argsort(logits, descending=True).tolist()
         picks = ([action] + [i for i in order if i != action])[:obs.select.maxCount]
-        return picks, action, logprob, float(value), sc, sids, opts, oids
+        return picks, action, logprob, float(value), sc, sids, opts, oids, plan
 
     # Build each distinct opponent once (matchrunner handles every spec kind,
     # incl. generic pilots and v2 / pre-M3 model checkpoints).
@@ -160,13 +227,17 @@ def _play_worker(args: tuple) -> str:
 
     col_names = ["states", "options", "n_options", "actions",
                  "logprobs", "values", "rewards", "game_ids", "players"]
-    if is_v2:
+    if is_v2 or is_v3:
         col_names += ["state_ids", "option_ids"]
+    if is_v3:
+        col_names += ["plans"]
     if learn_decks:
         col_names += ["deck_idx"]
     cols: dict[str, list] = {k: [] for k in col_names}
+    n_defects = 0                                   # M20: over-attach actions taken
 
     for game in range(n_games):
+        pstate.update(key=None, vec=None)           # v3: fresh plan state per game
         if learn_decks:
             deck_idx = rng.randrange(len(learn_decks))
             learn_deck = learn_decks[deck_idx]
@@ -186,12 +257,18 @@ def _play_worker(args: tuple) -> str:
             seat = obs_dict["current"]["yourIndex"]
             if seat == learn_seat:
                 obs = to_observation_class(obs_dict)
-                picks, action, logprob, value, sc, sids, opts, oids = \
+                picks, action, logprob, value, sc, sids, opts, oids, plan = \
                     run_learner(obs, learn_deck)
                 me = obs.current.players[seat]; op = obs.current.players[1 - seat]
                 delta = (6 - len(op.prize)) - (6 - len(me.prize))     # prizes I took - they took
                 reward = PRIZE_SHAPING * (delta - prev_delta)
                 prev_delta = delta
+                if defect_penalty and _is_over_attach(obs, obs.select.option[action]):
+                    # M20: dock the decision that wastes the attach — a dense,
+                    # NON-potential term that deliberately redefines optimal
+                    # play (unlike the race/dev shaping below).
+                    reward -= defect_penalty
+                    n_defects += 1
                 if race_shaping:
                     # Potential-based setup shaping (M7-plan §3b): phi = the race
                     # delta; F = coef*(phi' - phi) telescopes out of the return,
@@ -204,7 +281,7 @@ def _play_worker(args: tuple) -> str:
                     prev_phi = phi
                 rows.append(dict(state=sc, state_ids=sids, opts=opts, option_ids=oids,
                                  action=action, logprob=logprob, value=value,
-                                 reward=reward))
+                                 reward=reward, plan=plan))
                 obs_dict = battle_select([int(i) for i in picks])
             else:
                 obs_dict = battle_select([int(i) for i in opp_fn(obs_dict)])
@@ -220,9 +297,11 @@ def _play_worker(args: tuple) -> str:
             cols["logprobs"].append(r["logprob"]); cols["values"].append(r["value"])
             cols["rewards"].append(r["reward"]); cols["game_ids"].append(game)
             cols["players"].append(learn_seat)
-            if is_v2:
+            if is_v2 or is_v3:
                 cols["state_ids"].append(r["state_ids"])
                 cols["option_ids"].append(r["option_ids"])
+            if is_v3:
+                cols["plans"].append(r["plan"])
             if learn_decks:
                 cols["deck_idx"].append(deck_idx)
 
@@ -237,14 +316,16 @@ def _play_worker(args: tuple) -> str:
         game_ids=np.array(cols["game_ids"], dtype=np.int32),
         players=np.array(cols["players"], dtype=np.int32),
     )
-    if is_v2:
+    if is_v2 or is_v3:
         arrays["state_ids"] = np.stack(cols["state_ids"])
         arrays["option_ids"] = np.concatenate(cols["option_ids"])
+    if is_v3:
+        arrays["plans"] = np.stack(cols["plans"])
     if learn_decks:
         arrays["deck_idx"] = np.array(cols["deck_idx"], dtype=np.int32)
     out = Path(out_dir) / f"ppo_shard_w{worker_id:02d}.npz"
     np.savez_compressed(out, **arrays)
-    return str(out)
+    return str(out), n_defects, n_games
 
 
 def _load_population(decks_file) -> list[list[int]]:
@@ -256,24 +337,33 @@ def _load_population(decks_file) -> list[list[int]]:
 def collect(n_games: int, checkpoint: str, n_workers: int = 4,
             learn_deck: str = LEARN_DECK, pool=None, out_dir: Path = OUT_DIR,
             decks_file=None, race_shaping: float = 0.0,
-            shaping: str = "race") -> list[str]:
+            shaping: str = "race", defect_penalty: float = 0.0) -> tuple[list[str], float]:
     """Collect n_games across n_workers, learning policy vs an opponent pool.
 
     decks_file: population.json — the learner samples a deck per game from it
     (multi-deck self-play; required for encoders-v2 checkpoints). race_shaping:
     coefficient of the potential-based setup-shaping term (0 = off).
+    defect_penalty (M20): per-step reward dock for over-attach actions (0 = off;
+    the defect is still counted). Returns (shard paths, defect rate per game).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     specs, weights = pool if pool is not None else default_pool(checkpoint, learn_deck)
     learn_decks = _load_population(decks_file) if decks_file else None
     per = [n_games // n_workers + (1 if i < n_games % n_workers else 0) for i in range(n_workers)]
     jobs = [(i, per[i], checkpoint, learn_deck, learn_decks, specs, weights,
-             str(out_dir), 1000 + i, race_shaping, shaping)
+             str(out_dir), 1000 + i, race_shaping, shaping, defect_penalty)
             for i in range(n_workers) if per[i] > 0]
 
     ctx = mp.get_context("spawn")
     with ctx.Pool(len(jobs)) as pool_:
-        return pool_.map(_play_worker, jobs)
+        results = pool_.map(_play_worker, jobs)
+    shards = [r[0] for r in results]
+    total_defects = sum(r[1] for r in results)
+    total_games = sum(r[2] for r in results)
+    defect_rate = total_defects / max(1, total_games)
+    print(f"collect: over-attach actions {total_defects} in {total_games} games "
+          f"= {defect_rate:.2f}/game", flush=True)
+    return shards, defect_rate
 
 
 if __name__ == "__main__":
@@ -284,11 +374,17 @@ if __name__ == "__main__":
     p.add_argument("--decks", type=str, default=None,
                    help="population.json for per-game learner deck sampling")
     p.add_argument("--race-shaping", type=float, default=0.0)
+    p.add_argument("--learn-deck", type=str, default=LEARN_DECK,
+                   help="learner's fixed deck (M20 probe: lucario)")
+    p.add_argument("--defect-penalty", type=float, default=0.0,
+                   help="M20: per-step reward dock for over-attach actions")
     args = p.parse_args()
 
     import time
     t0 = time.time()
-    shards = collect(args.games, args.checkpoint, args.workers,
-                     decks_file=args.decks, race_shaping=args.race_shaping)
+    shards, _rate = collect(args.games, args.checkpoint, args.workers,
+                            learn_deck=args.learn_deck, decks_file=args.decks,
+                            race_shaping=args.race_shaping,
+                            defect_penalty=args.defect_penalty)
     dt = time.time() - t0
     print(f"{args.games} games in {dt:.0f}s ({3600 * args.games / dt:.0f} games/hr) -> {shards}")

@@ -54,6 +54,8 @@ RAW_DIR = KAGGLE_DIR / "raw"
 EPISODES_PQ = KAGGLE_DIR / "episodes.parquet"
 OPP_DECKS_PQ = KAGGLE_DIR / "opp_decks.parquet"
 
+LOGS_DIR = KAGGLE_DIR / "logs"
+
 COMPETITION = "pokemon-tcg-ai-battle"
 BASE_URL = "https://www.kaggle.com/api/i/competitions.EpisodeService"
 THROTTLE_S = 1.0     # min seconds between network requests (politeness, §5.1)
@@ -191,6 +193,48 @@ def _default_fetcher(episode_id: int) -> dict:
             "runbook in docs/M7.md, or download a replay manually from the episode "
             "page and load it with `python -m rl.kaggle_ingest import-file ...`."
         ) from e
+
+
+def fetch_agent_logs(episode_id: int, agent_index: int,
+                     cache: Path | None = None) -> list:
+    """Per-step agent logs for OUR seat (M19): a list (one entry per agent
+    call) of ``[{"duration": s, "stdout": "...", "stderr": "..."}]``. The
+    shipped agent writes one ``NN|{json}`` net-internals line per decision on
+    stderr (submission/main.py) — this is the only channel that carries them;
+    the replay JSON has none. Kaggle serves logs only for the caller's own
+    team's agent (403 for the opponent seat). Immutable gzip cache, throttled
+    on miss, same contract as ``fetch_episode``."""
+    path = Path(cache or LOGS_DIR) / f"episode_{episode_id}_agent{agent_index}.json.gz"
+    if path.exists():
+        return json.loads(gzip.decompress(path.read_bytes()))
+    _throttle()
+    try:
+        import tempfile
+
+        from kaggle.api.kaggle_api_extended import KaggleApi
+
+        api = KaggleApi()
+        api.authenticate()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            api.competition_episode_agent_logs(int(episode_id), int(agent_index),
+                                               path=tmp_dir)
+            files = list(Path(tmp_dir).glob("*.json"))
+            _require(len(files) == 1,
+                     f"agent-logs download produced {len(files)} json files")
+            raw = json.loads(files[0].read_text())
+    except SchemaError:
+        raise
+    except Exception as e:  # noqa: BLE001 — every failure mode gets the same remedy
+        raise RuntimeError(
+            f"[NET] Kaggle agent-logs download failed ({type(e).__name__}: {e}). "
+            "Needs the `kaggle` package + ~/.kaggle/kaggle.json, and works only "
+            "for OUR OWN seat (opponent logs are 403-private)."
+        ) from e
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")  # atomic: cache stays immutable/resumable
+    tmp.write_bytes(gzip.compress(json.dumps(raw).encode()))
+    tmp.replace(path)
+    return raw
 
 
 def _unwrap_replay(payload) -> dict:
@@ -868,6 +912,11 @@ def _main() -> None:
     s = sub.add_parser("fetch", help="fetch one episode into the cache")
     s.add_argument("--episode", type=int, required=True)
 
+    s = sub.add_parser("agent-logs", help="fetch our agent's per-step logs for an episode")
+    s.add_argument("--episode", type=int, required=True)
+    s.add_argument("--agent-index", type=int, default=None,
+                   help="seat of our agent (default: our_seat from episodes.parquet)")
+
     s = sub.add_parser("import-file", help="load a manually-downloaded replay JSON")
     s.add_argument("path", type=Path)
     s.add_argument("--episode", type=int, required=True)
@@ -910,6 +959,16 @@ def _main() -> None:
     elif a.cmd == "fetch":
         fetch_episode(a.episode)
         print(f"cached {RAW_DIR / f'episode_{a.episode}.json.gz'}", flush=True)
+    elif a.cmd == "agent-logs":
+        seat = a.agent_index
+        if seat is None:
+            eps = pl.read_parquet(EPISODES_PQ).filter(pl.col("episode_id") == a.episode)
+            seat = None if eps.is_empty() else eps["our_seat"][0]
+            if seat is None:
+                raise SystemExit(f"episode {a.episode} not in {EPISODES_PQ} (or no "
+                                 "our_seat) — pass --agent-index explicitly")
+        fetch_agent_logs(a.episode, seat)
+        print(f"cached {LOGS_DIR / f'episode_{a.episode}_agent{seat}.json.gz'}", flush=True)
     elif a.cmd == "import-file":
         import_file(a.path, a.episode)
         print(f"imported {a.path} -> episode {a.episode}", flush=True)

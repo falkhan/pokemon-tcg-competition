@@ -116,3 +116,101 @@ class TestRaceMath:
         assert turns_to_first_ko(b.pokemon(3), b.pokemon(1, hp=100)) == 2          # gap 2
         assert turns_to_first_ko(b.pokemon(1), b.pokemon(5, hp=240)) == 3          # g=2,h=2
         assert turns_to_first_ko(b.pokemon(5), b.pokemon(1, hp=10)) == UNREACHABLE_TURNS
+
+
+class TestConditionalAttacks:
+    """M13 0a: CONDITIONAL_ATTACKS gate attacks on own-board presence —
+    rl/tcg twins agree; board_ids=None keeps legacy behavior byte-identical."""
+
+    def _patch(self, monkeypatch):
+        import rl.combat as rc
+        import tcg.combat as tc
+        # fake fact: attack 101 (card 1's 50-dmg) requires card 5 on board
+        monkeypatch.setattr(rc, "CONDITIONAL_ATTACKS", {101: 5})
+        monkeypatch.setattr(tc, "CONDITIONAL_ATTACKS", {101: 5})
+
+    def test_gated_when_requirement_missing(self, monkeypatch):
+        self._patch(monkeypatch)
+        import rl.combat as rc
+        attacker = b.pokemon(1, energies=[FIGHTING])
+        target = b.pokemon(5, hp=100)
+        # requirement absent: attack 101 unavailable -> falls to 102 (needs
+        # F+C, unaffordable with one energy) -> 0 damage
+        assert best_damage(attacker, target, board_ids=set()) == 0
+        assert rc._best_damage(attacker, target, board_ids=set()) == 0
+        # requirement on board: 101 available again
+        assert best_damage(attacker, target, board_ids={5}) == 50
+        assert rc._best_damage(attacker, target, board_ids={5}) == 50
+
+    def test_none_board_ids_is_legacy(self, monkeypatch):
+        self._patch(monkeypatch)
+        import rl.combat as rc
+        attacker = b.pokemon(1, energies=[FIGHTING])
+        target = b.pokemon(5, hp=100)
+        assert best_damage(attacker, target) == 50
+        assert rc._best_damage(attacker, target) == 50
+        assert turns_to_ready(attacker, target) == \
+            rc._turns_to_ready(attacker, target)
+
+    def test_charged_best_and_readiness_gated(self, monkeypatch):
+        self._patch(monkeypatch)
+        import rl.combat as rc
+        attacker = b.pokemon(1)                      # no energy
+        target = b.pokemon(5, hp=100)
+        # without card 5: only attack 102 (120 dmg, 2-cost) remains charged-best
+        assert charged_best(attacker, target, board_ids=set()) == (120, 2)
+        assert rc._charged_best(attacker, target, board_ids=set()) == (120, 2)
+        assert turns_to_ready(attacker, target, board_ids=set()) == 2
+
+    def test_attach_scorer_respects_conditional_attacks(self, monkeypatch):
+        # M14 replay fix: a conditional attacker missing its requirement hits
+        # the non-attacker floor in BOTH twins' attach scorers.
+        self._patch_single(monkeypatch)
+        import rl.generic_pilot as rlp
+        import tcg.pilot as tp
+        from tcg import constants as tc
+        from tests import builders as b
+        from tests.fake_cg import AreaType, OptionType
+        me = b.player(active=b.pokemon(10), hand=[b.hand_card(6)])
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=200)))
+        opt = b.option(OptionType.ATTACH, area=AreaType.HAND, index=0,
+                       in_play_area=AreaType.ACTIVE, in_play_index=0)
+        assert tp.score_attach(opt, obs) == tc.SCORE_ATTACH_NON_ATTACKER
+        assert rlp.score_attach(opt, obs, me) == 400
+        # requirement on board: attacker again (scores above the floor)
+        me2 = b.player(active=b.pokemon(10), bench=[b.pokemon(5)],
+                       hand=[b.hand_card(6)])
+        obs2 = b.observation(me=me2, opponent=b.player(active=b.pokemon(5, hp=200)))
+        assert tp.score_attach(opt, obs2) > tc.SCORE_ATTACH_NON_ATTACKER
+        assert rlp.score_attach(opt, obs2, me2) > 400
+
+    def test_m19_surplus_and_save_retreat_twins_agree(self):
+        # M19 twins parity: surplus-penalized saturated attach + the
+        # save-the-valuable-active retreat tier (constants mirrored as
+        # literals in rl/generic_pilot — change BOTH).
+        import rl.generic_pilot as rlp
+        import tcg.pilot as tp
+        from tcg import constants as tc
+        from tests import builders as b
+        from tests.fake_cg import AreaType, EnergyType, OptionType
+        w = EnergyType.WATER
+        me = b.player(active=b.pokemon(4, energies=[w, w, w]))  # 1-cost, surplus 2
+        obs = b.observation(me=me)
+        opt = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                       in_play_index=0)
+        expected = tc.SCORE_ATTACH_ALREADY_LOADED - 2 * tc.ATTACH_SURPLUS_PENALTY
+        assert tp.score_attach(opt, obs) == expected
+        assert rlp.score_attach(opt, obs, me) == expected
+        f = EnergyType.FIGHTING
+        me2 = b.player(active=b.pokemon(3, hp=100, max_hp=340),
+                       bench=[b.pokemon(1, energies=[f, f])])
+        obs2 = b.observation(me=me2, opponent=b.player(active=b.pokemon(5, hp=999)))
+        assert tp.score_retreat(obs2) == tc.SCORE_RETREAT_SAVE_VALUABLE
+        assert rlp.score_retreat(obs2) == tc.SCORE_RETREAT_SAVE_VALUABLE
+
+    def _patch_single(self, monkeypatch):
+        import rl.combat as rc
+        import tcg.combat as tc_
+        # card 10's only attack (107) requires card 5 on board
+        monkeypatch.setattr(rc, "CONDITIONAL_ATTACKS", {107: 5})
+        monkeypatch.setattr(tc_, "CONDITIONAL_ATTACKS", {107: 5})

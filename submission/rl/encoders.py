@@ -53,7 +53,8 @@ BASIC_FIGHTING_ENERGY = 6  # card id; teacher's Mega Brave scales on discarded c
 # couldn't imitate from raw board features. We compute the SAME quantities and expose them.
 # The core lives in rl.combat (pure-Python, polars-free) so the rule submission can ship it;
 # re-exported here so existing `from rl.encoders import _CARD, _best_damage` imports still work.
-from rl.combat import COLORLESS, _ATK, _CARD, _can_afford, _best_damage  # noqa: E402,F401
+from rl.combat import (COLORLESS, _ATK, _CARD, _attack_available,  # noqa: E402,F401
+                       _can_afford, _best_damage, _turns_to_ready, UNREACHABLE)
 N_COMBAT = 11        # combat-lookahead features (see _combat_features)
 
 # Per-Pokémon-slot: card features + hp/maxHp/energy-count + energy-type counts + tools pool
@@ -233,6 +234,22 @@ N_RACE = 8                          # see _race_features
 RACE_TURN_CAP = 10.0                # race turns normalized /10, capped
 STATE_V2_DIM = STATE_DIM + N_RACE + 2 * FEAT_DIM
 OPTION_V2_DIM = OPTION_DIM
+# --- M16 option-identity block (appended; the v1 slice [:OPTION_DIM] is
+# byte-identical). Pre-M16, a PLAY option carried only a hand index — every
+# trainer in hand encoded to the SAME vector (the M1 Stage-A aliasing disease
+# on the other half of the menu: 431/1353 live decision states offered >=2
+# indistinguishable trainers) — and an ATTACK option never encoded its
+# attackId, so same-Pokémon attacks aliased too. encode_option_v2 now
+# resolves the PLAY card into the acted-card FEAT block + embedding id and
+# appends this block; encode_option_v2_legacy keeps the exact pre-M16
+# encoding for pinned checkpoints.
+N_OPTION_EXTRA = 4   # [atk dmg/300, atk cost/5, atk eff-dmg vs opp active/300, number/10]
+OPTION_V3_DIM = OPTION_DIM + N_OPTION_EXTRA
+_OT_PLAY = 7         # OptionType.PLAY
+_OT_ATTACH = 8       # OptionType.ATTACH
+_OT_RETREAT = 12     # OptionType.RETREAT
+_OT_ATTACK = 13      # OptionType.ATTACK
+_AREA_HAND = 2       # AreaType.HAND
 
 
 def _race_features(state) -> np.ndarray:
@@ -312,8 +329,151 @@ def encode_state_v2(state, my_deck: list[int]) -> tuple[np.ndarray, np.ndarray]:
     return numeric.astype(np.float32), _board_ids(state)
 
 
+N_HAND_IDS = 8   # M15: hand-card id slots (sorted, 0-padded, overflow capped)
+N_STATE_IDS_V3 = N_STATE_IDS + N_HAND_IDS
+
+
+def encode_state_v3(state, my_deck: list[int]) -> tuple[np.ndarray, np.ndarray]:
+    """M15 hand-aware ids: same STATE_V2_DIM numeric, but ids = 12 board +
+    up to N_HAND_IDS of MY hand-card ids (sorted for permutation stability,
+    0-padded). The M14 encoder audit: the hand was a summed 36-dim pool the
+    id-embedding pathway never saw — invisible combos. encode_state_v2 stays
+    untouched (legacy checkpoints/bundles keep loading)."""
+    numeric, board = encode_state_v2(state, my_deck)
+    me = state.players[state.yourIndex]
+    hand = sorted(c.id for c in (me.hand or []) if c is not None)[:N_HAND_IDS]
+    hand += [0] * (N_HAND_IDS - len(hand))
+    return numeric, np.concatenate([board, np.array(hand, dtype=np.int32)])
+
+
+def _attack_extra(attack_id, obs) -> np.ndarray:
+    """[printed dmg/300, cost size/5, effective dmg vs opp active/300].
+
+    Weakness/resistance math and the conditional-attack gate mirror
+    rl.combat._charged_best (change BOTH if the rules change). For prompts
+    where the attacker isn't my active (e.g. DISABLE_ATTACK) the effective
+    term is best-effort; the printed dmg/cost are attack-intrinsic."""
+    v = np.zeros(3, dtype=np.float32)
+    if attack_id is None or attack_id not in _ATK:
+        return v
+    dmg, cost = _ATK[attack_id]
+    v[0] = dmg / 300.0
+    v[1] = len(cost) / 5.0
+    state = obs.current
+    me = state.players[state.yourIndex]
+    opp = state.players[1 - state.yourIndex]
+    atk = me.active[0] if me.active and me.active[0] is not None else None
+    tgt = opp.active[0] if opp.active and opp.active[0] is not None else None
+    if atk is None or tgt is None or dmg <= 0:
+        return v
+    board = {p.id for p in [atk] + list(me.bench or []) if p is not None}
+    if not _attack_available(attack_id, board):
+        return v
+    t_weak, t_res, _, _, _ = _CARD.get(tgt.id, (None, None, 0, [], 1))
+    atk_type = _CARD.get(atk.id, (None, None, 0, [], 1))[2]
+    eff = dmg
+    if t_weak is not None and int(t_weak) == atk_type:
+        eff *= 2
+    elif t_res is not None and int(t_res) == atk_type:
+        eff = max(0, eff - 30)
+    v[2] = eff / 300.0
+    return v
+
+
+def _my_poke_at(obs, in_play_area, in_play_index):
+    """The in-play Pokémon OBJECT (with .energies/.hp) at my (area, index)."""
+    me = obs.current.players[obs.current.yourIndex]
+    zone = {4: me.active, 5: me.bench}.get(int(in_play_area))  # AreaType ACTIVE/BENCH
+    if zone is None or in_play_index is None or in_play_index >= len(zone):
+        return None
+    return zone[in_play_index]
+
+
+def _attach_extra(opt, obs) -> np.ndarray:
+    """[target attached-energy/5, energy gap to charged-best/5, saturated flag].
+
+    M19: ATTACH options previously carried only the target's PRINTED features
+    — the net could not see that a 1-cost Solrock was already fed (live
+    over-attach defect, forensics R1). Gap mirrors the pilots' charged-best
+    semantics via _turns_to_ready incl. the CONDITIONAL_ATTACKS gate."""
+    v = np.zeros(3, dtype=np.float32)
+    poke = _my_poke_at(obs, opt.inPlayArea, opt.inPlayIndex)
+    if poke is None:
+        return v
+    me = obs.current.players[obs.current.yourIndex]
+    opp = obs.current.players[1 - obs.current.yourIndex]
+    opp_active = opp.active[0] if opp.active and opp.active[0] is not None else None
+    board_ids = {p.id for p in list(me.active or []) + list(me.bench or [])
+                 if p is not None}
+    gap = _turns_to_ready(poke, opp_active, board_ids)
+    v[0] = min(len(poke.energies or ()), 5) / 5.0
+    v[1] = min(gap, 5) / 5.0                      # UNREACHABLE clamps to 1.0
+    v[2] = float(gap == 0)
+    return v
+
+
+def _retreat_extra(obs) -> np.ndarray:
+    """[active damage fraction, active prizes-on-KO/3, bench-ready flag].
+
+    M19: RETREAT options encoded as a bare type one-hot — nothing signalled
+    "damaged multi-prize active + attack-ready bench" (the save-the-active
+    defect, forensics R1). All three terms come from my own observation."""
+    v = np.zeros(3, dtype=np.float32)
+    me = obs.current.players[obs.current.yourIndex]
+    opp = obs.current.players[1 - obs.current.yourIndex]
+    active = me.active[0] if me.active and me.active[0] is not None else None
+    if active is None:
+        return v
+    opp_active = opp.active[0] if opp.active and opp.active[0] is not None else None
+    v[0] = 1.0 - active.hp / max(1, active.maxHp)
+    v[1] = _CARD.get(active.id, (None, None, 0, [], 1))[4] / 3.0
+    v[2] = float(any(_turns_to_ready(b, opp_active) == 0
+                     for b in me.bench or [] if b is not None))
+    return v
+
+
 def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
-    """(numeric OPTION_V2_DIM f32, [acted_id, target_id] i32, 0 = none)."""
+    """(numeric OPTION_V3_DIM f32, [acted_id, target_id] i32, 0 = none).
+
+    M16: PLAY options resolve their hand card (FEAT block + embedding id were
+    blank pre-M16), and the appended N_OPTION_EXTRA block encodes attack
+    identity (ATTACK options) and the count (NUMBER options). M19: the same
+    3 extra slots carry energy-sufficiency for ATTACH targets and retreat
+    utility for RETREAT (types are mutually exclusive — the type one-hot
+    disambiguates). Pinned pre-M16 checkpoints need encode_option_v2_legacy."""
+    num = np.zeros(OPTION_V3_DIM, dtype=np.float32)
+    num[:OPTION_DIM] = encode_option(opt, obs)
+    your_index = obs.current.yourIndex
+    card_id = opt.cardId
+    if card_id is None and opt.index is not None:
+        if opt.area is not None:
+            player = opt.playerIndex if opt.playerIndex is not None else your_index
+            card_id = _card_id_at(obs, opt.area, opt.index, player)
+        elif int(opt.type) == _OT_PLAY:
+            # PLAY carries only a hand index; v1 stays blank by design.
+            card_id = _card_id_at(obs, _AREA_HAND, opt.index, your_index)
+            if card_id:
+                num[N_OPTION_TYPES:N_OPTION_TYPES + FEAT_DIM] = FEAT[card_id]
+    target_id = None
+    if opt.inPlayArea is not None and opt.inPlayIndex is not None:
+        target_id = _card_id_at(obs, opt.inPlayArea, opt.inPlayIndex, your_index)
+    if int(opt.type) == _OT_ATTACK:
+        num[OPTION_DIM:OPTION_DIM + 3] = _attack_extra(opt.attackId, obs)
+    elif int(opt.type) == _OT_ATTACH and opt.inPlayArea is not None:
+        num[OPTION_DIM:OPTION_DIM + 3] = _attach_extra(opt, obs)
+    elif int(opt.type) == _OT_RETREAT:
+        num[OPTION_DIM:OPTION_DIM + 3] = _retreat_extra(obs)
+    elif getattr(opt, "number", None) is not None:
+        num[OPTION_DIM + 3] = min(float(opt.number), 10.0) / 10.0
+    ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
+    return num, ids
+
+
+def encode_option_v2_legacy(opt, obs) -> tuple[np.ndarray, np.ndarray]:
+    """Pre-M16 v2 encoding: (OPTION_V2_DIM f32, ids) with NO option-identity
+    resolution — byte-identical to what pinned checkpoints (osv2_*,
+    osv3_plan0c, osv3h_plan1) trained on; matchrunner selects it by sniffed
+    option width so their measured baselines stay reproducible."""
     your_index = obs.current.yourIndex
     card_id = opt.cardId
     if card_id is None and opt.index is not None and opt.area is not None:

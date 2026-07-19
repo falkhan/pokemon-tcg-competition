@@ -86,13 +86,34 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
     import torch
 
     from tcg.encoders import FEAT
-    from tcg.network import OptionScorer, OptionScorerV2, save_npz
+    from tcg.network import (OptionScorer, OptionScorerV2, OptionScorerV3,
+                             save_npz)
 
     ckpt_path = ROOT / "checkpoints" / checkpoint
+    if not ckpt_path.exists() and Path(checkpoint).exists():
+        ckpt_path = Path(checkpoint)        # M16: accept full/relative paths too
+    if checkpoint and checkpoint != DEFAULT_CHECKPOINT and not ckpt_path.exists():
+        # M16 guard: an explicit --checkpoint that doesn't resolve used to
+        # fall through to the seeded-RANDOM export — a random agent one
+        # inattentive gate away from being shipped. Fail loudly instead.
+        raise FileNotFoundError(
+            f"--checkpoint {checkpoint!r} not found at {ckpt_path} — refusing "
+            "the seeded-random fallback (only the default name may fall back)")
     if ckpt_path.exists():
         state_dict = torch.load(ckpt_path, map_location="cpu")
-        model = (OptionScorerV2() if "embedding.weight" in state_dict
-                 else OptionScorer())
+        if "plan_enc.0.weight" in state_dict:      # M11 plan-conditioned v3
+            from tcg.encoders import (EMBED_DIM, N_CONTEXTS, N_OPTION_IDS,
+                                      STATE_V2_DIM)
+            from tcg.network import PLAN_DIM
+            n_ids = (state_dict["state_enc.0.weight"].shape[1]
+                     - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
+            opt_dim = (state_dict["option_enc.0.weight"].shape[1]
+                       - N_OPTION_IDS * EMBED_DIM)   # M16: legacy | identity
+            model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
+        elif "embedding.weight" in state_dict:
+            model = OptionScorerV2()
+        else:
+            model = OptionScorer()
         model.load_state_dict(state_dict)
         print(f"exporting checkpoint {checkpoint} ({type(model).__name__}) "
               f"paired with deck '{deck}'")
@@ -110,7 +131,10 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
     # .npy matrix when the training parquet is absent — no polars on Kaggle).
     rl_pkg = SUBMISSION / "rl"
     rl_pkg.mkdir(exist_ok=True)
-    for name in ("__init__.py", "combat.py", "encoders.py"):
+    names = ["__init__.py", "combat.py", "encoders.py"]
+    if isinstance(model, OptionScorerV3):
+        names.append("plan.py")                    # v3: plan enumeration ships
+    for name in names:
         shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
     np.save(str(rl_pkg / "card_features.npy"), FEAT)
 
@@ -139,14 +163,46 @@ def parity_check(main_path: str = SUBMISSION_MAIN) -> float:
     import torch
 
     from tcg import encoders
-    from tcg.network import OptionScorer, OptionScorerV2
+    from tcg.network import OptionScorer, OptionScorerV2, OptionScorerV3
 
     sub = load_submission_module(main_path)
     weights = np.load(Path(main_path).parent / "policy_weights.npz")
     torch_weights = {name: torch.from_numpy(array) for name, array in weights.items()}
     rng = np.random.default_rng(0)
 
-    if "embedding.weight" in weights:
+    if "plan_enc.0.weight" in weights:             # M11 v3: forward AND plan head
+        from tcg.network import PLAN_DIM
+        n_ids = (weights["state_enc.0.weight"].shape[1]
+                 - encoders.STATE_V2_DIM - encoders.N_CONTEXTS
+                 - PLAN_DIM) // encoders.EMBED_DIM   # M15: 12 or 20
+        opt_dim = (weights["option_enc.0.weight"].shape[1]
+                   - encoders.N_OPTION_IDS * encoders.EMBED_DIM)  # M16 width
+        model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
+        model.load_state_dict(torch_weights)
+        state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS,
+                               dtype=np.float32)
+        plan = rng.random(PLAN_DIM, dtype=np.float32)
+        state_ids = rng.integers(0, encoders.N_CARD_IDS, size=n_ids)
+        options = rng.random((9, opt_dim), dtype=np.float32)
+        option_ids = rng.integers(0, encoders.N_CARD_IDS,
+                                  size=(9, encoders.N_OPTION_IDS))
+        cands = rng.random((7, PLAN_DIM), dtype=np.float32)
+        ours = sub.score_options_v3(state_ctx, plan, state_ids, options,
+                                    option_ids)
+        ours_p = sub.score_plans(state_ctx, state_ids, cands)
+        with torch.no_grad():
+            ref, _ = model(torch.from_numpy(state_ctx).unsqueeze(0),
+                           torch.from_numpy(plan).unsqueeze(0),
+                           torch.from_numpy(state_ids).long().unsqueeze(0),
+                           torch.from_numpy(options).unsqueeze(0),
+                           torch.from_numpy(option_ids).long().unsqueeze(0))
+            ref_p = model.plan_logits(
+                torch.from_numpy(state_ctx).unsqueeze(0),
+                torch.from_numpy(state_ids).long().unsqueeze(0),
+                torch.from_numpy(cands).unsqueeze(0)).squeeze(0).numpy()
+        assert np.allclose(ours_p, ref_p, rtol=1e-4, atol=1e-4), \
+            f"plan-head parity MISMATCH\nnumpy: {ours_p}\ntorch: {ref_p}"
+    elif "embedding.weight" in weights:
         model = OptionScorerV2()
         model.load_state_dict(torch_weights)
         state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS,

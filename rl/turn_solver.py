@@ -149,9 +149,12 @@ def _dev_facts(me, op_active) -> tuple[float, int, int, int, int]:
                     and _best_damage(p, op_active) > 0)
     else:
         race, ready = RACE_CAP_TURNS, 0
-    bench = sum(1 for p in me.bench if p is not None)
+    bench = sum(1 for p in (me.bench or []) if p is not None)
     evos = sum(1 for p in board if p.id not in _IS_BASIC)
-    hand = len([c for c in me.hand if c is not None])
+    # hand is None in search observations where this side is no longer the
+    # observer (turn-passed leaves) — found by M12 score_siblings; the live
+    # dev tier never surfaced it because make_solver_pilot swallows the crash.
+    hand = len([c for c in (me.hand or []) if c is not None])
     return race, ready, bench, evos, hand
 
 
@@ -214,7 +217,7 @@ def _root_snapshot(obs) -> _Snap:
                  race, ready, bench, evos, hand)
 
 
-def _candidate_actions(obs) -> list[list[int]]:
+def _candidate_actions(obs, fixes: frozenset = frozenset()) -> list[list[int]]:
     """Beam over one prompt's option menu, lethal-first. Single-pick prompts
     keep every ATTACK + the TOP_K best others by the greedy pilot's own
     score_option (+ END, so every prompt has a turn-terminating child).
@@ -223,7 +226,7 @@ def _candidate_actions(obs) -> list[list[int]]:
     tcg/search.py enumerate_actions)."""
     sel = obs.select
     n = len(sel.option)
-    scores = [score_option(o, obs) for o in sel.option]
+    scores = [score_option(o, obs, fixes) for o in sel.option]
     if sel.maxCount == 1:
         attacks = [i for i in range(n) if sel.option[i].type == OptionType.ATTACK]
         others = sorted((i for i in range(n) if i not in set(attacks)),
@@ -253,11 +256,16 @@ def _dev_bonus(snap: _Snap, me_p, op_active) -> float:
     return bonus
 
 
-def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
+def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
     """End-of-line value from MY perspective: game result, then prizes taken
     this turn, then lethal-next-turn setup / exposure / chip tiebreaks.
     dev=True (M8.1) adds the development block — deltas vs the root snapshot,
-    so stand-pat scores 0 development and only real setup gains rank."""
+    so stand-pat scores 0 development and only real setup gains rank.
+
+    leaf_value (M13 Rung 1): optional callable obs -> scaled score that
+    REPLACES the sub-prize heuristic tail (threat/damage/counter/race/
+    deck-low/dev). The certain terms stay exact: terminal results, prizes
+    taken/conceded, and the benchless-return-KO game-ender."""
     cur = obs.current
     if cur.result >= 0:
         if cur.result == 2:
@@ -269,6 +277,12 @@ def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
     my_active = me_p.active[0] if me_p.active and me_p.active[0] is not None else None
     op_active = op_p.active[0] if op_p.active and op_p.active[0] is not None else None
     board = _my_board(me_p)
+    if leaf_value is not None:
+        if op_active is not None and my_active is not None and board \
+                and _best_damage(op_active, my_active) >= my_active.hp \
+                and len(board) == 1:     # bench EMPTY + return-KO: game over
+            score += W_BENCHLESS_KO
+        return score + leaf_value(obs)
     if op_active is not None and op_active.id in _CARD and board:
         if any(_best_damage(p, op_active, extra_energy=1) >= op_active.hp
                for p in board):
@@ -289,32 +303,98 @@ def score_leaf(snap: _Snap, obs, dev: bool = False) -> float:
 
 
 def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
-         dev: bool = False):
-    """Depth-first search over MY remaining turn. Returns (score, line) where
-    line is the action list-of-lists from `state` to the best leaf. Leaves:
-    game over, turn passed to the opponent, or depth cap. The stand-pat floor
+         dev: bool = False, fixes: frozenset = frozenset(), leaf_value=None):
+    """Depth-first search over MY remaining turn. Returns (score, line, trail)
+    where line is the action list-of-lists from `state` to the best leaf and
+    trail[i] is the search observation at which line[i] was taken (M11: plan
+    derivation only — these carry determinized hidden zones). Leaves: game
+    over, turn passed to the opponent, or depth cap. The stand-pat floor
     means prizes already taken along the way are never given back by a worse
-    continuation."""
+    continuation. Depth/node caps read from `budget` (defaults = module
+    constants) so widened data-gen never mutates globals shared across seats."""
     obs = state.observation
+    max_depth = budget.get("max_depth", MAX_DEPTH)
+    max_nodes = budget.get("max_nodes", MAX_NODES)
     if obs.current.result >= 0 or obs.current.yourIndex != snap.me \
-            or depth >= MAX_DEPTH:
-        return score_leaf(snap, obs, dev), []
-    best_score, best_line = score_leaf(snap, obs, dev), []   # stand-pat floor
-    for action in _candidate_actions(obs):
-        if budget["nodes"] >= MAX_NODES or perf_counter() >= deadline:
+            or depth >= max_depth:
+        return score_leaf(snap, obs, dev, leaf_value), [], []
+    best_score, best_line, best_trail = \
+        score_leaf(snap, obs, dev, leaf_value), [], []
+    for action in _candidate_actions(obs, fixes):
+        if budget["nodes"] >= max_nodes or perf_counter() >= deadline:
             break
         budget["nodes"] += 1
         child = search_step(state.searchId, action)
-        score, line = _dfs(child, snap, depth + 1, deadline, budget, dev)
+        score, line, trail = _dfs(child, snap, depth + 1, deadline, budget,
+                                  dev, fixes, leaf_value)
         if score > best_score:
-            best_score, best_line = score, [action] + line
+            best_score, best_line, best_trail = \
+                score, [action] + line, [obs] + trail
         if best_score >= W_WIN:                          # win short-circuit
             break
-    return best_score, best_line
+    return best_score, best_line, best_trail
+
+
+def solve_turn_line(obs, deck: list[int], deadline_s: float | None = None,
+                    dev: bool = False, fixes: frozenset = frozenset(),
+                    max_depth: int | None = None, max_nodes: int | None = None,
+                    leaf_value=None,
+                    ) -> tuple[float, list[list[int]], list]:
+    """Full-line variant for offline data generation (M11 expert iteration):
+    returns (best_score, line, per_step_obs) with NO first-action truncation
+    and NO override gate. per_step_obs[i] is the search observation at which
+    line[i] was chosen — a determinized snapshot: use it for plan derivation
+    ONLY, never as a training state."""
+    if deadline_s is None:
+        deadline_s = DEV_DEADLINE_S if dev else SOLVE_DEADLINE_S
+    snap = _root_snapshot(obs)
+    deadline = perf_counter() + deadline_s
+    # Resolve None at call time so monkeypatched module constants still bite.
+    budget = {"nodes": 0,
+              "max_depth": MAX_DEPTH if max_depth is None else max_depth,
+              "max_nodes": MAX_NODES if max_nodes is None else max_nodes}
+    root = _open_search(obs, deck)
+    try:
+        return _dfs(root, snap, 0, deadline, budget, dev, fixes, leaf_value)
+    finally:
+        search_end()
+
+
+def score_siblings(obs, deck: list[int], deadline_s: float | None = None,
+                   dev: bool = True,
+                   max_depth: int | None = None, max_nodes: int | None = None,
+                   ) -> list[tuple[list[int], float]]:
+    """M12 ranker labels: per-sibling deep scores at the root prompt. For each
+    beam candidate: step one ply, _dfs the remainder (shared deadline/budget),
+    return [(action, best_score)] aligned to the beam order. dev=True by
+    default — the dev-bonus terms are the ranking signal on non-lethal turns
+    (as LABELS, margin-filtered downstream; never as a live override)."""
+    if deadline_s is None:
+        deadline_s = SOLVE_DEADLINE_S
+    snap = _root_snapshot(obs)
+    deadline = perf_counter() + deadline_s
+    budget = {"nodes": 0,
+              "max_depth": MAX_DEPTH if max_depth is None else max_depth,
+              "max_nodes": MAX_NODES if max_nodes is None else max_nodes}
+    root = _open_search(obs, deck)
+    out = []
+    try:
+        for action in _candidate_actions(root.observation):
+            if budget["nodes"] >= budget["max_nodes"] \
+                    or perf_counter() >= deadline:
+                break
+            budget["nodes"] += 1
+            child = search_step(root.searchId, action)
+            score, _, _ = _dfs(child, snap, 1, deadline, budget, dev)
+            out.append(([int(i) for i in action], float(score)))
+    finally:
+        search_end()
+    return out
 
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
-               dev: bool = False) -> list[int] | None:
+               dev: bool = False, fixes: frozenset = frozenset(),
+               leaf_value=None, dev_margin: float | None = None) -> list[int] | None:
     """Search my remaining turn; return the FIRST action of the best line iff
     it clears the tier's override bar, else None (defer to greedy). The
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
@@ -324,20 +404,15 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     (MIN_OVERRIDE_SCORE); dev overrides only when the best line beats the
     stand-pat leaf by DEV_OVERRIDE_MARGIN — a real development gain, not
     line-vs-line noise — under the shorter DEV_DEADLINE_S."""
-    if deadline_s is None:
-        deadline_s = DEV_DEADLINE_S if dev else SOLVE_DEADLINE_S
-    snap = _root_snapshot(obs)
-    deadline = perf_counter() + deadline_s
-    budget = {"nodes": 0}
-    root = _open_search(obs, deck)
-    try:
-        best_score, best_line = _dfs(root, snap, 0, deadline, budget, dev)
-    finally:
-        search_end()
+    best_score, best_line, _ = solve_turn_line(obs, deck, deadline_s, dev,
+                                               fixes, leaf_value=leaf_value)
     if not best_line:
         return None
     if dev:
-        if best_score >= score_leaf(snap, obs, dev=True) + DEV_OVERRIDE_MARGIN:
+        margin = DEV_OVERRIDE_MARGIN if dev_margin is None else dev_margin
+        snap = _root_snapshot(obs)
+        if best_score >= score_leaf(snap, obs, dev=True,
+                                    leaf_value=leaf_value) + margin:
             return [int(i) for i in best_line[0]]
         return None
     if best_score >= MIN_OVERRIDE_SCORE:
@@ -345,7 +420,8 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     return None
 
 
-def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
+def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False,
+                      fixes: frozenset = frozenset()):
     """Generic pilot + within-turn combo solver. `instance` is accepted for
     the matchrunner uniqueness contract (unused: no module-level state).
     dev=True (M8.1) additionally runs the DEVELOPMENT tier on underdeveloped
@@ -356,7 +432,7 @@ def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
     found at the MAIN prompt would derail one action later. Any solver error
     falls back to the greedy pick: the wrapper must never cost the G1 crash
     gate."""
-    inner = make_generic_pilot(deck)
+    inner = make_generic_pilot(deck, fixes)
 
     def agent(obs_dict):
         obs = to_observation_class(obs_dict)
@@ -364,14 +440,14 @@ def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False):
             return deck
         if should_solve(obs):
             try:
-                pick = solve_turn(obs, deck)
+                pick = solve_turn(obs, deck, fixes=fixes)
             except Exception:
                 pick = None
             if pick is not None:
                 return pick
         elif dev and should_solve_dev(obs):
             try:
-                pick = solve_turn(obs, deck, dev=True)
+                pick = solve_turn(obs, deck, dev=True, fixes=fixes)
             except Exception:
                 pick = None
             if pick is not None:

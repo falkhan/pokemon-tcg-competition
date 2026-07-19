@@ -136,6 +136,70 @@ class OptionScorerV2(nn.Module):
         return torch.topk(logits + gumbel, k).indices.tolist()
 
 
+PLAN_DIM = 27  # mirrored from rl/plan.py PLAN_DIM — change BOTH (parity-tested)
+
+
+class OptionScorerV3(nn.Module):
+    """v3 (M11): OptionScorerV2 + turn-plan conditioning — twin of
+    rl/policy.py OptionScorerV3 (see its docstring; parity-tested)."""
+
+    def __init__(self, hidden: int = 256, embed: int = EMBED_DIM,
+                 plan_dim: int = PLAN_DIM, n_state_ids: int = N_STATE_IDS,
+                 option_dim: int = OPTION_V2_DIM):
+        super().__init__()
+        self.plan_dim = plan_dim
+        self.n_state_ids = n_state_ids     # M15 twin: 12 legacy | 20 hand-aware
+        self.option_dim = option_dim       # M16 twin: OPTION_V2_DIM | OPTION_V3_DIM
+        self.embedding = nn.Embedding(N_CARD_IDS, embed, padding_idx=0)
+        self.state_enc = nn.Sequential(
+            nn.Linear(STATE_V2_DIM + N_CONTEXTS + plan_dim + n_state_ids * embed,
+                      hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden), nn.ReLU(),
+        )
+        self.option_enc = nn.Sequential(
+            nn.Linear(option_dim + N_OPTION_IDS * embed, hidden), nn.ReLU(),
+        )
+        self.score_head = nn.Sequential(
+            nn.Linear(2 * hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+        self.value_head = nn.Sequential(
+            nn.Linear(hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1), nn.Tanh(),
+        )
+        self.plan_enc = nn.Sequential(
+            nn.Linear(plan_dim, hidden), nn.ReLU(),
+        )
+        self.plan_head = nn.Sequential(
+            nn.Linear(2 * hidden, hidden), nn.ReLU(),
+            nn.Linear(hidden, 1),
+        )
+
+    def _trunk(self, state_ctx, plan, state_ids):
+        se = self.embedding(state_ids).flatten(-2)
+        return self.state_enc(torch.cat([state_ctx, plan, se], dim=-1))
+
+    def forward(self, state_ctx: torch.Tensor, plan: torch.Tensor,
+                state_ids: torch.Tensor, options: torch.Tensor,
+                option_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        s = self._trunk(state_ctx, plan, state_ids)
+        oe = self.embedding(option_ids).flatten(-2)
+        o = self.option_enc(torch.cat([options, oe], dim=-1))
+        s_tiled = s.unsqueeze(1).expand(-1, o.shape[1], -1)
+        logits = self.score_head(torch.cat([s_tiled, o], dim=-1)).squeeze(-1)
+        value = self.value_head(s).squeeze(-1)
+        return logits, value
+
+    def plan_logits(self, state_ctx: torch.Tensor, state_ids: torch.Tensor,
+                    plan_cands: torch.Tensor) -> torch.Tensor:
+        zeros = state_ctx.new_zeros(state_ctx.shape[0], self.plan_dim)
+        s = self._trunk(state_ctx, zeros, state_ids)
+        p = self.plan_enc(plan_cands)
+        s_tiled = s.unsqueeze(1).expand(-1, p.shape[1], -1)
+        return self.plan_head(torch.cat([s_tiled, p], dim=-1)).squeeze(-1)
+
+
 def save_npz(model: OptionScorer, path: str) -> None:
     """Export weights for the numpy-only submission agent."""
     arrays = {name: parameter.detach().cpu().numpy()

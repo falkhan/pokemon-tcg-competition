@@ -1,0 +1,1 @@
+model:checkpoints/ppo_best_m20legB.pt:lucario vs solver:lucario: 187W 212L 1D over 400 (wr=0.469)

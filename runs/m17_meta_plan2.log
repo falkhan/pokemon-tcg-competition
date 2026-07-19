@@ -1,0 +1,6 @@
+meta-eval: model:checkpoints/osv3o_plan2.pt:lucario vs meta_v2 (n=60/deck, seed=0)
+  vs mega_lucario_ex+solrock                  wr=0.367  (weight 0.90, n=60)
+  vs mega_kangaskhan_ex+crustle               wr=0.683  (weight 0.08, n=60)
+  vs drakloak+dreepy                          wr=0.550  (weight 0.02, n=60)
+  vs hop_s_zacian_ex+hop_s_snorlax            wr=0.600  (weight 0.00, n=60)
+meta score (weighted): 0.396

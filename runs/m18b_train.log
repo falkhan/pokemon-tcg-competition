@@ -1,0 +1,30 @@
+loading shard_w00_0000.npz
+loading shard_w01_0000.npz
+loading shard_w02_0000.npz
+loading shard_w03_0000.npz
+loading shard_w04_0000.npz
+loading shard_w05_0000.npz
+loading shard_w06_0000.npz
+loading shard_w07_0000.npz
+loading shard_w08_0000.npz
+loading shard_w09_0000.npz
+loading shard_w00_0000.npz
+loading shard_w01_0000.npz
+loading shard_w02_0000.npz
+loading shard_w03_0000.npz
+loading shard_w04_0000.npz
+loading shard_w05_0000.npz
+loading shard_w06_0000.npz
+loading shard_w07_0000.npz
+loading shard_w08_0000.npz
+loading shard_w09_0000.npz
+loading shard_w10_0000.npz
+loading shard_w11_0000.npz
+train 48514, val 4955
+warm-start from v3 checkpoints/osv3o_plan1.pt (n_state_ids=20, option_dim=94)
+init val_acc 0.778  plan_acc 0.841
+epoch 0: train_loss 1.408  val_acc 0.784  plan_acc 0.835
+epoch 1: train_loss 1.339  val_acc 0.784  plan_acc 0.832
+epoch 2: train_loss 1.300  val_acc 0.782  plan_acc 0.837
+epoch 3: train_loss 1.264  val_acc 0.782  plan_acc 0.838
+epoch 4: train_loss 1.235  val_acc 0.782  plan_acc 0.834

@@ -1,0 +1,1 @@
+model:checkpoints/ppo_best_m20legB.pt:lucario vs rule:lucario: 136W 263L 1D over 400 (wr=0.341)

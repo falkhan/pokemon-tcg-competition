@@ -112,13 +112,37 @@ class TestScoreAttach:
 
     def test_already_loaded_means_the_best_attack_charged(self):
         # M7.2b: card 1's cheapest attack costs 1 but its BEST (120) costs 2 —
-        # one energy is no longer "loaded"; two are.
+        # one energy is no longer "loaded"; two are. M19: the loaded tier
+        # carries the damage tie-break bonus (120 -> +1).
         needs_more = self._obs(b.pokemon(1, energies=[FIGHTING]))
         assert score_attach(self._attach_option(), needs_more) \
             == constants.SCORE_ATTACH_ACTIVE_BASE + 1
         loaded = self._obs(b.pokemon(1, energies=[FIGHTING, WATER]))
         assert score_attach(self._attach_option(), loaded) \
-            == constants.SCORE_ATTACH_ALREADY_LOADED
+            == constants.SCORE_ATTACH_ALREADY_LOADED + 1
+
+    def test_surplus_energy_sinks_the_saturated_tier(self):
+        # M19: the flat loaded tier kept feeding a 1-cost Solrock 3+ energies
+        # live. Card 4 = 1-cost 30-dmg attacker (no bonus): each surplus
+        # energy costs ATTACH_SURPLUS_PENALTY, capped, dropping heavy
+        # surplus below the NON_ATTACKER floor.
+        def score_with(n_energies):
+            return score_attach(self._attach_option(),
+                                self._obs(b.pokemon(4, energies=[WATER] * n_energies)))
+        assert score_with(1) == constants.SCORE_ATTACH_ALREADY_LOADED       # charged, no surplus
+        assert score_with(2) == constants.SCORE_ATTACH_ALREADY_LOADED - 150
+        assert score_with(3) == constants.SCORE_ATTACH_ALREADY_LOADED - 300
+        assert score_with(3) < constants.SCORE_ATTACH_NON_ATTACKER
+        assert score_with(5) == constants.SCORE_ATTACH_ALREADY_LOADED - 450  # cap
+
+    def test_saturated_tie_break_prefers_the_harder_hitter(self):
+        # Equal surplus: the Mega (270 dmg -> +2) outranks the 1-cost support.
+        support = score_attach(self._attach_option(),
+                               self._obs(b.pokemon(4, energies=[WATER])))
+        mega = score_attach(self._attach_option(),
+                            self._obs(b.pokemon(3, energies=[FIGHTING, FIGHTING])))
+        assert mega == constants.SCORE_ATTACH_ALREADY_LOADED + 2
+        assert mega > support
 
     def test_loading_an_attacker_that_needs_energy(self):
         obs = self._obs(b.pokemon(1))  # best damage 120 -> +1 bonus
@@ -205,6 +229,27 @@ class TestScoreRetreat:
         me = b.player(active=b.pokemon(1), bench=[b.pokemon(5)])
         obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=999)))
         assert score_retreat(obs) == constants.SCORE_RETREAT_NEVER
+
+    def test_saves_a_damaged_multi_prize_active_into_a_ready_bench(self):
+        # M19: damaged Mega (3 prizes, hp 100/340) rotates out when a bench
+        # member is attack-READY — before the lethal is on board.
+        me = b.player(active=b.pokemon(3, hp=100, max_hp=340),
+                      bench=[b.pokemon(1, energies=[FIGHTING, FIGHTING])])
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=999)))
+        assert score_retreat(obs) == constants.SCORE_RETREAT_SAVE_VALUABLE
+
+    def test_no_save_tier_without_a_ready_bench(self):
+        # Same damaged Mega, but the bench attacker is one energy short.
+        me = b.player(active=b.pokemon(3, hp=100, max_hp=340),
+                      bench=[b.pokemon(1, energies=[FIGHTING])])
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=999)))
+        assert score_retreat(obs) == constants.SCORE_RETREAT_HURT_BASE + 120 // 20
+
+    def test_no_save_tier_for_a_single_prize_active(self):
+        me = b.player(active=b.pokemon(1, hp=30, max_hp=100),
+                      bench=[b.pokemon(4, energies=[WATER])])
+        obs = b.observation(me=me, opponent=b.player(active=b.pokemon(5, hp=999)))
+        assert score_retreat(obs) == constants.SCORE_RETREAT_HURT_BASE + 30 // 20
 
 
 class TestScoreCard:

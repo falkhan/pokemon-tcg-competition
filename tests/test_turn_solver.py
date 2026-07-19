@@ -112,10 +112,11 @@ def test_headline_finds_the_multi_prize_lethal_greedy_misses(monkeypatch):
 
     # The winning line is worth both prizes, found through the submenu.
     snap = ts._root_snapshot(root)
-    score, line = ts._dfs(search_state(root, 0), snap, 0,
-                          perf_counter() + 1.0, {"nodes": 0})
+    score, line, trail = ts._dfs(search_state(root, 0), snap, 0,
+                                 perf_counter() + 1.0, {"nodes": 0})
     assert score >= 2 * ts.W_PRIZE
     assert line == [[1], [0], [0]]                       # PLAY -> target -> ATTACK
+    assert len(trail) == len(line) and trail[0] is root  # M11: per-step obs
 
     pilot = ts.make_solver_pilot(DECK)
     assert pilot(root) == [1]
@@ -173,10 +174,11 @@ def test_multi_select_prompt_capped_and_lethal_pair_found(monkeypatch):
     patch_engine(monkeypatch, root, lambda s, a: tree[(s, tuple(a))])
 
     snap = ts._root_snapshot(root)
-    score, line = ts._dfs(search_state(root, 0), snap, 0,
-                          perf_counter() + 1.0, {"nodes": 0})
+    score, line, trail = ts._dfs(search_state(root, 0), snap, 0,
+                                 perf_counter() + 1.0, {"nodes": 0})
     assert score >= 2 * ts.W_PRIZE
     assert line == [[0], [1, 3], [0]]                    # the lethal discard pair
+    assert len(trail) == len(line)
 
 
 def test_deadline_aborts_before_any_step(monkeypatch):
@@ -427,7 +429,8 @@ def test_dev_pilot_wiring(monkeypatch):
     monkeypatch.setattr(ts, "should_solve", lambda obs: False)
     monkeypatch.setattr(ts, "should_solve_dev", lambda obs: True)
     monkeypatch.setattr(ts, "solve_turn",
-                        lambda obs, deck, deadline_s=None, dev=False:
+                        lambda obs, deck, deadline_s=None, dev=False,
+                        fixes=frozenset():
                         (calls.append(dev) or [7]) if dev else [1])
     obs = main_menu(me_board(), op_board(), [EVOLVE, PLAY_HAND0, ATTACK_102, END])
     dev_pilot = ts.make_solver_pilot(DECK, dev=True)

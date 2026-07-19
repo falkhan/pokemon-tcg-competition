@@ -121,6 +121,115 @@ def collect_games(n_games: int, out_dir: Path = DATA_DIR, shard_size: int = 200,
     print(f"done: {n_games} games -> {shard_idx} shards in {out_dir}")
 
 
+def collect_dagger(n_games: int, checkpoint: str, decks_file,
+                   out_dir: Path | None = None, shard_size: int = 200,
+                   log_every: int = 25, seed: int = 0,
+                   teacher: str = "solver") -> None:
+    """M9 Leg 2 DAgger round: the STUDENT (checkpoint, Gumbel-sampled — not
+    argmax) advances the game so the state distribution is the student's own;
+    the TEACHER labels every visited decision. Shards are byte-compatible with
+    collect_games_v2's columns, so BCDatasetV2 mixes them with plain BC dirs.
+
+    Both pilots are queried per decision on the same obs — safe: the generic
+    pilot is a pure closure and the solver cleans up its search in a finally
+    (proven inside this exact loop by the M8.2 teacher="solver" path)."""
+    import random
+
+    if out_dir is None:
+        out_dir = ROOT / "data" / "bc_dagger"
+    population = load_population(decks_file)
+    rng = random.Random(seed)
+    torch.manual_seed(seed)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    ckpt = Path(checkpoint)
+    if not ckpt.is_absolute() and not ckpt.exists():
+        ckpt = ROOT / ckpt
+    student = OptionScorerV2()
+    student.load_state_dict(torch.load(ckpt, map_location="cpu"))
+    student.eval()
+    print(f"student: {ckpt}  teacher: {teacher}")
+
+    columns = ("states", "state_ids", "options", "option_ids",
+               "n_options", "labels", "game_ids", "results", "deck_idx")
+    shard: dict[str, list] = {k: [] for k in columns}
+    shard_idx = sum(1 for _ in out_dir.glob("shard_*.npz"))
+    wins = [0, 0, 0]
+
+    def flush():
+        nonlocal shard_idx
+        if not shard["labels"]:
+            return
+        np.savez_compressed(
+            out_dir / f"shard_{shard_idx:04d}.npz",
+            states=np.stack(shard["states"]),
+            state_ids=np.stack(shard["state_ids"]),
+            options=np.concatenate(shard["options"]),
+            option_ids=np.concatenate(shard["option_ids"]),
+            n_options=np.array(shard["n_options"], dtype=np.int32),
+            labels=np.array(shard["labels"], dtype=np.int32),
+            game_ids=np.array(shard["game_ids"], dtype=np.int32),
+            results=np.array(shard["results"], dtype=np.float32),
+            deck_idx=np.array(shard["deck_idx"], dtype=np.int32),
+        )
+        shard_idx += 1
+        for v in shard.values():
+            v.clear()
+
+    for game in range(n_games):
+        picks_idx = [rng.randrange(len(population)) for _ in range(2)]
+        decks = [population[picks_idx[0]], population[picks_idx[1]]]
+        teachers = [_teacher_pilot(teacher, d, f"dg{game}_{seat}")
+                    for seat, d in enumerate(decks)]
+
+        obs_dict, start_data = battle_start(decks[0], decks[1])
+        if start_data.errorPlayer >= 0:
+            raise ValueError(f"battle_start rejected a deck (errorType={start_data.errorType})")
+
+        game_decisions: list[tuple] = []
+        while obs_dict["current"]["result"] < 0:
+            player = obs_dict["current"]["yourIndex"]
+            t_picks = teachers[player](obs_dict)              # LABEL source
+
+            obs = to_observation_class(obs_dict)
+            state_num, state_ids = encode_state_v2(obs.current, decks[player])
+            state_ctx = np.concatenate([state_num, encode_context(obs.select.context)])
+            pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+            opts = np.stack([num for num, _ in pairs])
+            opt_ids = np.stack([ids for _, ids in pairs])
+            s_picks = student.act(state_ctx.astype(np.float32), state_ids,
+                                  opts.astype(np.float32), opt_ids,
+                                  obs.select.maxCount, greedy=False)  # ACTION source
+            t_picks = t_picks[:obs.select.maxCount]
+            game_decisions.append((state_ctx, state_ids, opts, opt_ids,
+                                   t_picks[0], player))
+            obs_dict = battle_select([int(i) for i in s_picks])
+
+        result = obs_dict["current"]["result"]
+        battle_finish()
+        wins[result] += 1
+
+        for state_ctx, state_ids, opts, opt_ids, label, player in game_decisions:
+            shard["states"].append(state_ctx)
+            shard["state_ids"].append(state_ids)
+            shard["options"].append(opts)
+            shard["option_ids"].append(opt_ids)
+            shard["n_options"].append(len(opts))
+            shard["labels"].append(label)
+            shard["game_ids"].append(game)
+            shard["results"].append(0.0 if result == 2 else (1.0 if result == player else -1.0))
+            shard["deck_idx"].append(picks_idx[player])
+
+        if (game + 1) % shard_size == 0:
+            flush()
+        if (game + 1) % log_every == 0:
+            print(f"[{game + 1}/{n_games}] p0/p1/draw = {wins[0]}/{wins[1]}/{wins[2]}",
+                  flush=True)
+
+    flush()
+    print(f"done: {n_games} games -> {shard_idx} shards in {out_dir}")
+
+
 def load_population(path) -> list[list[int]]:
     """data/league/population.json ({"decks": [name|csv, ...]}) -> id lists."""
     import json
@@ -133,11 +242,16 @@ def _teacher_pilot(teacher: str, deck_ids: list[int], instance: str):
     "solver-dev" (M8.2) route through matchrunner.make_pilot so BC can clone
     the solver pilot's play — its overrides fire on ~1% of prompts, the rest
     stays the observable generic scoring (low aliasing risk; the M8.2 leg-B
-    fidelity probe measures it)."""
+    fidelity probe measures it). "ext:<dir>" (M9 Leg 2 round 2) loads an
+    external kaggle-style main.py agent as the teacher — deck-SPECIFIC
+    teachers need a matching deck population (e.g. lucario-only for buddy)."""
     if teacher == "generic":
         from rl.generic_pilot import make_generic_pilot
         return make_generic_pilot(deck_ids)
     from rl.matchrunner import make_pilot
+    if teacher.startswith("ext:"):
+        fn, _ = make_pilot(("ext", teacher[4:], deck_ids), instance)
+        return fn
     fn, _ = make_pilot((teacher, deck_ids), instance)
     return fn
 
@@ -596,11 +710,19 @@ if __name__ == "__main__":
     c.add_argument("--games", type=int, default=1000)
     c.add_argument("--shard-size", type=int, default=200)
     c.add_argument("--teacher", type=str, default="rule",
-                   choices=["rule", "generic", "solver", "solver-dev"],
+                   choices=["rule", "generic", "solver", "solver-dev", "dagger"],
                    help="generic/solver/solver-dev = deck-population collection "
-                        "(encoders v2); solver* clones the search pilot (M8.2)")
+                        "(encoders v2); solver* clones the search pilot (M8.2); "
+                        "dagger = student advances, solver labels (M9 Leg 2)")
     c.add_argument("--agent", type=str, default="lucario")
     c.add_argument("--deck", type=str, default="lucario")
+    c.add_argument("--checkpoint", type=str, default="checkpoints/osv2_bc2.pt",
+                   help="student checkpoint for --teacher dagger (M9 Leg 2)")
+    c.add_argument("--dagger-teacher", type=str, default="solver",
+                   help="label source for --teacher dagger: solver | "
+                        "ext:<bundle-dir> (deck-specific ext teachers need a "
+                        "matching --decks population)")
+    c.add_argument("--seed", type=int, default=0)
     c.add_argument("--decks", type=str, default="data/league/population.json",
                    help="deck population file (v2 teachers only)")
     c.add_argument("--out", type=str, default=None,
@@ -623,9 +745,14 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     if args.cmd == "collect":
-        if args.teacher in ("generic", "solver", "solver-dev"):
+        if args.teacher == "dagger":
+            collect_dagger(args.games, args.checkpoint, args.decks,
+                           out_dir=Path(args.out) if args.out else None,
+                           shard_size=args.shard_size, seed=args.seed,
+                           teacher=args.dagger_teacher)
+        elif args.teacher in ("generic", "solver", "solver-dev"):
             collect_games_v2(args.games, args.decks, shard_size=args.shard_size,
-                             teacher=args.teacher,
+                             teacher=args.teacher, seed=args.seed,
                              out_dir=Path(args.out) if args.out else DATA_DIR_V2)
         else:
             collect_games(args.games, shard_size=args.shard_size,

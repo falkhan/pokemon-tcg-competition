@@ -14,7 +14,8 @@ from types import SimpleNamespace
 from cg.api import AreaType, OptionType, SelectContext, to_observation_class
 
 from tcg import constants
-from tcg.combat import best_damage, turns_to_first_ko, turns_to_ready
+from tcg.combat import (attack_available, best_damage, turns_to_first_ko,
+                        turns_to_ready)
 from tcg.library import (ATTACKS, CARDS, ENERGY_CARD_IDS,
                          HAND_DISCARD_TRAINER_IDS, POKEMON_CARD_IDS,
                          known_attacks)
@@ -173,7 +174,10 @@ def attach_recipient_value(pokemon, me, opponent_active) -> float:
     profile = (SimpleNamespace(id=evolution.id,
                                energies=list(getattr(pokemon, "energies", ()) or ()))
                if evolution is not None else pokemon)
-    energy_gap = turns_to_ready(profile, opponent_active)
+    # M13 0a twin: own board ids gate CONDITIONAL_ATTACKS (see rl/generic_pilot).
+    board_ids = {p.id for p in (list(me.active or []) + list(me.bench or []))
+                 if p is not None}
+    energy_gap = turns_to_ready(profile, opponent_active, board_ids)
     if energy_gap == 0:
         return constants.ATTACH_RECIPIENT_CHARGED
     quality = min(attacker_quality(profile.id), constants.ATTACKER_QUALITY_CAP)
@@ -279,9 +283,20 @@ def score_retreat(observation) -> float:
     if in_danger and bench_best_damage > 0:
         return constants.SCORE_RETREAT_ESCAPE_KO
 
+    # 2b) Save a valuable damaged active (M19): a multi-prize Mega/ex at low
+    #     HP rotates out into an attack-READY bench member BEFORE the lethal
+    #     is on board — live prize-race losses ended with the opponent taking
+    #     3 prizes off our chipped-down Mega while an energized bench watched.
+    hp_fraction = my_active.hp / max(1, my_active.maxHp)
+    if (hp_fraction <= constants.SAVE_ACTIVE_HP_FRACTION
+            and CARDS.get(my_active.id, UNKNOWN_CARD).prize_count
+                >= constants.SAVE_ACTIVE_MIN_PRIZES
+            and any(turns_to_ready(pokemon, opponent_active) == 0
+                    for pokemon in bench)):
+        return constants.SCORE_RETREAT_SAVE_VALUABLE
+
     # 3) Otherwise low; ~0 when healthy, a bit higher if a strong bench
     #    attacker wants in.
-    hp_fraction = my_active.hp / max(1, my_active.maxHp)
     if hp_fraction > constants.HEALTHY_HP_FRACTION:
         return constants.SCORE_RETREAT_NEVER
     return (constants.SCORE_RETREAT_HURT_BASE
@@ -334,30 +349,51 @@ def score_attach(option, observation) -> float:
         return constants.SCORE_ATTACH_NO_TARGET
 
     is_active = option.inPlayArea == AreaType.ACTIVE
+    # M14 twin (see rl/generic_pilot.score_attach): CONDITIONAL_ATTACKS gate
+    # this path too — a conditional attacker without its requirement is not
+    # an attacker worth charging.
+    my_state = observation.current.players[my_index]
+    my_board_ids = {p.id for p in (list(my_state.active or [])
+                                   + list(my_state.bench or []))
+                    if p is not None}
 
     # 1) Lookahead: does this attach UNBLOCK a KO on the opponent's active?
     if opponent_active is not None:
-        damage_now = best_damage(target, opponent_active, extra_energy=0)
-        damage_after = best_damage(target, opponent_active, extra_energy=1)
+        damage_now = best_damage(target, opponent_active, extra_energy=0,
+                                 board_ids=my_board_ids)
+        damage_after = best_damage(target, opponent_active, extra_energy=1,
+                                   board_ids=my_board_ids)
         if damage_now < opponent_active.hp <= damage_after:
             return (constants.SCORE_ATTACH_UNBLOCKS_KO_ACTIVE if is_active
                     else constants.SCORE_ATTACH_UNBLOCKS_KO_BENCH)
 
     # 2) Otherwise: is the target a real attacker that still needs energy?
-    damaging_attacks = [(attack.damage, len(attack.cost))
-                        for attack in known_attacks(CARDS[target.id])
-                        if attack.damage > 0]
+    # (iterate ids, not Attack records — the record carries no id, and
+    # attack_available needs one)
+    damaging_attacks = [(ATTACKS[a].damage, len(ATTACKS[a].cost))
+                        for a in CARDS[target.id].attack_ids
+                        if a in ATTACKS and ATTACKS[a].damage > 0
+                        and attack_available(a, my_board_ids)]
     if not damaging_attacks:
         return constants.SCORE_ATTACH_NON_ATTACKER
-
-    if turns_to_ready(target, opponent_active) == 0:
-        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
-        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
-        return constants.SCORE_ATTACH_ALREADY_LOADED
 
     best_dmg = max(damage for damage, _ in damaging_attacks)
     bonus = (min(best_dmg, constants.ATTACH_DAMAGE_BONUS_CAP)
              // constants.ATTACH_DAMAGE_BONUS_DIVISOR)
+
+    if turns_to_ready(target, opponent_active, board_ids=my_board_ids) == 0:
+        # The BEST attack is charged (M7.2b — was the cheapest, which stopped
+        # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
+        # M19: penalize per SURPLUS energy so the least-fed charged target
+        # wins the tier and heavy surplus drops below NON_ATTACKER — the flat
+        # 600 kept feeding a 1-cost Solrock 3+ energies live. The damage
+        # bonus tie-breaks toward the harder hitter (Mega over Solrock).
+        best_cost = min(cost for damage, cost in damaging_attacks
+                        if damage == best_dmg)
+        surplus = len(getattr(target, "energies", ()) or ()) - best_cost
+        return (constants.SCORE_ATTACH_ALREADY_LOADED + bonus
+                - constants.ATTACH_SURPLUS_PENALTY
+                * min(max(surplus, 0), constants.ATTACH_SURPLUS_CAP))
 
     # 3) Race math (M7.2b): charge THE ONE attacker that closes first. The
     #    target's own turns-to-first-KO must match the board minimum; ties

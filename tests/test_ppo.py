@@ -242,9 +242,10 @@ def test_v2_shards_flow_through_load_collate_and_update(tmp_path):
     ret = np.ones(n, dtype=np.float32)
 
     batch = old.collate_ppo(data, np.arange(n), adv, ret)
-    states, state_ids, options, option_ids, valid, *_ = batch
+    states, state_ids, options, option_ids, plans, valid, *_ = batch
     assert state_ids.dtype == torch.long and option_ids.dtype == torch.long
     assert option_ids.shape == (n, options.shape[1], 2)
+    assert plans is None                     # v2 shards carry no plan (M20)
     assert new.collate_ppo(data, np.arange(n), adv, ret)[1].equal(state_ids)
 
     torch.manual_seed(0)
@@ -253,3 +254,114 @@ def test_v2_shards_flow_through_load_collate_and_update(tmp_path):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
     logs = old.ppo_update(model, opt, data, adv, ret, epochs=1, batch_size=2)
     assert all(np.isfinite(v) for v in logs.values())
+
+
+# ---------------------------------------------------------------------------
+# M20: v3 support + KL-anchor + over-attach penalty
+# ---------------------------------------------------------------------------
+def write_v3_shards(root):
+    """Synthetic plan-conditioned v3 PPO shards (plans column present)."""
+    from rl.encoders import (N_CONTEXTS, N_STATE_IDS_V3, OPTION_V3_DIM,
+                             STATE_V2_DIM)
+    from rl.plan import PLAN_DIM
+    rng = np.random.default_rng(9)
+    for shard_idx, menu_sizes in enumerate([(3, 2), (4,)]):
+        n = len(menu_sizes)
+        total = sum(menu_sizes)
+        np.savez_compressed(
+            root / f"ppo_shard_w{shard_idx:02d}.npz",
+            states=rng.random((n, STATE_V2_DIM + N_CONTEXTS)).astype(np.float32),
+            state_ids=rng.integers(0, 1268, (n, N_STATE_IDS_V3)).astype(np.int32),
+            plans=rng.random((n, PLAN_DIM)).astype(np.float32),
+            options=rng.random((total, OPTION_V3_DIM)).astype(np.float32),
+            option_ids=rng.integers(0, 1268, (total, 2)).astype(np.int32),
+            n_options=np.array(menu_sizes, dtype=np.int32),
+            actions=np.array([0] * n, dtype=np.int32),
+            logprobs=rng.random(n).astype(np.float32),
+            values=rng.random(n).astype(np.float32),
+            rewards=rng.random(n).astype(np.float32),
+            game_ids=np.zeros(n, dtype=np.int32),
+            players=np.zeros(n, dtype=np.int32),
+        )
+
+
+def _v3_model():
+    from rl.encoders import N_STATE_IDS_V3, OPTION_V3_DIM
+    from rl.policy import OptionScorerV3
+    torch.manual_seed(0)
+    return OptionScorerV3(n_state_ids=N_STATE_IDS_V3, option_dim=OPTION_V3_DIM)
+
+
+def test_v3_shards_flow_through_load_collate_and_update(tmp_path):
+    """M20: v3 shards carry the plan vector; ppo_update feeds the 5-arg
+    forward through _forward in BOTH twins."""
+    write_v3_shards(tmp_path)
+    for module in (old, new):
+        data = module.load_shards(tmp_path)
+        n = len(data["actions"])
+        batch = module.collate_ppo(data, np.arange(n),
+                                   np.ones(n, np.float32), np.ones(n, np.float32))
+        plans = batch[4]
+        assert plans is not None and plans.shape[1] == data["plans"].shape[1]
+        model = _v3_model()
+        np.random.seed(0)
+        logs = module.ppo_update(model, torch.optim.AdamW(model.parameters(), lr=1e-3),
+                                 data, np.ones(n, np.float32), np.ones(n, np.float32),
+                                 epochs=1, batch_size=2)
+        assert all(np.isfinite(v) for v in logs.values())
+
+
+def test_load_model_builds_v3_from_plan_conditioned_checkpoint(tmp_path):
+    from rl.policy import OptionScorerV3
+    model = _v3_model()
+    ckpt = tmp_path / "v3.pt"
+    torch.save(model.state_dict(), ckpt)
+    loaded_old = old._load_model(ckpt)
+    loaded_new = new.load_model(ckpt)
+    for loaded in (loaded_old, loaded_new):
+        assert type(loaded).__name__ == "OptionScorerV3"
+        assert loaded.n_state_ids == model.n_state_ids
+        assert loaded.option_dim == model.option_dim
+    assert isinstance(loaded_old, OptionScorerV3)
+
+
+def test_kl_anchor_zero_at_reference_positive_after_drift(tmp_path):
+    """The KL rubber band (M20 leg B): identical policies -> kl == 0; a
+    perturbed policy -> kl > 0 and it appears in the logs."""
+    write_v3_shards(tmp_path)
+    data = old.load_shards(tmp_path)
+    n = len(data["actions"])
+    adv, ret = np.ones(n, np.float32), np.ones(n, np.float32)
+
+    model, ref = _v3_model(), _v3_model()          # same seed -> identical
+    np.random.seed(0)
+    logs = old.ppo_update(model, torch.optim.SGD(model.parameters(), lr=0.0),
+                          data, adv, ret, epochs=1, batch_size=n,
+                          ref_model=ref, kl_coef=1.0)
+    assert logs["kl"] == pytest.approx(0.0, abs=1e-6)
+
+    with torch.no_grad():                          # drift the policy
+        for p in model.score_head.parameters():
+            p.add_(0.5)
+    np.random.seed(0)
+    logs = old.ppo_update(model, torch.optim.SGD(model.parameters(), lr=0.0),
+                          data, adv, ret, epochs=1, batch_size=n,
+                          ref_model=ref, kl_coef=1.0)
+    assert logs["kl"] > 0.0
+
+
+def test_over_attach_detector_on_live_obs():
+    """M20 collector hook: fake_cg card 1's charged-best (attack 102) costs 2 —
+    two energies = saturated target, one = legitimate attach."""
+    from tests import builders as b
+    from tests.fake_cg import AreaType, EnergyType, OptionType
+    from rl.collector import _is_over_attach
+    f = EnergyType.FIGHTING
+    opt = b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE, in_play_index=0)
+    sat = b.observation(me=b.player(active=b.pokemon(1, energies=[f, f])),
+                        opponent=b.player(active=b.pokemon(5, hp=200)))
+    hungry = b.observation(me=b.player(active=b.pokemon(1, energies=[f])),
+                           opponent=b.player(active=b.pokemon(5, hp=200)))
+    assert _is_over_attach(sat, opt) is True
+    assert _is_over_attach(hungry, opt) is False
+    assert _is_over_attach(sat, b.option(OptionType.END)) is False
