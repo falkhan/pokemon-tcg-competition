@@ -2,9 +2,17 @@
 .claude
 .venv
 
+
+# Local data
 replays/**
 dist/**
-
+decks/gen/**
+checkpoints/**
+data/**
+data/kaggle/**
+data/ppo
+reference/
+runs/**
 pokemon-tcg-ai-battle
 __pycache__/
 # Rule-agent bundle: main.py + deck.csv are committed source; cg/ (via `cg` above)
@@ -24,5 +32,4 @@ data/kaggle/logs/
 
 # M7.3 generic-teacher BC shards: large, regenerable from the committed
 # population.json (`python -m rl.bc collect --teacher generic`).
-data/bc_v2/
 pokemon-tcg-ai-battle.zip

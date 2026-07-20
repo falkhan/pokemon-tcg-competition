@@ -326,6 +326,58 @@ def make_pilot(spec: OpponentSpec, instance: str):
             ckpt = ROOT / ckpt          # league specs store ROOT-relative paths
         sd = torch.load(ckpt, map_location="cpu")
 
+        if "enc_ver" in sd:
+            # M21 encoder-v4 checkpoint: explicit version buffer (width
+            # sniffing is ambiguous once the v4 block + memory ids are in).
+            # Same plan protocol as the v3 branch below, plus a per-game
+            # OppMemory observed once per own prompt BEFORE encoding.
+            from cg.api import SelectContext
+            from rl.encoders import (OPTION_V3_DIM, N_STATE_IDS_V4,
+                                     V4_EXTRA_DIM, encode_ctx_v4,
+                                     encode_option_v2)
+            from rl.memory import OppMemory
+            from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+            from rl.policy import OptionScorerV3, option_dim_of
+            m4 = OptionScorerV3(n_state_ids=N_STATE_IDS_V4,
+                                option_dim=option_dim_of(sd),
+                                extra_dim=V4_EXTRA_DIM)
+            m4.load_state_dict(sd)
+            m4.eval()
+            deck_ids = resolve_deck(spec[2])
+            memory = OppMemory()
+            pstate = {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
+                      "last_turn": -1}
+
+            def fn4(od):
+                obs = to_observation_class(od)
+                if obs.select is None:
+                    pstate.update(key=None, last_turn=-1)
+                    memory.reset()
+                    return deck_ids
+                t = obs.current.turn
+                if t < pstate["last_turn"]:          # new game in this series
+                    pstate.update(key=None)
+                    memory.reset()
+                pstate["last_turn"] = t
+                key = (t, obs.current.yourIndex)
+                memory.observe(obs)                  # once per own prompt
+                sc, sids = encode_ctx_v4(obs, deck_ids, memory)
+                if obs.select.context == SelectContext.MAIN \
+                        and pstate["key"] != key:
+                    cands = enumerate_plans(obs)
+                    mat = np.stack([encode_plan(c) for c in cands]
+                                   ).astype(np.float32)
+                    idx = m4.act_plan(sc, sids, mat)
+                    pstate.update(key=key, vec=mat[idx].copy())
+                plan = (pstate["vec"] if pstate["key"] == key
+                        else np.zeros(PLAN_DIM, np.float32))
+                pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+                opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+                oids = np.stack([i for _, i in pairs])
+                return m4.act(sc, plan, sids, opts, oids,
+                              obs.select.maxCount, greedy=True)
+            return fn4, deck_ids
+
         if "plan_enc.0.weight" in sd:
             # Plan-conditioned v3 checkpoint (OptionScorerV3, M11): replan at
             # every own MAIN prompt, hold the plan for submenus keyed on

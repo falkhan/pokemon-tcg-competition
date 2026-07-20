@@ -25,6 +25,7 @@ LUCARIO = [int(x) for x in (DECKS / "lucario.csv").read_text().split()]
      ("mcts", "checkpoints/bc_v1_value_search.pt", "kyogre", 32)),
     ("rule:iono", ("rule", "iono", "iono")),
     ("rule:lucario:kyogre", ("rule", "lucario", "kyogre")),
+    ("rule:dragapult", ("rule", "dragapult", "dragapult")),
     ("model:checkpoints/bc_v1.pt:kyogre", ("model", "checkpoints/bc_v1.pt", "kyogre")),
     ("solver2:lucario", ("solver2", "lucario")),
     ("solver2a:lucario", ("solver2a", "lucario")),

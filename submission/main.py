@@ -49,13 +49,23 @@ DECK = [int(x) for x in open(os.path.join(_BASE, "deck.csv")) if x.strip()]
 
 _EMBED = WEIGHTS["embedding.weight"]
 _IS_V3 = "plan_enc.0.weight" in WEIGHTS          # M11 plan-conditioned export
+_IS_V4 = "enc_ver" in WEIGHTS                    # M21 encoder-v4 export
 if _IS_V3:
     from cg.api import SelectContext
     from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
     # M15: hand-aware exports carry 20 state ids — sniff from the weights
-    # and pick the matching encoder.
+    # and pick the matching encoder. M21: v4 exports declare themselves via
+    # the enc_ver buffer (width sniffing is ambiguous with the v4 block in).
+    _V4_EXTRA = 0
+    if _IS_V4:
+        from rl.encoders import V4_EXTRA_DIM as _V4_EXTRA
+        from rl.encoders import encode_ctx_v4
+        from rl.memory import OppMemory
+        # Per-game opponent memory (the _PSTATE precedent): observed once
+        # per agent call, reset on deck-return and turn-counter drop.
+        _MEM = OppMemory()
     _N_IDS = (WEIGHTS["state_enc.0.weight"].shape[1]
-              - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
+              - STATE_V2_DIM - N_CONTEXTS - _V4_EXTRA - PLAN_DIM) // EMBED_DIM
     if _N_IDS > N_STATE_IDS:
         from rl.encoders import encode_state_v3 as _encode_state
     else:
@@ -135,13 +145,21 @@ def agent(obs_dict: dict) -> list[int]:
     if obs.select is None:  # game start: return the deck list
         if _IS_V3:
             _PSTATE.update(key=None, vec=None, last_turn=-1)
+        if _IS_V4:
+            _MEM.reset()
         if _LOG_NET:
-            _log_net({"ev": "start", "v3": _IS_V3})
+            _log_net({"ev": "start", "v3": _IS_V3, "v4": _IS_V4})
         return DECK
-    numeric, state_ids = (_encode_state if _IS_V3
-                          else encode_state_v2)(obs.current, DECK)
-    state_ctx = np.concatenate([numeric,
-                                encode_context(obs.select.context)]).astype(np.float32)
+    if _IS_V4:
+        if obs.current.turn < _PSTATE["last_turn"]:   # new game, reused process
+            _MEM.reset()
+        _MEM.observe(obs)                # once per call, BEFORE encoding
+        state_ctx, state_ids = encode_ctx_v4(obs, DECK, _MEM)
+    else:
+        numeric, state_ids = (_encode_state if _IS_V3
+                              else encode_state_v2)(obs.current, DECK)
+        state_ctx = np.concatenate([numeric,
+                                    encode_context(obs.select.context)]).astype(np.float32)
     pairs = [encode_option_v2(o, obs) for o in obs.select.option]
     options = np.stack([n for n, _ in pairs]).astype(np.float32)
     option_ids = np.stack([i for _, i in pairs])

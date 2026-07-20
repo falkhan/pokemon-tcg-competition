@@ -30,7 +30,7 @@ def test_load_deck_file_parity_on_repo_decks():
 
 
 def test_load_deck_matches_load_deck_file():
-    for name in ("lucario", "iono", "kyogre"):
+    for name in ("lucario", "iono", "kyogre", "dragapult"):
         assert decks.load_deck(name) == decks.load_deck_file(
             REPO_ROOT / "decks" / f"{name}.csv")
 

@@ -242,9 +242,13 @@ def _collect_chunk(args):
         if not ckpt.is_absolute() and not ckpt.exists():
             ckpt = ROOT / ckpt
         sdict = torch.load(ckpt, map_location="cpu")
-        skw = (dict(n_state_ids=_n_ids_of(sdict),
-                    option_dim=option_dim_of(sdict))
-               if "state_enc.0.weight" in sdict else {})   # {} = test stubs
+        if "state_enc.0.weight" in sdict:
+            from rl.encoders import V4_EXTRA_DIM
+            skw = dict(n_state_ids=_n_ids_of(sdict),
+                       option_dim=option_dim_of(sdict),
+                       extra_dim=V4_EXTRA_DIM if "enc_ver" in sdict else 0)
+        else:
+            skw = {}                                       # {} = test stubs
         student = OptionScorerV3(**skw)
         student.load_state_dict(sdict)
         student.eval()
@@ -309,9 +313,19 @@ def _collect_chunk(args):
         for v in shard.values():
             v.clear()
 
+    # M21: expert mode always records the newest (v4) encoding — the M15
+    # precedent; ei mode follows the student's own architecture.
+    use_v4 = mode == "expert" or getattr(student, "extra_dim", 0) > 0
+    if use_v4:
+        from rl.encoders import encode_ctx_v4
+        from rl.memory import OppMemory
+
     for game in range(lo, hi):
         picks_idx = [rng.randrange(len(population)) for _ in range(2)]
         decks = [population[picks_idx[0]], population[picks_idx[1]]]
+        # M21: one opponent-memory per RECORDED seat, observed only at that
+        # seat's own prompts (per-seat logs contract, rl/memory.py docstring)
+        memories = [OppMemory(), OppMemory()] if use_v4 else None
         # M14 mixed opponents: one seat may be an external pilot (buddy /
         # rule expert / plain solver spec). Only the TEACHER seat is
         # recorded then (M10 ban: never imitate third parties).
@@ -361,15 +375,21 @@ def _collect_chunk(args):
                 stats, value_solve=value_solve)
 
             # M15: new data carries hand-aware ids (expert mode always; ei
-            # mode follows the student's own id width)
-            enc_state = (encode_state_v3 if mode == "expert"
-                         or getattr(student, "n_state_ids",
-                                    None) == N_STATE_IDS_V3
-                         else encode_state_v2)
-            state_num, state_ids = enc_state(obs.current, decks[player])
-            state_ctx = np.concatenate(
-                [state_num, encode_context(obs.select.context)]
-            ).astype(np.float32)
+            # mode follows the student's own id width). M21: v4 states carry
+            # the appended encoder-v4 block + memory ids.
+            if use_v4:
+                memories[player].observe(obs)
+                state_ctx, state_ids = encode_ctx_v4(
+                    obs, decks[player], memories[player])
+            else:
+                enc_state = (encode_state_v3 if mode == "expert"
+                             or getattr(student, "n_state_ids",
+                                        None) == N_STATE_IDS_V3
+                             else encode_state_v2)
+                state_num, state_ids = enc_state(obs.current, decks[player])
+                state_ctx = np.concatenate(
+                    [state_num, encode_context(obs.select.context)]
+                ).astype(np.float32)
             pairs = [encode_option_v2(o, obs) for o in obs.select.option]
             opts = np.stack([num for num, _ in pairs]).astype(np.float32)
             opt_ids = np.stack([ids for _, ids in pairs])
@@ -598,6 +618,16 @@ class BCDatasetV3(torch.utils.data.Dataset):
             cols["options"] = [
                 np.pad(a, ((0, 0), (0, owmax - a.shape[1])))
                 for a in cols["options"]]
+        # M21 pad shim: mixed STATE widths (v3 vs encoder-v4) — pad v3 shards'
+        # states with zeros ("no v4 info"): the v4 block is appended at the
+        # tail, so zero-padding is exactly the migrated net's zero-init
+        # semantics. state_ids mixing (20 vs 25) is the M15 shim above.
+        swidths = {a.shape[1] for a in cols["states"]}
+        if len(swidths) > 1:
+            swmax = max(swidths)
+            cols["states"] = [
+                np.pad(a, ((0, 0), (0, swmax - a.shape[1])))
+                for a in cols["states"]]
         for k, v in cols.items():
             setattr(self, k, np.concatenate(v))
         for k, v in plan_cols.items():
@@ -623,7 +653,9 @@ def collate_v3(batch):
     maxN = max(row[3].shape[0] for row in batch)
     maxM = max(1, max(row[8].shape[0] for row in batch))
 
-    states = torch.zeros(B, STATE_V2_DIM + N_CONTEXTS)
+    # state width read from the batch (M21: v3 = STATE_V2_DIM+N_CONTEXTS,
+    # v4 adds V4_EXTRA_DIM; the dataset pad shim makes every row equal-width)
+    states = torch.zeros(B, batch[0][0].shape[0])
     plans = torch.zeros(B, PLAN_DIM)
     state_ids = torch.zeros(B, batch[0][2].shape[0], dtype=torch.long)
     options = torch.zeros(B, maxN, batch[0][3].shape[1])
@@ -723,10 +755,41 @@ def load_v3h_into_v3o(v3h_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     return model
 
 
+def migrate_v3_to_v4(v3_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
+    """M21 warm start: a v3 checkpoint into an encoder-v4 net
+    (extra_dim=V4_EXTRA_DIM, N_STATE_IDS_V4 ids). state_enc.0 columns:
+    [S|C] verbatim → V4 block ZERO → [plan | old id embeds] shifted right →
+    new memory-id embed columns ZERO. Fifth use of the warm-start invariant:
+    v4(any v4 block, any mem ids) == v3 exactly at init, since every new
+    input column is zero — parity-tested with garbage in the new inputs."""
+    from rl.encoders import (EMBED_DIM, N_OPTION_IDS, N_STATE_IDS_V4,
+                             V4_EXTRA_DIM)
+    base = STATE_V2_DIM + N_CONTEXTS
+    old_ids = _n_ids_of(v3_sd)
+    old_tail = plan_dim + old_ids * EMBED_DIM
+    option_dim = v3_sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * EMBED_DIM
+    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=N_STATE_IDS_V4,
+                           option_dim=option_dim, extra_dim=V4_EXTRA_DIM)
+    sd = model.state_dict()
+    for k, v in v3_sd.items():
+        if k == "state_enc.0.weight":
+            new = torch.zeros_like(sd[k])
+            new[:, :base] = v[:, :base]
+            new[:, base + V4_EXTRA_DIM:base + V4_EXTRA_DIM + old_tail] = v[:, base:]
+            sd[k] = new
+        else:
+            sd[k] = v
+    model.load_state_dict(sd)   # enc_ver buffer keeps its 4.0 init
+    return model
+
+
 def _n_ids_of(sd: dict) -> int:
-    """Infer a v3 checkpoint's state-id count from its first Linear width."""
-    from rl.encoders import EMBED_DIM
+    """Infer a v3/v4 checkpoint's state-id count from its first Linear width
+    (M21: v4 checkpoints declare themselves via the enc_ver buffer)."""
+    from rl.encoders import EMBED_DIM, V4_EXTRA_DIM
     width = sd["state_enc.0.weight"].shape[1]
+    if "enc_ver" in sd:
+        width -= V4_EXTRA_DIM
     return (width - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
 
 
@@ -734,11 +797,21 @@ def train(data_dirs: list, name: str, init: str | None = None,
           init_v2: str | None = None, init_v3h: str | None = None,
           init_v3o: str | None = None,
           epochs: int = 8, lr: float = 3e-4,
-          batch_size: int = 256, plan_weight: float = 1.0) -> None:
+          batch_size: int = 256, plan_weight: float = 1.0,
+          uniform_weights: bool = False) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
     ds = BCDatasetV3([Path(d) for d in data_dirs])
+    if uniform_weights:
+        # M21 Gate-A kill lesson: 36% of the 4k-game EI rows carried the 10x
+        # disagreement weight (~85% effective loss share) and dragged the
+        # policy off its PPO gains (osv4_ei1 0.225 vs seed ~0.487 — the M18
+        # plan4 / M19 reweighting law at maximum dose). This neutralizes the
+        # recorded weights at load time.
+        n_rw = int((ds.weights > 1.0).sum())
+        ds.weights = np.ones_like(ds.weights)
+        print(f"uniform-weights: neutralized {n_rw} reweighted rows")
 
     rng = np.random.default_rng(0)
     unique_games = np.unique(ds.game_ids)
@@ -760,13 +833,17 @@ def train(data_dirs: list, name: str, init: str | None = None,
         return p if p.is_absolute() or p.exists() else ROOT / p
 
     if init is not None:
+        from rl.encoders import V4_EXTRA_DIM
         from rl.policy import option_dim_of
         sdict = torch.load(_resolve(init), map_location="cpu")
+        extra = V4_EXTRA_DIM if "enc_ver" in sdict else 0   # M21 v4 sniff
         model = OptionScorerV3(n_state_ids=_n_ids_of(sdict),
-                               option_dim=option_dim_of(sdict))
+                               option_dim=option_dim_of(sdict),
+                               extra_dim=extra)
         model.load_state_dict(sdict)
-        print(f"warm-start from v3 {init} (n_state_ids={model.n_state_ids}, "
-              f"option_dim={model.option_dim})")
+        print(f"warm-start from {'v4' if extra else 'v3'} {init} "
+              f"(n_state_ids={model.n_state_ids}, "
+              f"option_dim={model.option_dim}, extra_dim={extra})")
     elif init_v3o is not None:
         model = load_v3h_into_v3o(torch.load(_resolve(init_v3o),
                                              map_location="cpu"))
@@ -974,6 +1051,9 @@ if __name__ == "__main__":
     t.add_argument("--lr", type=float, default=3e-4)
     t.add_argument("--batch-size", type=int, default=256)
     t.add_argument("--plan-weight", type=float, default=1.0)
+    t.add_argument("--uniform-weights", action="store_true",
+                   help="M21: neutralize per-row disagreement weights at load "
+                        "(the Gate-A kill fix — see docs/M21.md)")
     r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
                                        "sibling shard dirs (<dir><suffix>)")
     r.add_argument("--data", type=str, nargs="+", required=True)
@@ -999,4 +1079,5 @@ if __name__ == "__main__":
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
               init_v3h=args.init_v3h, init_v3o=args.init_v3o,
               epochs=args.epochs, lr=args.lr,
-              batch_size=args.batch_size, plan_weight=args.plan_weight)
+              batch_size=args.batch_size, plan_weight=args.plan_weight,
+              uniform_weights=args.uniform_weights)
