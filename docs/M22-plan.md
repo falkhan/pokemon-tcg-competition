@@ -214,7 +214,63 @@ and n=30 cannot separate them. **No conclusion about depth is supported.**
    per-solve cost ~linear in `max_nodes` — gives: 240 nodes free at the current rate, 400 nodes at
    75% of it, 800 nodes at 37%. `SOLVED_ALLOW` gates tiers; T3 is free to drop (never fires).
 
-### C2 — fix the threat representation (SCOPED 07-20)
+## M22c-RL — upgrade the teacher, retrain PPO (the shippable candidate)
+
+**Direction (Piotr):** leaderboard leaders are all RL, so the shippable artifact stays RL.
+Rule-agent work is diagnostic only.
+
+**Why the teacher, quantified.** `rule:lucario` (the Pokemon Company sample agent) beats
+`solver:lucario` **0.670** on the same deck (n=200, slot-fair). Our RL agent trains **45%** against
+`solver:lucario` — which wraps `make_generic_pilot`, a pilot a free rule agent beats 2:1. Five
+milestones of mirror gains were climbing a ladder against a weak wall. The RL agent's 0.51 mirror
+= "beats a weak sparring partner 51% of the time", which is why it collapses to 0.17 out-of-loop.
+
+**The pilot diff (2025 sample-agent vs generic_pilot) says the gap is learnable.** Two capabilities
+account for 0.22 vs 0.50, both with every input already in the encoder (so a policy CAN learn them):
+- **Gap A — prize-race / Mega-exposure denial** (policy gap): don't over-commit the 3-prize Mega
+  when the opponent can cash it. Inputs present in `_combat_features`/`glob`.
+- **Gap B — coordinated within-turn line** (sequencing gap): gust→attach→attack on one target.
+  Inputs present; needs sequential training against an opponent that punishes incoherent lines.
+
+A stronger training opponent addresses BOTH without hand-specifying either — the opposite of the
+M20/M21 shaping traps.
+
+### The experiment — one variable
+
+Take B3's **exact** opponent-weight profile and upgrade only the same-deck teacher: the 0.45 that
+was `solver:` on our deck (`solver:lucario` 0.15 + the byte-identical `solver:deck_20dcd…csv` 0.30)
+becomes **`rule:lucario`**. Everything else held: meta-deck solvers ~0.25, mirror 0.10, past 0.10,
+random 0.05. Same distribution SHAPE, teacher quality 0.22 → 0.50. Start from `ppo_current_m21legB3`.
+
+**Gate — out-of-loop, pre-registered:** `rule:dragapult` n=800 2-seed, must beat B3's 0.172 by
+>5.5pp (the MDE). Mirror (`solver:lucario`) reported but NOT a ship criterion — it is the
+contaminated metric this whole milestone demoted.
+
+**Why dragapult being held out makes this self-checking:** "you become what you train against"
+(overfit to the now-deterministic `rule:lucario`) would show as a HIGH rule:lucario score and a
+FLAT dragapult score. Because dragapult is never in the pool, the instrument detects its own
+primary failure mode. No extra design needed.
+
+### Risks and bounds
+
+- **Determinism.** `rule:lucario` is largely deterministic; 0.45 on one opponent risks memorisation.
+  Mitigated by the held-out gate above and by keeping mirror/past/meta/random diversity (the M7.5
+  bound: never 100% one opponent). If dragapult stays flat while rule:lucario soars, that is the
+  memorisation signature and the leg is killed.
+- **`rule:lucario` stops being a floor** — already replaced by `rule:dragapult` in M22b, so the
+  timing is deliberate.
+- **Dragapult stays OUT of the pool** or the gate is spent.
+- Cost: one collect+train PPO leg (hours) + the n=1600 gate. Multi-hour — launch at a chosen time.
+
+### If it works / if it does not
+
+- **Moves dragapult >5.5pp:** the teacher was the bottleneck; this is the shippable candidate and
+  the recipe generalises (upgrade every solver slot to a rule agent where one exists).
+- **Flat:** the teacher is not sufficient alone; Gap B needs an explicit plan/search head trained
+  in the loop (a real architecture change), and Gap A may need the shaping fallback. Either way we
+  learned it for the cost of one leg, not a milestone.
+
+### C2 — fix the threat representation (SCOPED 07-20, FALSIFIED — see docs/M22.md)
 
 **The confirmed defect** (p<0.0001): our opponent model asks only *"can their ACTIVE KO my
 ACTIVE"* — `opp_ttk` + `return_ko` + `concedes`, all computed against `op_active` vs `attacker`
