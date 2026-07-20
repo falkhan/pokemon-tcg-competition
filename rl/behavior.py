@@ -335,6 +335,116 @@ def from_series(a: str, b: str, n: int = 100, seed: int = 1,
     return acc
 
 
+def _fisher_two_sided(a: int, b: int, c: int, d: int) -> float:
+    """Exact test on the 2x2 [[a,b],[c,d]]. No scipy in this env."""
+    from math import comb
+    n, r1, r2, c1 = a + b + c + d, a + b, c + d, a + c
+    if not n or not r1 or not r2:
+        return 1.0
+
+    def p(x):
+        return comb(r1, x) * comb(r2, c1 - x) / comb(n, c1)
+
+    p0 = p(a)
+    lo, hi = max(0, c1 - r2), min(r1, c1)
+    return min(1.0, sum(p(x) for x in range(lo, hi + 1) if p(x) <= p0 + 1e-12))
+
+
+def flag_contrast(sub_id: int, limit: int | None = None) -> dict:
+    """Per-flag WIN-vs-LOSS enrichment for one submission.
+
+    `postmortem --batch` aggregates flags over losses only, which cannot
+    distinguish a defect from a habit: a flag appearing at the same rate in wins
+    carries zero information about why we lost. This computes the contrast, so
+    the denominator is "games", not "games we lost".
+
+    Same discipline as the gust metric: nothing is called a defect unless it is
+    enriched in losses at a significance that survives correcting for the number
+    of flag kinds tested.
+
+    WHAT THIS CAN AND CANNOT SHOW. Flags are counted over a whole game, so they
+    are confounded with game state: a game you are winning has more turns, more
+    energy and a wider board, which moves flag rates for reasons that have
+    nothing to do with causation. So a flag that is MORE common in wins is not
+    thereby "good play" — it may simply be what winning boards look like.
+
+    This is a FILTER, not a cause-finder. It can refute "flag X explains our
+    losses"; it cannot establish that X helps or hurts. Use it to kill phantom
+    defects before they motivate a leg, then investigate survivors properly.
+    """
+    import polars as pl
+
+    from rl.postmortem import _cur, audit_flags
+
+    df = pl.read_parquet(EPISODES_PQ).filter(
+        (pl.col("submission_id_0") == sub_id) | (pl.col("submission_id_1") == sub_id))
+    win_flags: Counter = Counter()      # kind -> games won that carried it
+    loss_flags: Counter = Counter()
+    n_win = n_loss = 0
+    for n, row in enumerate(df.iter_rows(named=True)):
+        if limit and n >= limit:
+            break
+        path = RAW_DIR / f"episode_{row['episode_id']}.json.gz"
+        if not path.exists():
+            continue
+        seat = row["our_seat"]
+        mine, theirs = row[f"reward_{seat}"], row[f"reward_{1 - seat}"]
+        if mine is None or theirs is None or mine == theirs:
+            continue                     # draws carry no win/loss contrast
+        raw = json.loads(gzip.decompress(path.read_bytes()))
+        steps = raw.get("steps") or raw
+        if not any(_cur(s[seat]) for s in steps if isinstance(s[seat], dict)):
+            continue
+        won = mine > theirs
+        kinds = {f.split("]", 1)[0].lstrip("[") for f in audit_flags(steps, seat)}
+        if won:
+            n_win += 1
+            for k in kinds:
+                win_flags[k] += 1
+        else:
+            n_loss += 1
+            for k in kinds:
+                loss_flags[k] += 1
+
+    kinds = sorted(set(win_flags) | set(loss_flags))
+    rows = []
+    for k in kinds:
+        w, l = win_flags[k], loss_flags[k]
+        rows.append({
+            "kind": k,
+            "win_rate": w / n_win if n_win else 0.0,
+            "loss_rate": l / n_loss if n_loss else 0.0,
+            "w": w, "l": l,
+            "p": _fisher_two_sided(l, n_loss - l, w, n_win - w),
+        })
+    rows.sort(key=lambda r: r["loss_rate"] - r["win_rate"], reverse=True)
+    return {"n_win": n_win, "n_loss": n_loss, "n_kinds": len(kinds), "rows": rows}
+
+
+def report_flags(res: dict) -> str:
+    """Enrichment table. Bonferroni-corrected, because every flag kind is a test."""
+    n_win, n_loss, k = res["n_win"], res["n_loss"], max(res["n_kinds"], 1)
+    out = [f"flag contrast — {n_win} wins vs {n_loss} losses "
+           f"({k} kinds tested, Bonferroni alpha = {0.05 / k:.4f})",
+           f"{'flag':<24}{'in wins':>9}{'in losses':>11}{'delta':>9}{'p':>9}  verdict"]
+    for r in res["rows"]:
+        delta = r["loss_rate"] - r["win_rate"]
+        verdict = ("ENRICHED in losses" if r["p"] < 0.05 / k
+                   else "not established")
+        out.append(f"{r['kind']:<24}{r['win_rate']:>9.2f}{r['loss_rate']:>11.2f}"
+                   f"{delta:>+9.2f}{r['p']:>9.3f}  {verdict}")
+    if not any(r["p"] < 0.05 / k for r in res["rows"]):
+        out.append("")
+        out.append("NO flag is enriched in losses after correction. Loss-only counts "
+                   "would have shown all of these as 'the top failure modes'.")
+    out.append("")
+    out.append("A negative delta does NOT mean the behaviour helps: flags are counted "
+               "over whole games, so they are confounded with game state (winning "
+               "boards have more turns and energy). This filter refutes 'X explains "
+               "our losses'; it cannot show that X helps or hurts.")
+    return "\n".join(out)
+
+
 def report(acc: Counter) -> str:
     """Headline is taken/strict WITH n_neutral adjacent.
 
@@ -375,8 +485,14 @@ def _main() -> None:
     s.add_argument("-n", type=int, default=100)
     s.add_argument("--seed", type=int, default=1)
     s.add_argument("--workers", type=int, default=8)   # 8 is a HARD cap (CLAUDE.md)
+    f = sub.add_parser("flags")
+    f.add_argument("--sub", type=int, required=True)
+    f.add_argument("--limit", type=int, default=None)
     a = p.parse_args()
 
+    if a.cmd == "flags":
+        print(report_flags(flag_contrast(a.sub, a.limit)))
+        return
     acc = (from_replays(a.sub, a.limit) if a.cmd == "replays"
            else from_series(a.a, a.b, a.n, a.seed, min(a.workers, 8)))
     print(report(acc))

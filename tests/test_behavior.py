@@ -158,3 +158,50 @@ class TestReport:
     def test_zero_strict_is_labelled_not_a_defect(self):
         acc = bh.Counter({"games": 1, "gust_neutral": 10})
         assert "not a defect" in bh.report(acc)
+
+
+class TestFisher:
+    def test_symmetric_table_is_not_significant(self):
+        assert bh._fisher_two_sided(5, 5, 5, 5) == pytest.approx(1.0)
+
+    def test_complete_separation_is_significant(self):
+        assert bh._fisher_two_sided(20, 0, 0, 20) < 0.001
+
+    def test_empty_table_does_not_divide_by_zero(self):
+        assert bh._fisher_two_sided(0, 0, 0, 0) == 1.0
+
+    def test_known_value_matches_hand_computation(self):
+        # 2x2 [[3,1],[1,3]] -> exact two-sided p = 0.4857...
+        assert bh._fisher_two_sided(3, 1, 1, 3) == pytest.approx(0.4857, abs=1e-3)
+
+
+class TestFlagContrastReport:
+    def _res(self, rows, n_win=20, n_loss=20):
+        return {"n_win": n_win, "n_loss": n_loss, "n_kinds": len(rows), "rows": rows}
+
+    def test_bonferroni_alpha_divides_by_kinds_tested(self):
+        rows = [{"kind": f"k{i}", "win_rate": 0.1, "loss_rate": 0.1, "w": 2, "l": 2,
+                 "p": 0.02} for i in range(6)]
+        out = bh.report_flags(self._res(rows))
+        assert "0.0083" in out, "alpha must be 0.05/6"
+        assert "ENRICHED" not in out, "p=0.02 must NOT survive correction at k=6"
+
+    def test_flag_more_common_in_wins_is_never_called_a_defect(self):
+        """attach-off-racer dominated the loss-only taxonomy but is MORE common
+        in wins — the phantom this contrast exists to kill."""
+        rows = [{"kind": "attach-off-racer", "win_rate": 0.60, "loss_rate": 0.50,
+                 "w": 12, "l": 10, "p": 0.734}]
+        out = bh.report_flags(self._res(rows))
+        assert "not established" in out and "ENRICHED" not in out
+
+    def test_genuinely_enriched_flag_is_reported(self):
+        rows = [{"kind": "real-defect", "win_rate": 0.0, "loss_rate": 0.9,
+                 "w": 0, "l": 18, "p": 1e-6}]
+        assert "ENRICHED in losses" in bh.report_flags(self._res(rows))
+
+    def test_report_always_carries_the_confounding_caveat(self):
+        rows = [{"kind": "x", "win_rate": 0.1, "loss_rate": 0.5, "w": 2, "l": 10,
+                 "p": 1e-9}]
+        out = bh.report_flags(self._res(rows))
+        assert "cannot show that X helps or hurts" in out, \
+            "a negative delta must never be readable as 'this behaviour helps'"
