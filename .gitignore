@@ -9,6 +9,8 @@ dist/**
 decks/gen/**
 checkpoints/**
 data/**
+data/kaggle/**
+data/ppo
 reference/
 runs/**
 pokemon-tcg-ai-battle

@@ -73,12 +73,12 @@ def test_save_load_round_trip_restores_tuples(ldirs):
     assert loaded.meta["champion_deck"] == "abc123"
 
 
-def test_bootstrap_anchors_seven_frozen_idempotent(ldirs):
+def test_bootstrap_anchors_eight_frozen_idempotent(ldirs):
     league = _fresh()
-    assert len(league.entries) == 7
+    assert len(league.entries) == 8
     assert all(e.frozen and e.origin == "anchor" for e in league.entries.values())
     lg.bootstrap_anchors(league)  # idempotent
-    assert len(league.entries) == 7
+    assert len(league.entries) == 8
 
 
 def test_bootstrap_skips_missing_checkpoint(ldirs, monkeypatch, capsys):
@@ -141,7 +141,7 @@ def test_run_updates_ratings_and_persists(ldirs, fake_pilots):
     lg.add_entry(league, ("generic", "kyogre"), entry_id="cand1")
     lg.run(league, games_per_anchor=4, workers=1, game_fn=lambda *a: 0)  # seat-0 wins
     cand = league.entries["cand1"]
-    assert cand.games == 4 * 7
+    assert cand.games == 4 * 8
     assert lg.LEAGUE_JSON.exists()
     # slot-fair scripted wins split 50/50 -> candidate stays near the pack; the
     # ratings did move off their defaults though
@@ -284,7 +284,7 @@ def test_check_anchor_ordering_flags_inversions():
 def test_anchor_round_robin_covers_all_pairs(ldirs, fake_pilots):
     league = _fresh()
     lg.anchor_round_robin(league, games=2, workers=1, game_fn=lambda *a: 0)
-    n_anchors = 7
+    n_anchors = 8
     expected_games_total = 2 * (n_anchors * (n_anchors - 1) // 2) * 2  # per-entry sum
     assert sum(e.games for e in league.entries.values()) == expected_games_total
 

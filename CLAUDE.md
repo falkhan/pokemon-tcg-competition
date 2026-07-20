@@ -39,3 +39,13 @@ When running a pipeline to ship a new model use hermes integration to send perio
 - Diary experimental observations incrementally, at the moment they are produced
   (gate results incl. kills, collection stats, train metrics, anomalies) — never
   retrospectively at milestone end. Kill results are as valuable as passes.
+- PARALLELISM CAP: use `--workers 8` MAX for `plan_iter collect` and any
+  `matchrunner`/eval run. 12 workers has deadlocked repeatedly (M17, m19b
+  screen) via a native `libcg.so` `free(): invalid pointer` corruption in
+  `mp.Pool` — the pool hangs forever with no error. 8 is the proven-stable
+  ceiling. `plan_iter collect` has NO resume: relaunching into the same `--out`
+  dir clobbers existing shards, so collect any remainder into a FRESH dir and
+  train on both. Derive collection progress from shard count (shard_size in the
+  command) — the heartbeat reporter greps a `game N` line and will re-echo a
+  stale line after the run's real `done:` line lands, which looks like a freeze
+  but is not; always confirm against the `done:` line and live shard growth.

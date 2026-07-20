@@ -53,11 +53,13 @@ SUBMISSIONS_JSON = LEAGUE_DIR / "submissions.json"
 GAMES_PER_ANCHOR = 40
 TOP_PEERS = 3
 
-# The plan-§4 anchor seven. tuned pilots the Lucario deck (no decks/tuned.csv).
+# The plan-§4 anchor seven + dragapult_expert. tuned pilots the Lucario deck
+# (no decks/tuned.csv).
 # All paths ROOT-relative so league.json stays portable across machines.
 ANCHORS: list[tuple[str, OpponentSpec]] = [
     ("lucario_expert", ("rule", "lucario", "lucario")),
     ("iono_expert", ("rule", "iono", "iono")),
+    ("dragapult_expert", ("rule", "dragapult", "dragapult")),
     ("tuned_lucario", ("rule", "tuned", "lucario")),
     ("generic+lucario", ("generic", "lucario")),
     ("generic+iono", ("generic", "iono")),

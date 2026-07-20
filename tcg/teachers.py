@@ -24,9 +24,10 @@ TEACHER_PATHS = {                          # rule-based agent per archetype
     "lucario": ROOT / "sample-agent" / "main.py",
     "iono": ROOT / "sample-agent-iono" / "main.py",
     "tuned": ROOT / "sample-agent-tuned" / "main.py",   # parameterized Lucario (M5)
+    "dragapult": ROOT / "sample-agent-dragapult" / "main.py",
 }
 DECK_PATHS = {name: DECK_DIR / f"{name}.csv"
-              for name in ("kyogre", "lucario", "iono")}
+              for name in ("kyogre", "lucario", "iono", "dragapult")}
 DECK_PATHS["tuned"] = DECK_PATHS["lucario"]   # the tuned agent pilots the Lucario deck
 
 
@@ -35,8 +36,8 @@ def load_teacher(instance_name: str, agent: str = "lucario", deck: str | None = 
     """Exec a fresh, isolated instance of a rule-based agent. Returns its callable.
 
     instance_name must be unique per live instance (globals are module-level state).
-    agent: which rule brain ("lucario" or "iono").
-    deck:  which deck it pilots ("kyogre"/"lucario"/"iono"); defaults to the agent's
+    agent: which rule brain ("lucario", "iono", or "dragapult").
+    deck:  which deck it pilots ("kyogre"/"lucario"/"iono"/"dragapult"); defaults to the agent's
            own archetype. The brain's card-specific heuristics only fire on matching
            cards, so a mismatched deck is piloted on generic fallback scores (this is
            exactly how the Lucario brain played the Kyogre deck through all of M1).

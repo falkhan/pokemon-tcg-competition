@@ -500,7 +500,7 @@ def _seat_for(path: Path, raw: dict, seat: str) -> int | None:
     if seat in ("0", "1"):
         return int(seat)
     if seat == "a":
-        m = re.search(r"_a([01])\.json$", path.name)
+        m = re.search(r"_a([01])\.json(\.gz)?$", path.name)
         if m:
             return int(m.group(1))
     parsed = parse_episode(raw, episode_id=0)      # fall back to deck-hash detect
@@ -508,16 +508,20 @@ def _seat_for(path: Path, raw: dict, seat: str) -> int | None:
 
 
 def batch(dir_path: str, seat: str = "a") -> None:
-    """Aggregate classify_end + audit_flags over every *.json in dir_path
-    (rl/eval.py play_games `json_prefix` output; cached Kaggle episodes work
-    too). Prints ending counts and a flag-kind frequency table with one
-    example each — the M8.0 setup-mistake taxonomy."""
-    files = sorted(Path(dir_path).glob("*.json"))
+    """Aggregate classify_end + audit_flags over every *.json[.gz] in dir_path
+    (rl/eval.py play_games `json_prefix` output, or the gzipped Kaggle episode
+    cache in data/kaggle/raw/). Prints ending counts and a flag-kind frequency
+    table with one example each — the M8.0 setup-mistake taxonomy."""
+    files = sorted(Path(dir_path).glob("*.json")) + sorted(Path(dir_path).glob("*.json.gz"))
     end_counts, kind_counts = Counter(), Counter()
     example: dict[str, str] = {}
     n_games = 0
     for f in files:
-        raw = json.loads(f.read_text())
+        if f.suffix == ".gz":
+            with gzip.open(f, "rt") as fh:
+                raw = json.load(fh)
+        else:
+            raw = json.loads(f.read_text())
         steps = raw.get("steps") or []
         if not steps:
             continue
