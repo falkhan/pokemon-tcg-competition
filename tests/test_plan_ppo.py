@@ -142,3 +142,50 @@ def test_parse_pool_past_token_dropped_when_no_checkpoints(tmp_path,
                                 checkpoint="ck.pt")
     assert specs == [("solver", "lucario")]
     assert weights == pytest.approx([1.0])
+
+
+# --- M22b: resolved-identity dedupe -----------------------------------------
+# B3's mixture declared `solver:.../deck_20dcd3130bc0.csv=0.30` and
+# `solver:lucario=0.15` as two opponents. They are one — that csv is
+# byte-identical to decks/lucario.csv — so 45% of training was a single
+# opponent while the config read 0.30 and 0.15.
+
+def test_parse_pool_merges_specs_that_resolve_to_the_same_deck(monkeypatch):
+    import rl.matchrunner as mr
+    monkeypatch.setattr(mr, "resolve_deck",
+                        lambda d: [1, 2, 3] if d in ("lucario", "alias.csv") else [9])
+    specs, weights = parse_pool(
+        ["solver:alias.csv=0.30", "solver:lucario=0.15", "random:kyogre=0.55"],
+        checkpoint="ck.pt")
+    assert len(specs) == 2, "the two solver entries are one opponent"
+    assert weights == pytest.approx([0.45, 0.55])
+
+
+def test_parse_pool_keeps_distinct_decks_separate(monkeypatch):
+    import rl.matchrunner as mr
+    monkeypatch.setattr(mr, "resolve_deck",
+                        lambda d: {"lucario": [1], "iono": [2], "kyogre": [3]}[d])
+    specs, weights = parse_pool(
+        ["solver:lucario=0.5", "solver:iono=0.25", "random:kyogre=0.25"],
+        checkpoint="ck.pt")
+    assert len(specs) == 3
+    assert weights == pytest.approx([0.5, 0.25, 0.25])
+
+
+def test_parse_pool_same_deck_different_pilot_is_not_merged(monkeypatch):
+    """solver:lucario and rule:lucario share a deck but are different opponents."""
+    import rl.matchrunner as mr
+    monkeypatch.setattr(mr, "resolve_deck", lambda d: [1, 2, 3])
+    specs, weights = parse_pool(["solver:lucario=0.5", "rule:lucario=0.5"],
+                                checkpoint="ck.pt")
+    assert len(specs) == 2
+    assert weights == pytest.approx([0.5, 0.5])
+
+
+def test_parse_pool_unresolvable_deck_does_not_crash(monkeypatch):
+    import rl.matchrunner as mr
+    def _boom(d):
+        raise OSError("no such deck")
+    monkeypatch.setattr(mr, "resolve_deck", _boom)
+    specs, weights = parse_pool(["solver:ghost=1"], checkpoint="ck.pt")
+    assert specs == [("solver", "ghost")] and weights == pytest.approx([1.0])
