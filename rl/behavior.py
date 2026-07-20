@@ -306,7 +306,7 @@ def from_series(a: str, b: str, n: int = 100, seed: int = 1,
     acc = Counter()
 
     def game_fn(fn0, fn1, deck0, deck1, stats):
-        from cg.api import battle_finish, battle_select, battle_start
+        from cg.game import battle_finish, battle_select, battle_start
         obs_dict, start = battle_start(list(deck0), list(deck1))
         if start.errorPlayer >= 0:
             battle_finish()
