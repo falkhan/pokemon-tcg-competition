@@ -152,7 +152,65 @@ Slot budget: **4/day**, 2 used on 07-20 (B2 06:13, B3 08:54 UTC).
 3. Set an explicit accrual **target and decision date**: ~150–300 games/arm. At 2 arms and
    current throughput that is ~4–8 days; each added arm extends it proportionally.
 
-## M22c — the next shippable model (was M22b)
+## M22c — close the out-of-loop gap (rescoped 07-20)
+
+M22b measured a **~30pp out-of-loop collapse** and showed that four generations of mirror gains
+(+8.0pp, resolvable) bought **no measurable out-of-loop gain** (0.2037 → 0.1719, inside a 5.5pp
+MDE). "Scale PPO self-play" is therefore no longer the plan of record: it optimises harder against
+`solver:lucario`, which is 45% of the training mixture and the one number shown to move
+independently of real strength.
+
+Three levers, in the order the evidence supports.
+
+### C1 — inference-time search (IN PROGRESS)
+
+The shipped agent does **zero engine calls** (`submission/main.py:143-193`: encode → plan argmax →
+one forward pass → `argsort`), while `rl/turn_solver.py` — a working within-turn DFS whose
+docstring names our exact failure — ships only under `build_submission.sh --agent rules`.
+
+Built: `wrap_with_solver` (`rl/turn_solver.py`) + the `solved:<ckpt>:<deck>` spec, so it is a
+clean A/B against the plain `model:` pilot. **Lethal tier only** — `ARCHITECTURE.md` forecloses
+widening ("override-style consumption of any eval signal on non-lethal turns | M8.1, M12, M13 |
+five measurements, all below the 0.500 null").
+
+Gates before this can ship: out-of-loop gain > 5.5pp MDE · no mirror regression · **G6 mean move
+< 50ms** (`rl/league.py:353-357`) — the solver's `SOLVE_DEADLINE_S=0.4` is 8× the whole budget, so
+it survives only because `should_solve` gates it to a minority of prompts. Measure, don't assume.
+Shipping also requires `turn_solver.py` in the neural bundle plus re-establishing purity, and
+fixing `ARCHITECTURE.md`'s known-gap #2: `rl/plan.py` is missing from the archive `REQUIRED` check
+and from `test_imports.py`'s purity tier — "the least-protected file on the shipping path".
+
+### C2 — fix the plan representation
+
+`rl/plan.py` is **one-turn, single-target, committed at the first MAIN prompt and never revised**;
+the entire opponent model is `opp_ttk` plus two booleans, computed by dict arithmetic on the
+opponent's current visible active.
+
+- **Spread damage.** `enumerate_plans` cannot represent a multi-KO plan at all. Dragapult solves
+  this with a knapsack-style subset enumeration over the 6-slot board
+  (`sample-agent-dragapult/main.py:216-235`) — the reference implementation.
+- **In-turn re-planning.** The plan is keyed `(turn, seat)` and cached in a module global, so a
+  line that derails one action in leaves the option head conditioned on a stale plan.
+- **Truncation bias.** `MAX_PLAN_CANDS=48` hard-returns (`rl/plan.py:163`) and the target list puts
+  the active before bench, so truncation preferentially drops gust lines.
+- **Hidden information.** Dragapult tracks card counts and serials to deduce prize contents;
+  `rl/memory.py` `OppMemory` is the M21 analogue but much thinner.
+
+### C3 — fix the training distribution
+
+45% of B3's mixture is `solver:lucario` — our own artifact, and the opponent the mirror gate
+measures. That is not self-play; it is fitting a fixed endogenous opponent.
+
+- Population/league training with **exogenous anchors**; `rl/league.py` already has anchors, gates
+  and standings.
+- Entropy/KL annealing already exist — the missing ingredient is opponent *diversity*, not
+  exploration machinery.
+- ⚠️ Constrained by M7.5 ("you become what you train against": mirror-heavy pools regressed
+  G3 0.44→0.145 vs *every* rules pilot) and by the fact that a 5% mixture change is far below what
+  our instruments resolve. Any change here must be paired with an out-of-loop measurement.
+- ⚠️ **Dragapult stays out of every pool** or the instrument that found all this is spent.
+
+## M22d — the next shippable model (was M22b)
 
 Justified by the one hypothesis that survived the power analysis: **PPO > BC**, Gate A kills at
 18–26pp against a 7pp MDE. Extend B3's recipe from `ppo_current_m21legB3.pt`: longer legs,

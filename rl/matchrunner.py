@@ -68,8 +68,8 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model", "ext", "rank", "vsolver") \
-        else spec[1]
+    return spec[2] if spec[0] in ("rule", "model", "solved", "ext", "rank",
+                                  "vsolver") else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -92,6 +92,8 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
     if kind == "model" and len(parts) == 3:
         return ("model", parts[1], parts[2])
+    if kind == "solved" and len(parts) == 3:
+        return ("solved", parts[1], parts[2])
     raise ValueError(f"cannot parse opponent spec {s!r} "
                      "(want kind:deck or rule:agent[:deck] or model:ckpt:deck)")
 
@@ -279,6 +281,13 @@ def make_pilot(spec: OpponentSpec, instance: str):
                         return [int(ranked[0])]
             return inner(od)
         return fnr, ids
+    if kind == "solved":
+        # M22c: the model pilot + the within-turn combo solver. The neural
+        # bundle has shipped a greedy argmax since M11 while turn_solver.py —
+        # written to fix exactly that — shipped only in the rules bundle.
+        from rl.turn_solver import wrap_with_solver
+        inner_fn, ids = make_pilot(("model", spec[1], spec[2]), instance)
+        return wrap_with_solver(inner_fn, ids), ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])

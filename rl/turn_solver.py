@@ -420,6 +420,63 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     return None
 
 
+def wrap_with_solver(inner, deck: list[int], dev: bool = False,
+                     fixes: frozenset = frozenset(), leaf_value=None,
+                     stats: dict | None = None):
+    """ANY inner agent + the within-turn combo solver (M22c).
+
+    Why this exists: the shipped neural bundle is a greedy one-action argmax
+    (submission/main.py:185 `argsort`), which is the exact failure this module
+    was written to fix — "a multi-prize lethal that needs item -> attach ->
+    attack is never assembled" (docstring above). The solver has only ever
+    shipped in the RULES bundle (build_submission.sh --agent rules), so the
+    neural line never got it. M22b measured the cost: on identical decks the
+    company's rule pilots beat our net ~2:1, and four generations of mirror
+    gains moved the out-of-loop number by nothing measurable.
+
+    ORDER MATTERS: `inner` is called on EVERY prompt, before any override.
+    The v4 model pilot runs `memory.observe(obs)` exactly once per own prompt
+    and caches a per-turn plan keyed on (turn, seat); short-circuiting it on
+    solve prompts would silently desync both. So we take the inner action for
+    its side effects and replace only the RESULT when the solver fires.
+
+    Only the LETHAL tier is enabled by default. That bar (>=1 prize or a win,
+    MIN_OVERRIDE_SCORE) is the one that already ships and measurably helped in
+    M7.5. ARCHITECTURE.md forecloses the rest: "Override-style consumption of
+    any eval signal on non-lethal turns | M8.1, M12, M13 | five measurements,
+    all below the 0.500 null." Do not widen without a new argument.
+    """
+    def agent(obs_dict):
+        base = inner(obs_dict)                 # ALWAYS — keeps inner state live
+        obs = to_observation_class(obs_dict)
+        if obs.select is None:
+            return base
+        fired = False
+        if should_solve(obs):
+            try:
+                pick = solve_turn(obs, deck, fixes=fixes, leaf_value=leaf_value)
+            except Exception:
+                pick = None                    # never cost the G1 crash gate
+            if pick is not None:
+                fired = True
+        elif dev and should_solve_dev(obs):
+            try:
+                pick = solve_turn(obs, deck, dev=True, fixes=fixes,
+                                  leaf_value=leaf_value)
+            except Exception:
+                pick = None
+            if pick is not None:
+                fired = True
+        if stats is not None:
+            stats["prompts"] = stats.get("prompts", 0) + 1
+            stats["solver_fired"] = stats.get("solver_fired", 0) + int(fired)
+            if fired:
+                stats["changed"] = stats.get("changed", 0) + int(list(pick) != list(base))
+        return pick if fired else base
+
+    return agent
+
+
 def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False,
                       fixes: frozenset = frozenset()):
     """Generic pilot + within-turn combo solver. `instance` is accepted for

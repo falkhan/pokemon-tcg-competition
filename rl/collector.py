@@ -155,7 +155,8 @@ def _pool_identity(spec):
     Deck-slot position mirrors rl.matchrunner.spec_deck so the two cannot drift.
     """
     from rl.matchrunner import resolve_deck
-    i = 2 if spec[0] in ("rule", "model", "ext", "rank", "vsolver") else 1
+    i = 2 if spec[0] in ("rule", "model", "solved", "ext", "rank",
+                         "vsolver") else 1
     if i >= len(spec):
         return spec
     try:
