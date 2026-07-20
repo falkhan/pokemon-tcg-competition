@@ -67,7 +67,7 @@ from rl.live_monitor import compare, mde, n_needed, read_arms
 # The two arms under test. Champion is context only — NOT a third series
 # (see docs/M22.md: this A/B is B2 vs B3).
 ARMS = {
-    54864089: "M22c-RL — sample-agent teacher",
+    54864190: "M22c-RL — sample-agent teacher",
     54849475: "B3 — KL→0 self-play",
     54846434: "B2 — encoder-v4 + plan-PPO",
 }
@@ -77,7 +77,7 @@ CHAMPION = 54836093          # M20 legB, for reference in the table only
 # slots: normal ΔE 29.0, protan 26.5, contrast ≥3:1 both. Tritan ΔE 7.6 sits in the
 # 6–8 floor band, so direct labels are REQUIRED as secondary encoding — never rely
 # on hue alone here.
-COLOR = {54864089: "#eda100", 54849475: "#2a78d6", 54846434: "#008300"}
+COLOR = {54864190: "#eda100", 54849475: "#2a78d6", 54846434: "#008300"}
 
 INK, INK2, GRID, SURFACE = "#1b1b1b", "#5b5b5b", "#e3e3e0", "#fcfcfb"
 pio.templates["pokedex"] = go.layout.Template(layout=dict(
