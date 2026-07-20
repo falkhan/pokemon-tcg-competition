@@ -105,35 +105,47 @@ def _my_board(player):
     return board + [p for p in player.bench if p is not None]
 
 
-def should_solve(obs) -> bool:
-    """Cheap trigger: fire the (expensive) turn search only when a combo could
-    plausibly pay off. Pure rl.combat dict math, O(board)."""
+def solve_trigger(obs) -> str | None:
+    """Which trigger tier fires here, or None. `should_solve` is the bool view.
+
+    M22c: split out so the budget/trigger tradeoff is measurable per tier. The
+    G6 gate (mean move < 50ms) leaves ~38ms of headroom over the plain neural
+    pilot's 11.5ms, and per-solve cost scales ~linearly with max_nodes, so
+    added_mean = fire_rate x per_solve. Searching deeper REQUIRES firing less
+    often, and you cannot choose what to cut without knowing what fires.
+    """
     if obs.select is None or getattr(obs, "search_begin_input", None) is None:
-        return False
+        return None
     if len(obs.select.option) < 2:
-        return False
+        return None
     st = obs.current
     me, op = st.players[st.yourIndex], st.players[1 - st.yourIndex]
     op_active = op.active[0] if op.active and op.active[0] is not None else None
     if op_active is None or op_active.id not in _CARD:
-        return False
+        return None
     board = _my_board(me)
     if not board:
-        return False
+        return None
     best_now = max(_best_damage(p, op_active) for p in board)
     best_plus = max(_best_damage(p, op_active, extra_energy=1) for p in board)
     if best_plus >= op_active.hp:                                  # T1: KO <=1 attach away
-        return True
+        return "T1_ko_one_attach"
     if (best_now >= op_active.hp - LETHAL_MARGIN                   # T2: a boost trainer
             and any(c.id in _IS_TRAINER for c in me.hand)):        #     might close the gap
-        return True
+        return "T2_trainer_gap"
     if _CARD[op_active.id][4] >= 2 and any(                        # T3: multi-prize in reach
             _hits_to_ko(p, op_active) == 1 and _turns_to_ready(p, op_active) <= 1
             for p in board):
-        return True
+        return "T3_multiprize"
     if len(op.prize) <= 2 and best_plus > 0:                       # T4: game-closing range
-        return True
-    return False
+        return "T4_closing"
+    return None
+
+
+def should_solve(obs) -> bool:
+    """Cheap trigger: fire the (expensive) turn search only when a combo could
+    plausibly pay off. Pure rl.combat dict math, O(board)."""
+    return solve_trigger(obs) is not None
 
 
 def _dev_facts(me, op_active) -> tuple[float, int, int, int, int]:
@@ -427,7 +439,8 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
 def wrap_with_solver(inner, deck: list[int], dev: bool = False,
                      fixes: frozenset = frozenset(), leaf_value=None,
                      stats: dict | None = None, deadline_s: float | None = None,
-                     max_nodes: int | None = None, max_depth: int | None = None):
+                     max_nodes: int | None = None, max_depth: int | None = None,
+                     allow: frozenset | None = None):
     """ANY inner agent + the within-turn combo solver (M22c).
 
     Why this exists: the shipped neural bundle is a greedy one-action argmax
@@ -457,7 +470,10 @@ def wrap_with_solver(inner, deck: list[int], dev: bool = False,
         if obs.select is None:
             return base
         fired = False
-        if should_solve(obs):
+        tier = solve_trigger(obs)
+        if stats is not None and tier:
+            stats[f"trig_{tier}"] = stats.get(f"trig_{tier}", 0) + 1
+        if tier is not None and (allow is None or tier in allow):
             try:
                 pick = solve_turn(obs, deck, deadline_s=deadline_s, fixes=fixes,
                                   leaf_value=leaf_value, max_nodes=max_nodes,
@@ -466,6 +482,8 @@ def wrap_with_solver(inner, deck: list[int], dev: bool = False,
                 pick = None                    # never cost the G1 crash gate
             if pick is not None:
                 fired = True
+                if stats is not None:
+                    stats[f"fire_{tier}"] = stats.get(f"fire_{tier}", 0) + 1
         elif dev and should_solve_dev(obs):
             try:
                 pick = solve_turn(obs, deck, deadline_s=deadline_s, dev=True,

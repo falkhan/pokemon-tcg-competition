@@ -40,6 +40,8 @@ ROOT = Path(__file__).resolve().parent.parent
 # M22c-C1 search budget for the `solved:` spec — see the G6 note in make_pilot.
 SOLVED_DEADLINE_S = 0.05
 SOLVED_MAX_NODES = 120
+SOLVED_ALLOW = None        # None = every trigger tier; frozenset to gate tiers
+SOLVED_STATS = None        # set to a dict to collect trig_*/fire_* counters
 DECK_DIR = ROOT / "decks"
 
 OpponentSpec = tuple
@@ -296,8 +298,10 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # stock 800 nodes / 0.4s deadline took the mean to 116.6ms — 2.3x over.
         # Tightened here rather than globally so make_solver_pilot (the rules
         # bundle, which passes G6 today) keeps its measured behaviour.
+        stats = SOLVED_STATS if SOLVED_STATS is not None else None
         return wrap_with_solver(inner_fn, ids, deadline_s=SOLVED_DEADLINE_S,
-                                max_nodes=SOLVED_MAX_NODES), ids
+                                max_nodes=SOLVED_MAX_NODES,
+                                allow=SOLVED_ALLOW, stats=stats), ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])

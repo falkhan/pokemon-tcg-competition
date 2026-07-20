@@ -180,6 +180,40 @@ Shipping also requires `turn_solver.py` in the neural bundle plus re-establishin
 fixing `ARCHITECTURE.md`'s known-gap #2: `rl/plan.py` is missing from the archive `REQUIRED` check
 and from `test_imports.py`'s purity tier — "the least-protected file on the shipping path".
 
+### C1 status (07-20 EOD queue)
+
+**Solid — the solver is triggering far too loosely.** Per-tier instrumentation
+(`solve_trigger` + `trig_*`/`fire_*` stats), 30 games, single config so no divergence:
+
+| tier | triggered | % prompts | overrode | hit rate |
+|---|---|---|---|---|
+| T1 KO ≤1 attach | 549 | 39.2% | 15 | 2.7% |
+| T2 trainer gap | 149 | 10.6% | 3 | 2.0% |
+| T4 closing | 111 | 7.9% | 1 | 0.9% |
+| T3 multi-prize | **0** | 0% | 0 | never fires |
+| **total** | **809** | **57.8%** | **19** | **2.3%** |
+
+We pay search cost on 57.8% of prompts to change **7 actions in 1400 (0.5%)**. That is the
+latency problem and it explains the modest +3.5pp directly. `should_solve`'s docstring calls
+itself a trigger for "when a combo could plausibly pay off" — at 57.8% it is not that.
+
+**Discarded — my budget sweep was unsound.** Fire counts at 30 games: 120 nodes → 19,
+240 → 1 (seed 5) but 13 (seed 11), 800 → 44. Two flaws: (a) each budget changes actions, so the
+configs play *different games* — this is not a controlled comparison; (b) fires are rare events
+and n=30 cannot separate them. **No conclusion about depth is supported.**
+
+### EOD queue (Piotr on the laptop until then)
+
+1. **Strength resolution, ~4000 games / ~2.5h.** Both arms need ~2000: with plain fixed at n=800
+   the MDE floor is 3.9pp even at infinite n on the solved arm.
+   `plain model:` and `solved:` vs `rule:dragapult`, n=1000 × 2 seeds each.
+2. **Fixed-trajectory budget sweep** — the sound version of the failed diagnostic. Record states
+   from ONE plain-pilot run, then replay the *same* states through each budget and count
+   overrides. No divergence, and far more sample-efficient than replaying whole games.
+3. Only after (2): pick the trigger/budget point. Headroom math — plain 11.5ms of a 50ms gate,
+   per-solve cost ~linear in `max_nodes` — gives: 240 nodes free at the current rate, 400 nodes at
+   75% of it, 800 nodes at 37%. `SOLVED_ALLOW` gates tiers; T3 is free to drop (never fires).
+
 ### C2 — fix the plan representation
 
 `rl/plan.py` is **one-turn, single-target, committed at the first MAIN prompt and never revised**;
