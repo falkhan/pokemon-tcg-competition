@@ -399,7 +399,7 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           opponents: list[str] | None = None,
           opponent_schedule: str | None = None,
           plan_tau: float = 0.0, plan_dirichlet: float = 0.0,
-          plan_coef: float = 0.0,
+          plan_coef: float = 0.0, gust_boost: float = 0.0,
           entropy_anneal_to: float | None = None,
           kl_anneal_to: float | None = None):
     """M21 additions (all default-off = the M20 recipe exactly):
@@ -478,7 +478,7 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             pool=pool, race_shaping=race_shaping, shaping=shaping,
             defect_penalty=defect_penalty,
             plan_tau=plan_tau, plan_dirichlet=plan_dirichlet,
-            plan_ppo=plan_coef > 0,
+            plan_ppo=plan_coef > 0, gust_boost=gust_boost,
             **({"learn_deck": learn_deck} if learn_deck else {}))
         writer.add_scalar("train/defect_rate", defect_rate, it)
         data = load_shards()
@@ -575,6 +575,10 @@ if __name__ == "__main__":
                         "plan recording in the collector")
     p.add_argument("--entropy-anneal-to", type=float, default=None,
                    help="M21: linear entropy_coef target at the last iter")
+    p.add_argument("--gust-boost", type=float, default=0.0,
+                   help="M21 B3: mix this probability onto the Boss's Orders "
+                        "PLAY option when the committed plan needs a gust "
+                        "(guided exploration; 0 = off)")
     p.add_argument("--kl-anneal-to", type=float, default=None,
                    help="M21: linear kl_coef target at the last iter "
                         "(anneal to 0 = pure self-play by leg end)")
@@ -588,5 +592,6 @@ if __name__ == "__main__":
           eval_games=args.eval_games, opponents=args.opponents,
           opponent_schedule=args.opponent_schedule, plan_tau=args.plan_tau,
           plan_dirichlet=args.plan_dirichlet, plan_coef=args.plan_coef,
+          gust_boost=args.gust_boost,
           entropy_anneal_to=args.entropy_anneal_to,
           kl_anneal_to=args.kl_anneal_to)

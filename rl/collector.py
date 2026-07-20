@@ -148,10 +148,14 @@ def parse_pool(items: list[str], checkpoint: str,
     return specs, [w / total for w in weights]
 
 
+_PLAN_GUST_IDX = 18   # encode_plan: v[18] = needs_gust (rl/plan.py)
+_BOSS_ID = 1182       # Boss's Orders (rl/plan.GUST_IDS)
+
+
 def _play_worker(args: tuple) -> tuple:
     (worker_id, n_games, checkpoint, learn_deck_name, learn_decks, specs, weights,
      out_dir, seed, race_shaping, shaping, defect_penalty,
-     plan_tau, plan_dirichlet, plan_ppo) = args
+     plan_tau, plan_dirichlet, plan_ppo, gust_boost) = args
 
     import random
     import torch
@@ -203,6 +207,7 @@ def _play_worker(args: tuple) -> tuple:
         memory = OppMemory()                # learner-seat opponent memory
 
     np_rng = np.random.default_rng(seed)
+    nonlocal_counts = {"boosts": 0}    # gust-boosted option samples (M21 B3)
 
     def run_learner(obs, deck):
         """Sampled decision: (picks, action, logprob, value, sc, sids, opts,
@@ -287,7 +292,24 @@ def _play_worker(args: tuple) -> tuple:
                                         torch.from_numpy(opts).unsqueeze(0))
         logits = logits.squeeze(0)
         probs = torch.softmax(logits, dim=0)
-        action = int(torch.multinomial(probs, 1))
+        sample_probs = probs
+        if (gust_boost > 0 and plan is not None
+                and plan[_PLAN_GUST_IDX] > 0.5 and oids is not None):
+            # M21 B3 deadlock-breaker: the committed plan needs a gust but the
+            # option head has ~zero Boss-play mass (measured 0/793) — no
+            # reward signal can ever reach either head. Guided exploration:
+            # mix a fixed boost onto the Boss PLAY option. old_lp stays the
+            # POLICY logprob (the plan-tau convention): ratio starts at 1 and
+            # the clip bounds each update; the boost only changes WHICH
+            # decisions land in the batch, letting advantage decide if gust
+            # turns are worth keeping.
+            boss = next((i for i, oid in enumerate(oids)
+                         if int(oid[0]) == _BOSS_ID), None)
+            if boss is not None:
+                sample_probs = (1 - gust_boost) * probs
+                sample_probs[boss] += gust_boost
+                nonlocal_counts["boosts"] += 1
+        action = int(torch.multinomial(sample_probs, 1))
         logprob = float(torch.log(probs[action] + 1e-12))
         order = torch.argsort(logits, descending=True).tolist()
         picks = ([action] + [i for i in order if i != action])[:obs.select.maxCount]
@@ -431,7 +453,7 @@ def _play_worker(args: tuple) -> tuple:
         arrays["deck_idx"] = np.array(cols["deck_idx"], dtype=np.int32)
     out = Path(out_dir) / f"ppo_shard_w{worker_id:02d}.npz"
     np.savez_compressed(out, **arrays)
-    return str(out), n_defects, n_games
+    return str(out), n_defects, n_games, nonlocal_counts["boosts"]
 
 
 def _load_population(decks_file) -> list[list[int]]:
@@ -445,7 +467,8 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
             decks_file=None, race_shaping: float = 0.0,
             shaping: str = "race", defect_penalty: float = 0.0,
             plan_tau: float = 0.0, plan_dirichlet: float = 0.0,
-            plan_ppo: bool = False) -> tuple[list[str], float]:
+            plan_ppo: bool = False,
+            gust_boost: float = 0.0) -> tuple[list[str], float]:
     """Collect n_games across n_workers, learning policy vs an opponent pool.
 
     decks_file: population.json — the learner samples a deck per game from it
@@ -463,7 +486,7 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
     per = [n_games // n_workers + (1 if i < n_games % n_workers else 0) for i in range(n_workers)]
     jobs = [(i, per[i], checkpoint, learn_deck, learn_decks, specs, weights,
              str(out_dir), 1000 + i, race_shaping, shaping, defect_penalty,
-             plan_tau, plan_dirichlet, plan_ppo)
+             plan_tau, plan_dirichlet, plan_ppo, gust_boost)
             for i in range(n_workers) if per[i] > 0]
 
     ctx = mp.get_context("spawn")
@@ -472,9 +495,13 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
     shards = [r[0] for r in results]
     total_defects = sum(r[1] for r in results)
     total_games = sum(r[2] for r in results)
+    total_boosts = sum(r[3] for r in results)
     defect_rate = total_defects / max(1, total_games)
     print(f"collect: over-attach actions {total_defects} in {total_games} games "
-          f"= {defect_rate:.2f}/game", flush=True)
+          f"= {defect_rate:.2f}/game"
+          + (f"; gust-boosted samples {total_boosts} "
+             f"= {total_boosts / max(1, total_games):.2f}/game"
+             if gust_boost > 0 else ""), flush=True)
     return shards, defect_rate
 
 
@@ -499,6 +526,9 @@ if __name__ == "__main__":
                    help="M21: Dirichlet(0.5) mix into the plan sampling probs")
     p.add_argument("--plan-ppo", action="store_true",
                    help="M21: record plan decisions for plan-head PPO training")
+    p.add_argument("--gust-boost", type=float, default=0.0,
+                   help="M21 B3: guided Boss-play exploration under committed "
+                        "gust plans (mix probability; 0 = off)")
     args = p.parse_args()
 
     pool_arg = (parse_pool(args.opponents, args.checkpoint, args.learn_deck)
@@ -512,6 +542,7 @@ if __name__ == "__main__":
                             defect_penalty=args.defect_penalty,
                             plan_tau=args.plan_tau,
                             plan_dirichlet=args.plan_dirichlet,
-                            plan_ppo=args.plan_ppo)
+                            plan_ppo=args.plan_ppo,
+                            gust_boost=args.gust_boost)
     dt = time.time() - t0
     print(f"{args.games} games in {dt:.0f}s ({3600 * args.games / dt:.0f} games/hr) -> {shards}")
