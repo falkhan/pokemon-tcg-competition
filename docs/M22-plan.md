@@ -114,10 +114,17 @@ daily slots, and competes for the episode throughput the arms need.
 - **Win/loss contrast for loss anatomy.** `postmortem --batch` was run over losses only; a flag
   appearing equally in wins carries no information. Baseline every flag against the win side
   before it may motivate a leg.
-- **Decontaminate the floors.** `rule:lucario` is simultaneously a floor gate (SKILL.md:41,
-  "no regression vs 0.362") and a 5–10% training opponent (M21.md:208). Either drop it from
-  training pools or replace it as a floor. `dragapult` is the only sample agent absent from
-  `collector.py`, `plan_iter.py`, and `ppo.py` — the cleanest out-of-loop opponent we own.
+- ~~**Decontaminate the floors.**~~ **DECIDED + IN PROGRESS (Piotr, 07-20).** `rule:dragapult`
+  becomes the **generalization floor**; `rule:lucario` is **kept and relabelled** a
+  *training-distribution regression check* (it caught the Gate A collapses and has a
+  five-milestone series — relabel, don't delete). Baseline battery running: B2/B3/champion
+  × 2 seeds × n=400 vs `rule:dragapult`.
+  **Rejected — dropping `rule:lucario` from the pools:** it would not decontaminate existing
+  checkpoints (M22c continues PPO from B3, whose weights already encode the exposure), it takes
+  the mixture to ~90% solver-or-self against the M7.5 precedent (G3 0.44→0.145 vs *every* rules
+  pilot), and a 5% mixture change is far below what our instruments resolve — a blind change with
+  an unverifiable payoff. Full rationale in `docs/DECISIONS.md`.
+  ⚠️ **Dragapult is EVALUATION-ONLY; adding it to a training pool retires it permanently.**
 - **Label instruments honestly.** Head-to-head vs champion is valid for *progress* ("is this
   checkpoint better than the last"), invalid for *live prediction* (endogenous). Both are needed;
   the M21 failure was the mislabeling, not the instrument.
