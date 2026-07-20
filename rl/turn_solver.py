@@ -22,6 +22,7 @@ tests/test_imports.py so the M7.5 submission flip is a two-line change.
 hooking its scorers: the pilot twins (rl/generic_pilot.py / tcg/pilot.py)
 stay byte-identical and parity-pinned (docs/DECISIONS.md).
 """
+import os
 import random
 from collections import namedtuple
 from itertools import combinations
@@ -30,7 +31,7 @@ from time import perf_counter
 from cg.api import (CardType, OptionType, all_card_data, search_begin,
                     search_end, search_step, to_observation_class)
 from rl.combat import (_CARD, UNREACHABLE, _best_damage, _hits_to_ko,
-                       _turns_to_first_ko, _turns_to_ready)
+                       _turns_to_first_ko, _turns_to_ready, threatened)
 from rl.generic_pilot import (_IS_BASIC, _IS_POKEMON, make_generic_pilot,
                               score_option)
 
@@ -71,7 +72,19 @@ W_WIN, W_LOSS, W_DRAW = 1e9, -1e9, -5e8
 W_PRIZE = 100_000        # per prize I take this turn
 W_MY_PRIZE = -150_000    # per prize I concede (self-KO effects)
 W_THREAT = 2_000         # lethal-next-turn setup, x target's prize value
-W_COUNTER = -1_000       # opp active can return-KO my active, x its prize value
+W_COUNTER = -1_000       # opp can return-KO one of my Pokemon, x its prize value
+
+# M22c C2.0 — falsification test. OFF reproduces the historical leaf exactly.
+# ON generalises the counter term from "their active KOs MY ACTIVE" to "their
+# active KOs any of my board", consuming rl.combat.SPREAD_ATTACKS. The M22
+# diagnostic confirmed (p<0.0001) that dragapult puts a third of its damage on
+# our bench, where this term could never look. If flipping this does not move
+# solver:lucario vs rule:dragapult, the representation thesis is wrong and C2
+# stops here having cost a day rather than a milestone.
+# Env-driven so the A/B needs NO mid-run edit: spawn workers re-import from
+# disk and would pick up a half-edited module (the mistake that voided the first
+# C1 battery), but they DO inherit the environment.
+WHOLE_BOARD_THREAT = os.environ.get("M22_WHOLE_BOARD", "0") == "1"
 W_BENCHLESS_KO = -5e8    # ... and my bench is EMPTY: that return-KO ends the GAME,
                          # not a prize — dominates any prize haul (< -W_PRIZE * 6)
 W_DECK_LOW = -5_000      # per card drawn while my deckCount <= 6 (anti-mill)
@@ -300,7 +313,17 @@ def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
                for p in board):
             score += W_THREAT * _CARD[op_active.id][4]              # lethal next turn
         score += W_DAMAGE * max(0, snap.op_active_hp - op_active.hp)
-        if my_active is not None and _best_damage(op_active, my_active) >= my_active.hp:
+        if WHOLE_BOARD_THREAT:
+            # Strict superset: with no spread attack in range this yields exactly
+            # [my_active] or [], i.e. the historical term.
+            at_risk = threatened(op_active, board,
+                                 {p.id for p in board if p is not None})
+            for victim in at_risk:
+                score += W_COUNTER * _CARD.get(victim.id, (0, 0, 0, [], 1))[4]
+            if at_risk and my_active is not None and at_risk[0] is my_active \
+                    and len(board) == 1:
+                score += W_BENCHLESS_KO
+        elif my_active is not None and _best_damage(op_active, my_active) >= my_active.hp:
             score += W_COUNTER * _CARD.get(my_active.id, (0, 0, 0, [], 1))[4]
             if len(board) == 1:          # active only, bench EMPTY: game over, not a prize
                 score += W_BENCHLESS_KO

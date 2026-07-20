@@ -214,3 +214,59 @@ class TestConditionalAttacks:
         # card 10's only attack (107) requires card 5 on board
         monkeypatch.setattr(rc, "CONDITIONAL_ATTACKS", {107: 5})
         monkeypatch.setattr(tc_, "CONDITIONAL_ATTACKS", {107: 5})
+
+
+# --- M22c C2: spread-damage threat model -----------------------------------
+# Our threat model could only ask "can their ACTIVE KO my ACTIVE"; dragapult
+# puts a third of its damage on our bench (M22 diagnostic, p<0.0001).
+
+from tcg.combat import SPREAD_ATTACKS, threatened  # noqa: E402
+
+
+class TestThreatened:
+    def test_reduces_to_active_only_without_a_spread_attack(self):
+        """Strict superset: no spread in range -> exactly the historical test."""
+        att = b.pokemon(1, energies=[FIGHTING])
+        assert [p.id for p in threatened(att, [b.pokemon(5, hp=10)])] == [5]
+
+    def test_returns_empty_when_the_active_survives(self):
+        att = b.pokemon(1, energies=[FIGHTING])
+        assert threatened(att, [b.pokemon(5, hp=999)]) == []
+
+    def test_bench_is_invisible_without_spread(self):
+        """The defect itself, pinned: a one-target attacker threatens no bench."""
+        att = b.pokemon(1, energies=[FIGHTING])
+        out = threatened(att, [b.pokemon(5, hp=999), b.pokemon(4, hp=10)])
+        assert out == [], "no spread attack -> bench must not be counted"
+
+    def test_unaffordable_spread_attack_is_not_a_threat(self, monkeypatch):
+        monkeypatch.setitem(SPREAD_ATTACKS, 101, (200, "any"))
+        att = b.pokemon(1, energies=[])          # cannot pay for anything
+        out = threatened(att, [b.pokemon(5, hp=999), b.pokemon(4, hp=10)])
+        assert out == []
+
+    def test_any_mode_allocates_the_pool_across_several_bench_slots(self, monkeypatch):
+        monkeypatch.setitem(SPREAD_ATTACKS, 101, (60, "any"))
+        att = b.pokemon(1, energies=[FIGHTING])
+        out = threatened(att, [b.pokemon(5, hp=999),
+                               b.pokemon(4, hp=20), b.pokemon(4, hp=30)])
+        assert len(out) == 2, "60 of pool should cover a 20hp and a 30hp bench mon"
+
+    def test_any_mode_stops_when_the_pool_runs_out(self, monkeypatch):
+        monkeypatch.setitem(SPREAD_ATTACKS, 101, (60, "any"))
+        att = b.pokemon(1, energies=[FIGHTING])
+        out = threatened(att, [b.pokemon(5, hp=999),
+                               b.pokemon(4, hp=50), b.pokemon(4, hp=50)])
+        assert len(out) == 1
+
+    def test_one_mode_takes_a_single_target_only(self, monkeypatch):
+        monkeypatch.setitem(SPREAD_ATTACKS, 101, (100, "one"))
+        att = b.pokemon(1, energies=[FIGHTING])
+        out = threatened(att, [b.pokemon(5, hp=999),
+                               b.pokemon(4, hp=10), b.pokemon(4, hp=10)])
+        assert len(out) == 1, "'one' mode hits a single chosen Pokemon"
+
+    def test_curated_table_covers_the_real_bench_threats(self):
+        """154 Phantom Dive / 183 Cruel Arrow / 412 Insta-Strike are the only
+        real bench threats across every deck we face."""
+        assert set(SPREAD_ATTACKS) == {154, 183, 412}

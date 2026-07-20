@@ -141,3 +141,64 @@ def _best_damage(attacker, target, extra_energy: int = 0, board_ids=None) -> int
             dmg = max(0, dmg - 30)
         best = max(best, dmg)
     return best
+
+
+# Spread / multi-target attacks (M22c C2). `cg.api.Attack` exposes only
+# (damage, energies) plus free-form English `text`, so a multi-target effect is
+# invisible to _ATK — which is why our threat model could only ever ask "can
+# their ACTIVE KO my ACTIVE" while dragapult put a third of its damage on our
+# bench (M22 diagnostic, p<0.0001). Curated like CONDITIONAL_ATTACKS above:
+# across EVERY deck in decks/ + data/kaggle/meta_v*, only these are real bench
+# threats. (bench_pool_damage, mode); "any" = distributable across the bench,
+# "one" = a single chosen target. Mirrored in tcg/combat.py — change BOTH.
+SPREAD_ATTACKS = {
+    154: (60, "any"),   # Phantom Dive  — 200 active + 6 counters placed anywhere on the bench
+    183: (100, "one"),  # Cruel Arrow   — 100 to ONE of the opponent's Pokemon (active damage is 0)
+    412: (30, "one"),   # Insta-Strike  — 30 active + 30 to one benched Pokemon
+}
+
+
+def threatened(attacker, defenders, board_ids=None) -> list:
+    """Which of `defenders` (index 0 = the active) `attacker` could KO THIS turn
+    with a single attack, counting spread damage.
+
+    Generalises the active-only check the solver leaf and rl/plan.py both use.
+    With no spread attack available it returns [active] or [] — byte-identical
+    behaviour to the old test — so this is a strict superset.
+
+    APPROXIMATE by design (C2.0 is a falsification test): the pool is taken from
+    the best affordable spread attack and allocated greedily to the cheapest
+    bench KOs, and weakness is NOT applied to bench damage — the printed cards
+    say "Don't apply Weakness and Resistance for Benched Pokemon".
+    """
+    if attacker is None or not defenders or attacker.id not in _CARD:
+        return []
+    out = []
+    active = defenders[0] if defenders else None
+    if active is not None and _best_damage(attacker, active,
+                                           board_ids=board_ids) >= (active.hp or 0):
+        out.append(active)
+    energies = list(getattr(attacker, "energies", ()) or [])
+    pool, mode = 0, "one"
+    for aid in (_CARD[attacker.id][3] or ()):
+        if aid not in _ATK or not _attack_available(aid, board_ids):
+            continue
+        if not _can_afford(energies, _ATK[aid][1]):
+            continue
+        p, m = SPREAD_ATTACKS.get(aid, (0, "one"))
+        if p > pool:
+            pool, mode = p, m
+    bench = [d for d in defenders[1:] if d is not None]
+    if pool > 0 and bench:
+        if mode == "one":
+            hit = min((d for d in bench if pool >= (d.hp or 0)),
+                      key=lambda d: d.hp or 0, default=None)
+            if hit is not None:
+                out.append(hit)
+        else:
+            left = pool
+            for d in sorted(bench, key=lambda x: x.hp or 0):
+                if left >= (d.hp or 0):
+                    left -= (d.hp or 0)
+                    out.append(d)
+    return out
