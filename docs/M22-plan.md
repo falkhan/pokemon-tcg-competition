@@ -214,7 +214,66 @@ and n=30 cannot separate them. **No conclusion about depth is supported.**
    per-solve cost ~linear in `max_nodes` — gives: 240 nodes free at the current rate, 400 nodes at
    75% of it, 800 nodes at 37%. `SOLVED_ALLOW` gates tiers; T3 is free to drop (never fires).
 
-### C2 — fix the plan representation
+### C2 — fix the threat representation (SCOPED 07-20)
+
+**The confirmed defect** (p<0.0001): our opponent model asks only *"can their ACTIVE KO my
+ACTIVE"* — `opp_ttk` + `return_ko` + `concedes`, all computed against `op_active` vs `attacker`
+(`rl/plan.py:106-117`). The solver leaf has the same blindness: `W_COUNTER` is documented as
+"opp active can return-KO my **active**" (`rl/turn_solver.py:74`). Dragapult spreads damage to
+our bench; the median loss puts a third of the damage there, the median lucario game puts none.
+
+**The data problem is small.** `cg.api.Attack` exposes only `(attackId, name, text, damage,
+energies)` — no structural notion of spread; `text` is free-form English and `_ATK` discards it.
+But across every deck we actually face, only **5 attacks** mention bench damage and only **3** are
+real threats:
+
+| id | name | effect |
+|---|---|---|
+| 154 | Phantom Dive | 200 + **6 damage counters anywhere on our bench** |
+| 183 | Cruel Arrow | 100 to **any** of our Pokémon, bench included |
+| 412 | Insta-Strike | 30 + 30 to one benched Pokémon |
+
+So this is a **3-entry curated table**, exactly the `CONDITIONAL_ATTACKS` pattern already at
+`rl/combat.py:26` ("card FACTS the tables can't otherwise see", mirrored in `tcg/`, change BOTH).
+
+#### C2.0 — falsify it cheaply FIRST (no retrain)
+
+Before touching the encoder, test the hypothesis where it costs nothing: extend the **solver
+leaf's** counter term from active-only to whole-board, and measure `solver:lucario` vs
+`rule:dragapult`. The solver is a rule pilot — no training, no migration, results same-day.
+
+- If whole-board threat awareness does **not** help the solver, the representation story is wrong
+  and C2 stops here having cost a day instead of a milestone.
+- If it does help, we have a measured effect size *before* committing to a retrain.
+
+This is the step M21 skipped when it spent a whole leg on the gust "defect".
+
+#### C2.1 — the threat function
+
+`incoming_threat(op, me, board_ids) -> per-slot damage`: their best affordable attack evaluated
+against **every** slot of our board, consuming the spread table. Pure `rl/combat.py`-style dict
+math, bundle-safe (no numpy/torch), mirrored to `tcg/`.
+
+Reuse `_best_damage` (affordability-gated) — not `_charged_best`, per the M22b lesson.
+
+#### C2.2 — feed it to the net (the expensive half)
+
+Two consumers, both width changes:
+- **plan vector** (`PLAN_DIM=27`): add whole-board risk terms — how many of our Pokémon they can
+  KO next turn, and whether that concedes the game.
+- **state encoder**: per-slot incoming-threat features alongside the existing per-slot offence.
+
+Either changes tensor width → **encoder v5 + `migrate_v4_to_v5` zero-init warm start** (the 6th
+use of that invariant) → **a PPO leg to retrain** → **all baselines re-pin**. That is milestone-
+sized, which is exactly why C2.0 must gate it.
+
+#### Explicitly NOT in scope
+
+Making `enumerate_plans` multi-target. Our deck has no spread attack — the defect is *defensive*
+(we cannot see their spread), not offensive. Representing multi-KO plans is only worth it if we
+ever pilot a spreading deck, which is C2d/deck-surgery territory.
+
+### C2 (superseded outline) — fix the plan representation
 
 `rl/plan.py` is **one-turn, single-target, committed at the first MAIN prompt and never revised**;
 the entire opponent model is `opp_ttk` plus two booleans, computed by dict arithmetic on the
