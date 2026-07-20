@@ -46,6 +46,7 @@ def load_shards(ppo_dir: Path = PPO_DIR) -> dict[str, np.ndarray]:
     cols: dict[str, list] = {}
     game_base = 0
     option_base = 0
+    cand_base = 0
     for path in sorted(ppo_dir.glob("ppo_shard_*.npz")):
         z = np.load(path)
         starts = np.cumsum(z["n_options"]) - z["n_options"]
@@ -58,6 +59,14 @@ def load_shards(ppo_dir: Path = PPO_DIR) -> dict[str, np.ndarray]:
                   "plans"):                                 # v3 plan vectors (M20)
             if k in z:
                 cols.setdefault(k, []).append(z[k])
+        if "plan_cands" in z:                               # M21 plan-PPO shards
+            ncands = z["n_plan_cands"]
+            cols.setdefault("cand_starts", []).append(
+                np.cumsum(ncands) - ncands + cand_base)
+            for k in ("plan_cands", "n_plan_cands", "plan_actions",
+                      "plan_logprobs"):
+                cols.setdefault(k, []).append(z[k])
+            cand_base += len(z["plan_cands"])
         option_base += len(z["options"])
         game_base += int(z["game_ids"].max()) + 1
     return {k: np.concatenate(v) for k, v in cols.items()}
@@ -116,6 +125,32 @@ def collate_ppo(data: dict[str, np.ndarray], rows: np.ndarray,
             torch.from_numpy(returns[rows]).float())
 
 
+def collate_plan(data: dict[str, np.ndarray], rows: np.ndarray):
+    """M21 plan-PPO minibatch slice: the subset of `rows` that carry a plan
+    decision (n_plan_cands > 0), padded. Returns None when the shard has no
+    plan columns or the batch has no plan rows; else
+    (sub_idx, plan_cands, plan_valid, plan_actions, plan_logprobs) where
+    sub_idx indexes back into the batch for states/advantages."""
+    if "plan_cands" not in data:
+        return None
+    ncands = data["n_plan_cands"][rows]
+    sub = np.nonzero(ncands > 0)[0]
+    if not len(sub):
+        return None
+    maxM = int(ncands[sub].max())
+    plan_dim = data["plan_cands"].shape[1]
+    cands = torch.zeros(len(sub), maxM, plan_dim)
+    valid = torch.zeros(len(sub), maxM, dtype=torch.bool)
+    for j, bi in enumerate(sub):
+        r = rows[bi]
+        cs, m = data["cand_starts"][r], data["n_plan_cands"][r]
+        cands[j, :m] = torch.from_numpy(data["plan_cands"][cs:cs + m])
+        valid[j, :m] = True
+    return (torch.from_numpy(sub).long(), cands, valid,
+            torch.from_numpy(data["plan_actions"][rows][sub]).long(),
+            torch.from_numpy(data["plan_logprobs"][rows][sub]).float())
+
+
 # ---------------------------------------------------------------------------
 # THE CORE — Piotr's part
 # ---------------------------------------------------------------------------
@@ -166,7 +201,8 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
                data: dict[str, np.ndarray], advantages: np.ndarray,
                returns: np.ndarray, epochs: int = 4, batch_size: int = 256,
                entropy_coef: float = ENTROPY_COEF,
-               ref_model=None, kl_coef: float = 0.0) -> dict:
+               ref_model=None, kl_coef: float = 0.0,
+               plan_coef: float = 0.0) -> dict:
     """The clipped PPO update over all collected decisions.
 
     Per minibatch (use collate_ppo above; shuffle rows each epoch):
@@ -188,6 +224,9 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
     logs = {"policy_loss": [], "value_loss": [], "entropy": [], "ratio": []}
     if kl_coef:
         logs["kl"] = []
+    if plan_coef:
+        logs["plan_loss"] = []
+        logs["plan_entropy"] = []
 
     for _ in range(epochs):
         perm = np.random.permutation(n)
@@ -216,6 +255,39 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
             # instead of the documented additive PPO objective.
             loss = policy_loss + VALUE_COEF * value_loss - entropy_coef * entropy
 
+            if plan_coef:
+                # M21 plan-PPO: same clipped surrogate over the plan head for
+                # the rows that carry a plan decision. The plan action shares
+                # its first-MAIN option row's advantage (same state, zero
+                # reward in between — no separate GAE step, compute_gae is
+                # untouched). NOT covered by the KL anchor below: the anchor
+                # would pin the plan head to the BC prior, which is exactly
+                # the never-gusts behavior this term exists to escape; a plan
+                # entropy bonus guards against collapse instead.
+                pb = collate_plan(data, rows)
+                if pb is not None:
+                    sub, cands, pvalid, pactions, p_old_lp = pb
+                    plan_logits = model.plan_logits(states[sub],
+                                                    None if state_ids is None
+                                                    else state_ids[sub], cands)
+                    plan_logits = plan_logits.masked_fill(~pvalid, -1e9)
+                    p_logp = torch.log_softmax(plan_logits, dim=1)
+                    p_new_lp = p_logp.gather(
+                        1, pactions.unsqueeze(1)).squeeze(1)
+                    p_ratio = torch.exp(p_new_lp - p_old_lp)
+                    p_adv = adv_b[sub]
+                    p_unclipped = p_ratio * p_adv
+                    p_clipped = torch.clamp(p_ratio, 1 - CLIP_EPS,
+                                            1 + CLIP_EPS) * p_adv
+                    plan_loss = -torch.min(p_unclipped, p_clipped).mean()
+                    p_probs = p_logp.exp()
+                    plan_entropy = -(p_probs * p_logp).masked_fill(
+                        ~pvalid, 0.0).sum(dim=1).mean()
+                    loss = loss + plan_coef * plan_loss \
+                        - entropy_coef * plan_entropy
+                    logs["plan_loss"].append(plan_loss.item())
+                    logs["plan_entropy"].append(plan_entropy.item())
+
             if ref_model is not None and kl_coef:
                 # M20 KL-anchor (the M8-plan leg C, finally spent): a rubber
                 # band to the frozen start policy. KL(pi_new || pi_ref) over
@@ -242,7 +314,9 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
             logs["value_loss"].append(value_loss.item())
             logs["entropy"].append(entropy.item())
             logs["ratio"].append(ratio.mean().item())
-    return {k: float(np.mean(v)) for k, v in logs.items()}
+    # drop keys that never collected a value (e.g. plan_coef on but the data
+    # carries no plan columns) — np.mean([]) is a nan trap
+    return {k: float(np.mean(v)) for k, v in logs.items() if v}
 
 # ---------------------------------------------------------------------------
 # Iteration loop (infra, done)
@@ -269,12 +343,15 @@ def _load_model(ckpt_path: Path):
     id-embedding table (M7.3), else v1."""
     sd = torch.load(ckpt_path, map_location="cpu")
     if "plan_enc.0.weight" in sd:                       # M20: v3 support
-        from rl.encoders import EMBED_DIM, N_CONTEXTS, STATE_V2_DIM
+        from rl.encoders import (EMBED_DIM, N_CONTEXTS, STATE_V2_DIM,
+                                 V4_EXTRA_DIM)
         from rl.plan import PLAN_DIM
         from rl.policy import option_dim_of
+        extra = V4_EXTRA_DIM if "enc_ver" in sd else 0  # M21: v4 sniff
         n_ids = (sd["state_enc.0.weight"].shape[1] - STATE_V2_DIM - N_CONTEXTS
-                 - PLAN_DIM) // EMBED_DIM
-        model = OptionScorerV3(n_state_ids=n_ids, option_dim=option_dim_of(sd))
+                 - extra - PLAN_DIM) // EMBED_DIM
+        model = OptionScorerV3(n_state_ids=n_ids, option_dim=option_dim_of(sd),
+                               extra_dim=extra)
     elif "embedding.weight" in sd:
         model = OptionScorerV2()
     else:
@@ -318,10 +395,45 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           eval_deck: str = "kyogre", entropy_coef: float = ENTROPY_COEF,
           race_shaping: float = 0.0, shaping: str = "race",
           defect_penalty: float = 0.0, kl_coef: float = 0.0,
-          learn_deck: str | None = None, tag: str = "", eval_games: int = 200):
+          learn_deck: str | None = None, tag: str = "", eval_games: int = 200,
+          opponents: list[str] | None = None,
+          opponent_schedule: str | None = None,
+          plan_tau: float = 0.0, plan_dirichlet: float = 0.0,
+          plan_coef: float = 0.0,
+          entropy_anneal_to: float | None = None,
+          kl_anneal_to: float | None = None):
+    """M21 additions (all default-off = the M20 recipe exactly):
+    opponents        — 'spec=weight' mixture for the collector (rl/collector
+                       parse_pool syntax incl. mirror=/past= tokens)
+    opponent_schedule— JSON file [{"until_iter": N, "opponents": [...]}, ...];
+                       first entry with it < until_iter wins over `opponents`
+    plan_tau/plan_dirichlet — plan-level exploration at collection
+    plan_coef        — plan-head clipped-surrogate weight in ppo_update
+                       (turns on plan recording in the collector)
+    entropy_anneal_to/kl_anneal_to — linear per-iteration anneal targets for
+                       entropy_coef / kl_coef across the leg."""
+    import json as _json
+
     from torch.utils.tensorboard import SummaryWriter
+    from rl.collector import parse_pool
     from rl.eval import play_games
     from rl.teacher import load_teacher
+
+    schedule = (_json.loads(Path(opponent_schedule).read_text())
+                if opponent_schedule else None)
+
+    def _mix_for(it: int) -> list[str] | None:
+        if schedule:
+            for entry in schedule:
+                if it < int(entry["until_iter"]):
+                    return entry["opponents"]
+            return schedule[-1]["opponents"]
+        return opponents
+
+    def _annealed(base: float, target: float | None, it: int) -> float:
+        if target is None or iterations <= 1:
+            return base
+        return base + (target - base) * it / (iterations - 1)
 
     suffix = f"_{tag}" if tag else ""       # M20: namespace runs so the M8-era
     writer = SummaryWriter(str(ROOT / "runs" / f"ppo{suffix}"))  # artifacts survive
@@ -356,10 +468,17 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             old.unlink()                                # on-policy: stale data is poison
         work = CKPT_DIR / f"ppo_current{suffix}.pt"
         torch.save(model.state_dict(), work)
+        mix = _mix_for(it)
+        pool = (parse_pool(mix, str(work), learn_deck or "kyogre")
+                if mix else None)
+        if mix:
+            print(f"iter {it}: opponent mix {mix}", flush=True)
         _, defect_rate = collect(
             games_per_iter, str(work), workers, decks_file=decks_file,
-            race_shaping=race_shaping, shaping=shaping,
+            pool=pool, race_shaping=race_shaping, shaping=shaping,
             defect_penalty=defect_penalty,
+            plan_tau=plan_tau, plan_dirichlet=plan_dirichlet,
+            plan_ppo=plan_coef > 0,
             **({"learn_deck": learn_deck} if learn_deck else {}))
         writer.add_scalar("train/defect_rate", defect_rate, it)
         data = load_shards()
@@ -371,13 +490,19 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             adv, ret = compute_gae(data["rewards"][rows], data["values"][rows])
             advantages[rows], returns[rows] = adv, ret
 
-        # 3. clipped update  [Piotr's ppo_update; M20 adds the KL anchor]
+        # 3. clipped update (M20 KL anchor; M21 plan surrogate + anneals)
+        ec_it = _annealed(entropy_coef, entropy_anneal_to, it)
+        kl_it = _annealed(kl_coef, kl_anneal_to, it) if kl_coef else 0.0
         stats = ppo_update(model, opt, data, advantages, returns,
-                           entropy_coef=entropy_coef,
-                           ref_model=ref_model, kl_coef=kl_coef)
+                           entropy_coef=ec_it,
+                           ref_model=ref_model, kl_coef=kl_it,
+                           plan_coef=plan_coef)
         for k, v in stats.items():
             writer.add_scalar(f"train/{k}", v, it)
-        print(f"iter {it}: defect/g {defect_rate:.2f}  {stats}", flush=True)
+        writer.add_scalar("train/entropy_coef", ec_it, it)
+        writer.add_scalar("train/kl_coef", kl_it, it)
+        print(f"iter {it}: defect/g {defect_rate:.2f}  ec {ec_it:.4f}  "
+              f"kl_coef {kl_it:.3f}  {stats}", flush=True)
 
         # 4. periodic evaluation + promotion vs the fixed goal opponent
         if (it + 1) % eval_every == 0:
@@ -433,6 +558,26 @@ if __name__ == "__main__":
     p.add_argument("--eval-games", type=int, default=200,
                    help="games per baseline/promotion eval (sequential — the "
                         "wall-clock bottleneck; smoke runs use small values)")
+    p.add_argument("--opponents", type=str, nargs="*", default=None,
+                   help="M21: 'spec=weight' collector mixture "
+                        "(mirror=/past= tokens; default = default_pool)")
+    p.add_argument("--opponent-schedule", type=str, default=None,
+                   help="M21: JSON file [{'until_iter': N, 'opponents': "
+                        "[...]}, ...] — overrides --opponents per iteration")
+    p.add_argument("--plan-tau", type=float, default=0.0,
+                   help="M21: plan sampling temperature at collection "
+                        "(0 = greedy argmax, the M20 behavior)")
+    p.add_argument("--plan-dirichlet", type=float, default=0.0,
+                   help="M21: Dirichlet(0.5) mix into plan sampling")
+    p.add_argument("--plan-coef", type=float, default=0.0,
+                   help="M21: plan-head clipped-surrogate weight (0 = plan "
+                        "head untrained, the M20 behavior); also turns on "
+                        "plan recording in the collector")
+    p.add_argument("--entropy-anneal-to", type=float, default=None,
+                   help="M21: linear entropy_coef target at the last iter")
+    p.add_argument("--kl-anneal-to", type=float, default=None,
+                   help="M21: linear kl_coef target at the last iter "
+                        "(anneal to 0 = pure self-play by leg end)")
     args = p.parse_args()
     train(args.iterations, args.games_per_iter, args.workers, lr=args.lr,
           start=args.start, value_ckpt=args.value_ckpt, decks_file=args.decks,
@@ -440,4 +585,8 @@ if __name__ == "__main__":
           race_shaping=args.race_shaping, shaping=args.shaping,
           eval_every=args.eval_every, defect_penalty=args.defect_penalty,
           kl_coef=args.kl_coef, learn_deck=args.learn_deck, tag=args.tag,
-          eval_games=args.eval_games)
+          eval_games=args.eval_games, opponents=args.opponents,
+          opponent_schedule=args.opponent_schedule, plan_tau=args.plan_tau,
+          plan_dirichlet=args.plan_dirichlet, plan_coef=args.plan_coef,
+          entropy_anneal_to=args.entropy_anneal_to,
+          kl_anneal_to=args.kl_anneal_to)

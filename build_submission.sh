@@ -62,6 +62,10 @@ echo "\e[36m[1/3] Export artifacts (tcg.shipping export ${EXPORT_ARGS[*]})\e[0m"
 echo "\e[36m[2/3] Gates (tcg.shipping gate --agent $AGENT)\e[0m"
 "${PY[@]}" -m tcg.shipping gate --agent "$AGENT"
 
+# M21: encoder-v4 bundles ship rl/memory.py (export copies it iff the
+# checkpoint carries the enc_ver buffer) — require it in the archive then.
+[[ -f "$SUB_DIR/rl/memory.py" ]] && REQUIRED+=(rl/memory.py)
+
 echo "\e[36m[3/3] Package\e[0m"
 mkdir -p dist
 STAMP=$(date +%Y%m%d_%H%M%S)

@@ -105,11 +105,15 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
             from tcg.encoders import (EMBED_DIM, N_CONTEXTS, N_OPTION_IDS,
                                       STATE_V2_DIM)
             from tcg.network import PLAN_DIM
+            extra = 0
+            if "enc_ver" in state_dict:            # M21 encoder-v4 checkpoint
+                from rl.encoders import V4_EXTRA_DIM as extra
             n_ids = (state_dict["state_enc.0.weight"].shape[1]
-                     - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
+                     - STATE_V2_DIM - N_CONTEXTS - extra - PLAN_DIM) // EMBED_DIM
             opt_dim = (state_dict["option_enc.0.weight"].shape[1]
                        - N_OPTION_IDS * EMBED_DIM)   # M16: legacy | identity
-            model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
+            model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim,
+                                   extra_dim=extra)
         elif "embedding.weight" in state_dict:
             model = OptionScorerV2()
         else:
@@ -134,6 +138,8 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
     names = ["__init__.py", "combat.py", "encoders.py"]
     if isinstance(model, OptionScorerV3):
         names.append("plan.py")                    # v3: plan enumeration ships
+    if getattr(model, "extra_dim", 0) > 0:
+        names.append("memory.py")                  # M21 v4: OppMemory ships
     for name in names:
         shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
     np.save(str(rl_pkg / "card_features.npy"), FEAT)
@@ -172,15 +178,19 @@ def parity_check(main_path: str = SUBMISSION_MAIN) -> float:
 
     if "plan_enc.0.weight" in weights:             # M11 v3: forward AND plan head
         from tcg.network import PLAN_DIM
+        extra = 0
+        if "enc_ver" in weights:                   # M21 v4 export
+            from rl.encoders import V4_EXTRA_DIM as extra
         n_ids = (weights["state_enc.0.weight"].shape[1]
                  - encoders.STATE_V2_DIM - encoders.N_CONTEXTS
-                 - PLAN_DIM) // encoders.EMBED_DIM   # M15: 12 or 20
+                 - extra - PLAN_DIM) // encoders.EMBED_DIM  # M15: 12|20, M21: 25
         opt_dim = (weights["option_enc.0.weight"].shape[1]
                    - encoders.N_OPTION_IDS * encoders.EMBED_DIM)  # M16 width
-        model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim)
+        model = OptionScorerV3(n_state_ids=n_ids, option_dim=opt_dim,
+                               extra_dim=extra)
         model.load_state_dict(torch_weights)
-        state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS,
-                               dtype=np.float32)
+        state_ctx = rng.random(encoders.STATE_V2_DIM + encoders.N_CONTEXTS
+                               + extra, dtype=np.float32)
         plan = rng.random(PLAN_DIM, dtype=np.float32)
         state_ids = rng.integers(0, encoders.N_CARD_IDS, size=n_ids)
         options = rng.random((9, opt_dim), dtype=np.float32)
@@ -274,6 +284,49 @@ def encoder_parity_check(steps: int = 40) -> int:
     return compared
 
 
+def memory_parity_check(steps: int = 60) -> int:
+    """M21 v4 bundles: drive a real game with the SHIPPED agent on seat 0 and
+    assert its accumulated OppMemory encoding equals a training-side reference
+    (rl.memory + rl.encoders) fed the exact same per-seat log stream. Random
+    weight-parity can't catch memory-accumulation drift — it has no history.
+    No-ops (returns 0) for pre-v4 bundles."""
+    from cg.api import to_observation_class
+    from cg.game import battle_start, battle_select, battle_finish
+
+    sub = load_submission_module()
+    if not getattr(sub, "_IS_V4", False):
+        return 0
+    from rl.encoders import encode_ctx_v4
+    from rl.memory import OppMemory
+
+    ref_mem = OppMemory()
+    deck = sub.DECK
+    obs_dict, _ = battle_start(list(deck), list(deck))
+    compared = 0
+    try:
+        for _ in range(steps):
+            if obs_dict["current"]["result"] >= 0:
+                break
+            seat = obs_dict["current"]["yourIndex"]
+            if seat == 0:
+                picks = sub.agent(obs_dict)      # observes sub._MEM internally
+                obs = to_observation_class(obs_dict)
+                ref_mem.observe(obs)
+                ref_ctx, ref_ids = encode_ctx_v4(obs, list(deck), ref_mem)
+                sub_ctx, sub_ids = sub.encode_ctx_v4(obs, list(deck), sub._MEM)
+                assert np.array_equal(ref_ctx, sub_ctx) and \
+                    np.array_equal(ref_ids, sub_ids), \
+                    "OppMemory accumulation drift: bundle vs training encoders"
+                compared += 1
+            else:
+                n = obs_dict["select"]["maxCount"]
+                picks = list(range(n))
+            obs_dict = battle_select([int(i) for i in picks])
+    finally:
+        battle_finish()
+    return compared
+
+
 def deck_check(base: str = "submission") -> int:
     """Shipped deck.csv is a legal deck. Returns deck size."""
     from tcg.deck_search import validate_deck
@@ -347,6 +400,9 @@ def main_neural() -> None:
         decisions = bundle_isolation_check("submission")
         print(f"bundle isolation OK (self-contained; {decisions} decisions, "
               f"no polars/torch)")
+        n_mem = memory_parity_check()
+        if n_mem:
+            print(f"memory parity OK (v4 OppMemory, {n_mem} prompts compared)")
     else:
         n_compared = encoder_parity_check()
         print(f"encoder parity OK ({n_compared} decisions compared)")

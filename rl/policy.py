@@ -142,18 +142,23 @@ class OptionScorerV3(nn.Module):
 
     def __init__(self, hidden: int = 256, embed: int = EMBED_DIM,
                  plan_dim: int | None = None, n_state_ids: int = N_STATE_IDS,
-                 option_dim: int = OPTION_V2_DIM):
+                 option_dim: int = OPTION_V2_DIM, extra_dim: int = 0):
         super().__init__()
         if plan_dim is None:
             from rl.plan import PLAN_DIM
             plan_dim = PLAN_DIM
         self.plan_dim = plan_dim
-        self.n_state_ids = n_state_ids     # M15: 12 legacy | 20 hand-aware
+        self.n_state_ids = n_state_ids     # M15: 12 legacy | 20 hand-aware | 25 v4
         self.option_dim = option_dim       # M16: OPTION_V2_DIM legacy | OPTION_V3_DIM
+        self.extra_dim = extra_dim         # M21: V4_EXTRA_DIM appended to state_ctx
+        if extra_dim > 0:
+            # explicit version marker — v4's extra ids make width-sniffing
+            # ambiguous; rides into checkpoints AND the npz via state_dict()
+            self.register_buffer("enc_ver", torch.tensor(4.0))
         self.embedding = nn.Embedding(N_CARD_IDS, embed, padding_idx=0)
         self.state_enc = nn.Sequential(
-            nn.Linear(STATE_V2_DIM + N_CONTEXTS + plan_dim + n_state_ids * embed,
-                      hidden),
+            nn.Linear(STATE_V2_DIM + N_CONTEXTS + extra_dim + plan_dim
+                      + n_state_ids * embed, hidden),
             nn.ReLU(),
             nn.Linear(hidden, hidden), nn.ReLU(),
         )

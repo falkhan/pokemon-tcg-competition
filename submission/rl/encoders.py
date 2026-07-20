@@ -484,3 +484,149 @@ def encode_option_v2_legacy(opt, obs) -> tuple[np.ndarray, np.ndarray]:
         target_id = _card_id_at(obs, opt.inPlayArea, opt.inPlayIndex, your_index)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return encode_option(opt, obs), ids
+
+
+# --- Encoder v4 (M21) — full observable state + opponent memory -------------
+# Appended AFTER the context one-hot: state_ctx becomes
+#   [STATE_V2_DIM numeric | N_CONTEXTS one-hot | V4_EXTRA_DIM block]
+# and ids become [12 board | 8 hand | N_MEM_IDS opponent-memory]. The v3
+# prefix stays byte-identical, so migrate_v3_to_v4 (rl/plan_iter.py) is a pure
+# column shuffle with zero-init v4 columns (the M11/M15/M16 warm-start
+# invariant). The memory half lives in rl/memory.py (OppMemory); the constants
+# live HERE as the single source of truth (memory imports them — never the
+# reverse, to keep the import graph acyclic).
+from cg.api import CardType as _CardType, all_card_data as _v4_card_data  # noqa: E402
+
+N_MEM_IDS = 5        # last-4 opp played card ids + last opp attacker id
+N_MEM_ATTACH_HOT = 7  # opp's last energy-attach target: none + active + bench 0..4
+# [last-attack dmg/cost/eff 3 | attach-target one-hot 7 | attacked/passed/total 3
+#  | known-hand count 1 | extra-draw intensity 1 | known-hand FEAT pool]
+N_MEM = 3 + N_MEM_ATTACH_HOT + 3 + 1 + 1 + FEAT_DIM
+
+N_SLOT_EXTRA = 5     # appearThisTurn, evo-stack, special-energy, ready, best-dmg
+N_GLOBAL_EXTRA = 8
+N_SELECT_EXTRA = 4 + 2 * FEAT_DIM   # min/max/damage/energy counts + effect + contextCard
+V4_EXTRA_DIM = (N_MEM + 2 * (1 + N_BENCH) * N_SLOT_EXTRA + 2 * FEAT_DIM
+                + 2 * (FEAT_DIM + 1) + N_GLOBAL_EXTRA + N_SELECT_EXTRA)
+N_STATE_IDS_V4 = N_STATE_IDS_V3 + N_MEM_IDS
+
+_SPECIAL_ENERGY_IDS = frozenset(
+    c.cardId for c in _v4_card_data() if c.cardType == _CardType.SPECIAL_ENERGY)
+
+
+def _v4_slots(ps):
+    active = ps.active[0] if ps.active else None
+    bench = list(ps.bench)[:N_BENCH]
+    bench += [None] * (N_BENCH - len(bench))
+    return [active] + bench
+
+
+def _slot_extras(state) -> np.ndarray:
+    """12 slots x N_SLOT_EXTRA: [appearThisTurn, len(preEvolution)/2,
+    n special energies/3, attack-ready NOW, best affordable dmg/300].
+
+    The last two make bench strength/readiness salient per-slot — the M21
+    forensic retreat/promote defect (23/25 misses) was a policy failure, but
+    v3 only exposed readiness pooled across the board (n_ready, race block)."""
+    me = state.players[state.yourIndex]
+    op = state.players[1 - state.yourIndex]
+    out = np.zeros(2 * (1 + N_BENCH) * N_SLOT_EXTRA, dtype=np.float32)
+    i = 0
+    for ps, other in ((me, op), (op, me)):
+        target = other.active[0] if other.active else None
+        board = {p.id for p in _v4_slots(ps) if p is not None}
+        for p in _v4_slots(ps):
+            if p is not None:
+                out[i] = float(getattr(p, "appearThisTurn", False))
+                out[i + 1] = len(getattr(p, "preEvolution", None) or ()) / 2.0
+                out[i + 2] = sum(1 for c in getattr(p, "energyCards", None) or ()
+                                 if c is not None and c.id in _SPECIAL_ENERGY_IDS) / 3.0
+                dmg = _best_damage(p, target, board_ids=board)
+                out[i + 3] = float(dmg > 0)     # can attack NOW (affordable)
+                out[i + 4] = dmg / 300.0
+            i += N_SLOT_EXTRA
+    return out
+
+
+def _special_energy_pools(state) -> np.ndarray:
+    """Pooled FEAT of attached SPECIAL energies per side — v3 collapses
+    attachments to plain EnergyType counts, erasing special-energy identity."""
+    pools = []
+    for ps in (state.players[state.yourIndex], state.players[1 - state.yourIndex]):
+        cards = [c for p in _v4_slots(ps) if p is not None
+                 for c in getattr(p, "energyCards", None) or ()
+                 if c is not None and c.id in _SPECIAL_ENERGY_IDS]
+        pools.append(_pool(cards))
+    return np.concatenate(pools)
+
+
+def _prize_pools(state) -> np.ndarray:
+    """Per side: pooled FEAT of face-up prize cards + face-up count/6 —
+    v3 only sees prize COUNTS."""
+    parts = []
+    for ps in (state.players[state.yourIndex], state.players[1 - state.yourIndex]):
+        face_up = [c for c in (ps.prize or []) if c is not None]
+        parts.append(np.concatenate([_pool(face_up),
+                                     [np.float32(len(face_up) / 6.0)]]))
+    return np.concatenate(parts).astype(np.float32)
+
+
+def _global_extras(state) -> np.ndarray:
+    me = state.players[state.yourIndex]
+    op = state.players[1 - state.yourIndex]
+    return np.array([
+        op.deckCount / 60.0,
+        getattr(me, "benchMax", 5) / 5.0,
+        getattr(op, "benchMax", 5) / 5.0,
+        float(getattr(state, "stadiumPlayed", False)),
+        float(getattr(state, "retreated", False)),
+        min(getattr(state, "turnActionCount", 0) or 0, 10) / 10.0,
+        float(getattr(state, "firstPlayer", 0) == state.yourIndex),
+        me.handCount / 15.0,
+    ], dtype=np.float32)
+
+
+def _select_extras(select) -> np.ndarray:
+    """Selection constraints + the cards driving the current sub-prompt —
+    v3 submenu decisions couldn't see WHOSE effect was resolving or how many
+    picks were required."""
+    v = np.zeros(N_SELECT_EXTRA, dtype=np.float32)
+    v[0] = min(getattr(select, "minCount", 0) or 0, 10) / 10.0
+    v[1] = min(getattr(select, "maxCount", 0) or 0, 10) / 10.0
+    v[2] = min(getattr(select, "remainDamageCounter", 0) or 0, 10) / 10.0
+    v[3] = min(getattr(select, "remainEnergyCost", 0) or 0, 5) / 5.0
+    effect = getattr(select, "effect", None)
+    if effect is not None:
+        v[4:4 + FEAT_DIM] = FEAT[effect.id]
+    context_card = getattr(select, "contextCard", None)
+    if context_card is not None:
+        v[4 + FEAT_DIM:4 + 2 * FEAT_DIM] = FEAT[context_card.id]
+    return v
+
+
+def encode_v4_block(obs, memory) -> np.ndarray:
+    """The V4_EXTRA_DIM appended block. `memory` is an rl.memory.OppMemory
+    (already observe()d for this prompt); duck-typed to avoid an import cycle."""
+    state = obs.current
+    return np.concatenate([
+        memory.features(state),
+        _slot_extras(state),
+        _special_energy_pools(state),
+        _prize_pools(state),
+        _global_extras(state),
+        _select_extras(obs.select),
+    ]).astype(np.float32)
+
+
+def encode_ctx_v4(obs, my_deck: list[int], memory) -> tuple[np.ndarray, np.ndarray]:
+    """One call for the full v4 network input: (state_ctx, state_ids).
+
+    state_ctx = [STATE_V2_DIM | N_CONTEXTS | V4_EXTRA_DIM]  (f32)
+    state_ids = [12 board | 8 hand | N_MEM_IDS]             (i32)
+
+    Callers must OppMemory.observe(obs) exactly once per own prompt BEFORE
+    encoding (the logs contract, rl/memory.py docstring)."""
+    numeric, ids = encode_state_v3(obs.current, my_deck)
+    state_ctx = np.concatenate([numeric, encode_context(obs.select.context),
+                                encode_v4_block(obs, memory)])
+    return state_ctx, np.concatenate([ids, memory.ids()])
