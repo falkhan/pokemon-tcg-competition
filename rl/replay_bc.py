@@ -461,31 +461,103 @@ def _latest_snapshot() -> Path:
 
 
 def meta_eval(a: str, snapshot: Path | None = None, n: int = 60,
-              workers: int = 8, seed: int = 0, checkpoint: str | None = None) -> dict:
-    """Play spec `a` against every deck of a meta snapshot, piloted by our
-    solver ("each archetype played competently"). Prints per-archetype win
-    rate and the manifest-weighted mean — the M10 "meta score"."""
-    from rl.matchrunner import parse_spec, run_pairs, series_wr
+              workers: int = 8, seed: int = 0, checkpoint: str | None = None,
+              exclude_mirror: bool = True, min_games: int = 3) -> dict:
+    """Play spec `a` against the OFF-MIRROR archetypes of a meta snapshot.
+
+    M22b retarget. The old form played every snapshot deck at equal n and
+    reported a manifest-weighted mean. Two defects made that number worse than
+    useless:
+
+    1. **Its dominant cell IS the mirror gate.** `deck_20dcd3130bc0.csv` (weight
+       0.899) is byte-identical to `decks/lucario.csv` — md5 aef8da62… — and both
+       sides are solver-piloted. So ~90% of the "meta score" re-measured, at n=60,
+       exactly what the mirror gate measures at n=800. There was never a
+       mirror-vs-meta trade: one quantity, two replicates, and the disagreement
+       between them was read as signal across M18 and M21.
+    2. **The weighted mean laundered precision.** Sum(w_i^2) = 0.815 gives an
+       effective n of 147 for 480 games spent — 69% of the compute wasted — and an
+       MDE of 16.3pp. B2 shipped on a 4.4pp edge from this instrument (z=0.68, 11%
+       power), and its two seeds spanned 8.2pp, which is 1.00 SD of what the
+       instrument produces by chance.
+
+    So: drop any snapshot deck identical to the deck `a` pilots (the mirror gate
+    covers it properly), drop archetypes seeded on fewer than `min_games` observed
+    games (meta_v2's 4th deck came from a SINGLE game), and spend the whole budget
+    on what is left — the only part of the field mirror cannot see.
+
+    Reports a PANEL with per-cell CIs, not a weighted scalar. `tail_score` is
+    returned but is explicitly only over the surviving decks; `coverage` says what
+    fraction of the frozen field that is. Never quote tail_score as a whole-field
+    number.
+    """
+    import math
+
+    from rl.matchrunner import (parse_spec, resolve_deck, run_pairs, series_wr,
+                                spec_deck)
 
     snap = Path(snapshot) if snapshot else _latest_snapshot()
     manifest = json.loads((snap / "manifest.json").read_text())
     decks = manifest["decks"]
     spec_a = parse_spec(a)
-    pairs = [(spec_a, ("solver", str(snap / d["csv"])), n) for d in decks]
+    total_w = sum(d["weight"] for d in decks) or 1.0
+
+    try:
+        own = tuple(sorted(resolve_deck(spec_deck(spec_a))))
+    except (OSError, ValueError, TypeError, IndexError):
+        own = None
+
+    keep, dropped = [], []
+    for d in decks:
+        try:
+            same = own is not None and tuple(sorted(resolve_deck(snap / d["csv"]))) == own
+        except (OSError, ValueError):
+            same = False
+        if exclude_mirror and same:
+            dropped.append((d, "IS the mirror deck — mirror gate measures it at n=800"))
+        elif d.get("n_games", 0) < min_games:
+            dropped.append((d, f"only {d.get('n_games', 0)} observed games — sampling artifact"))
+        else:
+            keep.append(d)
+
+    budget = n * len(decks)                      # same compute as the old form
+    print(f"meta-eval (tail): {a} vs {snap.name}, seed={seed}, budget={budget} games",
+          flush=True)
+    for d, why in dropped:
+        print(f"  DROPPED {d['archetype']:<40} (weight {d['weight'] / total_w:.3f}) — {why}",
+              flush=True)
+    if not keep:
+        print("  no off-mirror archetypes survive — this snapshot measures only the "
+              "mirror, which the mirror gate already covers.", flush=True)
+        return {"snapshot": snap.name, "per_deck": {}, "tail_score": None,
+                "coverage": 0.0, "dropped": [d["archetype"] for d, _ in dropped]}
+
+    per = max(budget // len(keep), 1)             # equal split — panel, not a mean
+    pairs = [(spec_a, ("solver", str(snap / d["csv"])), per) for d in keep]
     results = run_pairs(pairs, workers=workers, seed=seed, checkpoint=checkpoint)
 
-    total_w = sum(d["weight"] for d in decks) or 1.0
-    meta_score = 0.0
-    print(f"meta-eval: {a} vs {snap.name} (n={n}/deck, seed={seed})", flush=True)
-    per_deck = {}
-    for d, res in zip(decks, results):
-        wr = series_wr(res)
-        meta_score += wr * d["weight"] / total_w
-        per_deck[d["archetype"]] = wr
+    coverage = sum(d["weight"] for d in keep) / total_w
+    keep_w = sum(d["weight"] for d in keep) or 1.0
+    tail_score, per_deck = 0.0, {}
+    for d, res in zip(keep, results):
+        wr, m = series_wr(res), len(res)
+        half = 1.96 * math.sqrt(0.25 / m) if m else 0.0
+        tail_score += wr * d["weight"] / keep_w
+        per_deck[d["archetype"]] = {"wr": wr, "n": m,
+                                    "ci95": (max(0.0, wr - half), min(1.0, wr + half))}
         print(f"  vs {d['archetype']:<40} wr={wr:.3f}  "
-              f"(weight {d['weight'] / total_w:.2f}, n={len(res)})", flush=True)
-    print(f"meta score (weighted): {meta_score:.3f}", flush=True)
-    return {"snapshot": snap.name, "meta_score": meta_score, "per_deck": per_deck}
+              f"95%CI [{max(0.0, wr - half):.3f}, {min(1.0, wr + half):.3f}]  n={m}",
+              flush=True)
+    print(f"tail score: {tail_score:.3f}  — covers {coverage:.1%} of the FROZEN field; "
+          f"the rest is the mirror matchup (use the mirror gate, n=800).", flush=True)
+    print("  NB frozen weights understate the tail: the field drifted after the "
+          "snapshot (solrock 0.892->0.761, kangaskhan 0.087->0.155, drakloak "
+          "0.021->0.085; chi2=33.9, p=4.4e-08), so these archetypes are ~24% of "
+          "the CURRENT field.", flush=True)
+    print("Do NOT quote tail score as a whole-field number, and do not compare it "
+          "across candidates below its MDE.", flush=True)
+    return {"snapshot": snap.name, "per_deck": per_deck, "tail_score": tail_score,
+            "coverage": coverage, "dropped": [d["archetype"] for d, _ in dropped]}
 
 
 def _main() -> None:
@@ -515,6 +587,12 @@ def _main() -> None:
     s.add_argument("--workers", type=int, default=8)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--checkpoint", default=None)
+    s.add_argument("--include-mirror", action="store_true",
+                   help="keep snapshot decks identical to the deck `a` pilots. OFF by "
+                        "default: that cell IS the mirror gate, measured there at n=800")
+    s.add_argument("--min-games", type=int, default=3,
+                   help="drop archetypes seeded on fewer observed games (meta_v2's "
+                        "4th deck came from a single game)")
 
     a = p.parse_args()
     if a.cmd == "audit":
@@ -529,7 +607,8 @@ def _main() -> None:
               shard_size=a.shard_size)
     elif a.cmd == "meta-eval":
         meta_eval(a.a, snapshot=a.snapshot, n=a.games, workers=a.workers,
-                  seed=a.seed, checkpoint=a.checkpoint)
+                  seed=a.seed, checkpoint=a.checkpoint,
+                  exclude_mirror=not a.include_mirror, min_games=a.min_games)
 
 
 if __name__ == "__main__":
