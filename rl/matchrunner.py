@@ -36,6 +36,10 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# M22c-C1 search budget for the `solved:` spec — see the G6 note in make_pilot.
+SOLVED_DEADLINE_S = 0.05
+SOLVED_MAX_NODES = 120
 DECK_DIR = ROOT / "decks"
 
 OpponentSpec = tuple
@@ -287,7 +291,13 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # written to fix exactly that — shipped only in the rules bundle.
         from rl.turn_solver import wrap_with_solver
         inner_fn, ids = make_pilot(("model", spec[1], spec[2]), instance)
-        return wrap_with_solver(inner_fn, ids), ids
+        # G6 budget: mean move < 50ms (rl/league.py:353-357). Plain model pilot
+        # measures 11.5ms mean, so search has ~38ms of headroom. The solver's
+        # stock 800 nodes / 0.4s deadline took the mean to 116.6ms — 2.3x over.
+        # Tightened here rather than globally so make_solver_pilot (the rules
+        # bundle, which passes G6 today) keeps its measured behaviour.
+        return wrap_with_solver(inner_fn, ids, deadline_s=SOLVED_DEADLINE_S,
+                                max_nodes=SOLVED_MAX_NODES), ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])

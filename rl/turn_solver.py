@@ -394,7 +394,9 @@ def score_siblings(obs, deck: list[int], deadline_s: float | None = None,
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
                dev: bool = False, fixes: frozenset = frozenset(),
-               leaf_value=None, dev_margin: float | None = None) -> list[int] | None:
+               leaf_value=None, dev_margin: float | None = None,
+               max_depth: int | None = None,
+               max_nodes: int | None = None) -> list[int] | None:
     """Search my remaining turn; return the FIRST action of the best line iff
     it clears the tier's override bar, else None (defer to greedy). The
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
@@ -405,7 +407,9 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     stand-pat leaf by DEV_OVERRIDE_MARGIN — a real development gain, not
     line-vs-line noise — under the shorter DEV_DEADLINE_S."""
     best_score, best_line, _ = solve_turn_line(obs, deck, deadline_s, dev,
-                                               fixes, leaf_value=leaf_value)
+                                               fixes, max_depth=max_depth,
+                                               max_nodes=max_nodes,
+                                               leaf_value=leaf_value)
     if not best_line:
         return None
     if dev:
@@ -422,7 +426,8 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
 
 def wrap_with_solver(inner, deck: list[int], dev: bool = False,
                      fixes: frozenset = frozenset(), leaf_value=None,
-                     stats: dict | None = None):
+                     stats: dict | None = None, deadline_s: float | None = None,
+                     max_nodes: int | None = None, max_depth: int | None = None):
     """ANY inner agent + the within-turn combo solver (M22c).
 
     Why this exists: the shipped neural bundle is a greedy one-action argmax
@@ -454,15 +459,18 @@ def wrap_with_solver(inner, deck: list[int], dev: bool = False,
         fired = False
         if should_solve(obs):
             try:
-                pick = solve_turn(obs, deck, fixes=fixes, leaf_value=leaf_value)
+                pick = solve_turn(obs, deck, deadline_s=deadline_s, fixes=fixes,
+                                  leaf_value=leaf_value, max_nodes=max_nodes,
+                                  max_depth=max_depth)
             except Exception:
                 pick = None                    # never cost the G1 crash gate
             if pick is not None:
                 fired = True
         elif dev and should_solve_dev(obs):
             try:
-                pick = solve_turn(obs, deck, dev=True, fixes=fixes,
-                                  leaf_value=leaf_value)
+                pick = solve_turn(obs, deck, deadline_s=deadline_s, dev=True,
+                                  fixes=fixes, leaf_value=leaf_value,
+                                  max_nodes=max_nodes, max_depth=max_depth)
             except Exception:
                 pick = None
             if pick is not None:
