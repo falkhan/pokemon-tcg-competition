@@ -29,6 +29,7 @@ Usage:
   python -m rl.matchrunner play --a generic:lucario --b random:kyogre -n 60
 """
 import argparse
+import inspect
 import json
 import multiprocessing as mp
 import random
@@ -36,6 +37,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# M22c-C1 search budget for the `solved:` spec — see the G6 note in make_pilot.
+SOLVED_DEADLINE_S = 0.05
+SOLVED_MAX_NODES = 120
+SOLVED_ALLOW = None        # None = every trigger tier; frozenset to gate tiers
+SOLVED_STATS = None        # set to a dict to collect trig_*/fire_* counters
 DECK_DIR = ROOT / "decks"
 
 OpponentSpec = tuple
@@ -68,8 +75,8 @@ def resolve_deck(deck) -> list[int]:
 
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
-    return spec[2] if spec[0] in ("rule", "model", "ext", "rank", "vsolver") \
-        else spec[1]
+    return spec[2] if spec[0] in ("rule", "model", "solved", "ext", "rank",
+                                  "vsolver") else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -92,6 +99,8 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
     if kind == "model" and len(parts) == 3:
         return ("model", parts[1], parts[2])
+    if kind == "solved" and len(parts) == 3:
+        return ("solved", parts[1], parts[2])
     raise ValueError(f"cannot parse opponent spec {s!r} "
                      "(want kind:deck or rule:agent[:deck] or model:ckpt:deck)")
 
@@ -279,6 +288,21 @@ def make_pilot(spec: OpponentSpec, instance: str):
                         return [int(ranked[0])]
             return inner(od)
         return fnr, ids
+    if kind == "solved":
+        # M22c: the model pilot + the within-turn combo solver. The neural
+        # bundle has shipped a greedy argmax since M11 while turn_solver.py —
+        # written to fix exactly that — shipped only in the rules bundle.
+        from rl.turn_solver import wrap_with_solver
+        inner_fn, ids = make_pilot(("model", spec[1], spec[2]), instance)
+        # G6 budget: mean move < 50ms (rl/league.py:353-357). Plain model pilot
+        # measures 11.5ms mean, so search has ~38ms of headroom. The solver's
+        # stock 800 nodes / 0.4s deadline took the mean to 116.6ms — 2.3x over.
+        # Tightened here rather than globally so make_solver_pilot (the rules
+        # bundle, which passes G6 today) keeps its measured behaviour.
+        stats = SOLVED_STATS if SOLVED_STATS is not None else None
+        return wrap_with_solver(inner_fn, ids, deadline_s=SOLVED_DEADLINE_S,
+                                max_nodes=SOLVED_MAX_NODES,
+                                allow=SOLVED_ALLOW, stats=stats), ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
         ids = resolve_deck(spec[1])
@@ -444,13 +468,19 @@ def make_pilot(spec: OpponentSpec, instance: str):
         if "embedding.weight" in sd:
             # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
             # deck-context pools — the pilot closes over its own deck list.
-            # M16: legacy option encoding — these checkpoints predate the
-            # option-identity block.
-            from rl.encoders import (encode_option_v2_legacy as
-                                     encode_option_v2)
-            from rl.encoders import encode_state_v2
+            # Option width is sniffed from option_enc.0.weight: pinned pre-M16
+            # checkpoints are OPTION_V2_DIM (legacy encoding, no option-identity
+            # block); M23 replay-clones are OPTION_V3_DIM (modern encoding).
+            from rl.encoders import N_OPTION_IDS, OPTION_V3_DIM, encode_state_v2
             from rl.policy import OptionScorerV2
-            m2 = OptionScorerV2()
+            embed = sd["embedding.weight"].shape[1]
+            option_dim = sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * embed
+            if option_dim == OPTION_V3_DIM:
+                from rl.encoders import encode_option_v2
+            else:
+                from rl.encoders import (encode_option_v2_legacy as
+                                         encode_option_v2)
+            m2 = OptionScorerV2(embed=embed, option_dim=option_dim)
             m2.load_state_dict(sd)
             m2.eval()
             deck_ids = resolve_deck(spec[2])
@@ -547,13 +577,21 @@ def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
                 on_game=None) -> list[int]:
     """Slot-fair series: a takes seat g%2. Returns 0 = a won, 1 = b won, 2 = draw
     per game. `game_fn(fn0, fn1, deck0, deck1, stats)` is the test seam (defaults
-    to the [ENGINE] loop). `stats`, if given, accumulates per-SIDE ("a"/"b")
+    to the [ENGINE] loop). A game_fn that declares an `a_seat` parameter also
+    receives side a's seat for this game — per-seat instrumentation MUST use it:
+    fn0/deck0 are seat-0's, which is side a only on even games, so hardcoding
+    `seat == 0` records the OPPONENT half the time (the M22 from_series defect).
+    `stats`, if given, accumulates per-SIDE ("a"/"b")
     move/time/error totals across the series; pre-seed it with
     {"collect_samples": True} to also keep every per-move latency under
     side["samples"] (the M7.4a p99 input). `on_game(g, result, seat_stats)`
     is called after each game with a's result and that game's raw stats — the
     loss-forensics hook (the CLI's --diag)."""
     game = game_fn or _engine_game
+    try:
+        wants_a_seat = "a_seat" in inspect.signature(game).parameters
+    except (TypeError, ValueError):   # builtins / C callables
+        wants_a_seat = False
     fn_a, deck_a = make_pilot(spec_a, instance=f"mr{seed}_a")
     fn_b, deck_b = make_pilot(spec_b, instance=f"mr{seed}_b")
     collect = stats is not None and bool(stats.get("collect_samples"))
@@ -565,7 +603,9 @@ def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
         seat_stats: dict | None = None
         if stats is not None or on_game:
             seat_stats = {"collect_samples": True} if collect else {}
-        res = game(fns[0], fns[1], decks[0], decks[1], seat_stats)
+        res = (game(fns[0], fns[1], decks[0], decks[1], seat_stats, a_seat=a_seat)
+               if wants_a_seat else
+               game(fns[0], fns[1], decks[0], decks[1], seat_stats))
         if stats is not None:
             for seat in (0, 1):
                 if seat not in seat_stats:

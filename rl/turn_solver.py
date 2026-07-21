@@ -22,6 +22,7 @@ tests/test_imports.py so the M7.5 submission flip is a two-line change.
 hooking its scorers: the pilot twins (rl/generic_pilot.py / tcg/pilot.py)
 stay byte-identical and parity-pinned (docs/DECISIONS.md).
 """
+import os
 import random
 from collections import namedtuple
 from itertools import combinations
@@ -30,7 +31,7 @@ from time import perf_counter
 from cg.api import (CardType, OptionType, all_card_data, search_begin,
                     search_end, search_step, to_observation_class)
 from rl.combat import (_CARD, UNREACHABLE, _best_damage, _hits_to_ko,
-                       _turns_to_first_ko, _turns_to_ready)
+                       _turns_to_first_ko, _turns_to_ready, threatened)
 from rl.generic_pilot import (_IS_BASIC, _IS_POKEMON, make_generic_pilot,
                               score_option)
 
@@ -71,7 +72,19 @@ W_WIN, W_LOSS, W_DRAW = 1e9, -1e9, -5e8
 W_PRIZE = 100_000        # per prize I take this turn
 W_MY_PRIZE = -150_000    # per prize I concede (self-KO effects)
 W_THREAT = 2_000         # lethal-next-turn setup, x target's prize value
-W_COUNTER = -1_000       # opp active can return-KO my active, x its prize value
+W_COUNTER = -1_000       # opp can return-KO one of my Pokemon, x its prize value
+
+# M22c C2.0 — falsification test. OFF reproduces the historical leaf exactly.
+# ON generalises the counter term from "their active KOs MY ACTIVE" to "their
+# active KOs any of my board", consuming rl.combat.SPREAD_ATTACKS. The M22
+# diagnostic confirmed (p<0.0001) that dragapult puts a third of its damage on
+# our bench, where this term could never look. If flipping this does not move
+# solver:lucario vs rule:dragapult, the representation thesis is wrong and C2
+# stops here having cost a day rather than a milestone.
+# Env-driven so the A/B needs NO mid-run edit: spawn workers re-import from
+# disk and would pick up a half-edited module (the mistake that voided the first
+# C1 battery), but they DO inherit the environment.
+WHOLE_BOARD_THREAT = os.environ.get("M22_WHOLE_BOARD", "0") == "1"
 W_BENCHLESS_KO = -5e8    # ... and my bench is EMPTY: that return-KO ends the GAME,
                          # not a prize — dominates any prize haul (< -W_PRIZE * 6)
 W_DECK_LOW = -5_000      # per card drawn while my deckCount <= 6 (anti-mill)
@@ -105,35 +118,47 @@ def _my_board(player):
     return board + [p for p in player.bench if p is not None]
 
 
-def should_solve(obs) -> bool:
-    """Cheap trigger: fire the (expensive) turn search only when a combo could
-    plausibly pay off. Pure rl.combat dict math, O(board)."""
+def solve_trigger(obs) -> str | None:
+    """Which trigger tier fires here, or None. `should_solve` is the bool view.
+
+    M22c: split out so the budget/trigger tradeoff is measurable per tier. The
+    G6 gate (mean move < 50ms) leaves ~38ms of headroom over the plain neural
+    pilot's 11.5ms, and per-solve cost scales ~linearly with max_nodes, so
+    added_mean = fire_rate x per_solve. Searching deeper REQUIRES firing less
+    often, and you cannot choose what to cut without knowing what fires.
+    """
     if obs.select is None or getattr(obs, "search_begin_input", None) is None:
-        return False
+        return None
     if len(obs.select.option) < 2:
-        return False
+        return None
     st = obs.current
     me, op = st.players[st.yourIndex], st.players[1 - st.yourIndex]
     op_active = op.active[0] if op.active and op.active[0] is not None else None
     if op_active is None or op_active.id not in _CARD:
-        return False
+        return None
     board = _my_board(me)
     if not board:
-        return False
+        return None
     best_now = max(_best_damage(p, op_active) for p in board)
     best_plus = max(_best_damage(p, op_active, extra_energy=1) for p in board)
     if best_plus >= op_active.hp:                                  # T1: KO <=1 attach away
-        return True
+        return "T1_ko_one_attach"
     if (best_now >= op_active.hp - LETHAL_MARGIN                   # T2: a boost trainer
             and any(c.id in _IS_TRAINER for c in me.hand)):        #     might close the gap
-        return True
+        return "T2_trainer_gap"
     if _CARD[op_active.id][4] >= 2 and any(                        # T3: multi-prize in reach
             _hits_to_ko(p, op_active) == 1 and _turns_to_ready(p, op_active) <= 1
             for p in board):
-        return True
+        return "T3_multiprize"
     if len(op.prize) <= 2 and best_plus > 0:                       # T4: game-closing range
-        return True
-    return False
+        return "T4_closing"
+    return None
+
+
+def should_solve(obs) -> bool:
+    """Cheap trigger: fire the (expensive) turn search only when a combo could
+    plausibly pay off. Pure rl.combat dict math, O(board)."""
+    return solve_trigger(obs) is not None
 
 
 def _dev_facts(me, op_active) -> tuple[float, int, int, int, int]:
@@ -288,7 +313,17 @@ def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
                for p in board):
             score += W_THREAT * _CARD[op_active.id][4]              # lethal next turn
         score += W_DAMAGE * max(0, snap.op_active_hp - op_active.hp)
-        if my_active is not None and _best_damage(op_active, my_active) >= my_active.hp:
+        if WHOLE_BOARD_THREAT:
+            # Strict superset: with no spread attack in range this yields exactly
+            # [my_active] or [], i.e. the historical term.
+            at_risk = threatened(op_active, board,
+                                 {p.id for p in board if p is not None})
+            for victim in at_risk:
+                score += W_COUNTER * _CARD.get(victim.id, (0, 0, 0, [], 1))[4]
+            if at_risk and my_active is not None and at_risk[0] is my_active \
+                    and len(board) == 1:
+                score += W_BENCHLESS_KO
+        elif my_active is not None and _best_damage(op_active, my_active) >= my_active.hp:
             score += W_COUNTER * _CARD.get(my_active.id, (0, 0, 0, [], 1))[4]
             if len(board) == 1:          # active only, bench EMPTY: game over, not a prize
                 score += W_BENCHLESS_KO
@@ -394,7 +429,9 @@ def score_siblings(obs, deck: list[int], deadline_s: float | None = None,
 
 def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
                dev: bool = False, fixes: frozenset = frozenset(),
-               leaf_value=None, dev_margin: float | None = None) -> list[int] | None:
+               leaf_value=None, dev_margin: float | None = None,
+               max_depth: int | None = None,
+               max_nodes: int | None = None) -> list[int] | None:
     """Search my remaining turn; return the FIRST action of the best line iff
     it clears the tier's override bar, else None (defer to greedy). The
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
@@ -405,7 +442,9 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     stand-pat leaf by DEV_OVERRIDE_MARGIN — a real development gain, not
     line-vs-line noise — under the shorter DEV_DEADLINE_S."""
     best_score, best_line, _ = solve_turn_line(obs, deck, deadline_s, dev,
-                                               fixes, leaf_value=leaf_value)
+                                               fixes, max_depth=max_depth,
+                                               max_nodes=max_nodes,
+                                               leaf_value=leaf_value)
     if not best_line:
         return None
     if dev:
@@ -418,6 +457,73 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     if best_score >= MIN_OVERRIDE_SCORE:
         return [int(i) for i in best_line[0]]
     return None
+
+
+def wrap_with_solver(inner, deck: list[int], dev: bool = False,
+                     fixes: frozenset = frozenset(), leaf_value=None,
+                     stats: dict | None = None, deadline_s: float | None = None,
+                     max_nodes: int | None = None, max_depth: int | None = None,
+                     allow: frozenset | None = None):
+    """ANY inner agent + the within-turn combo solver (M22c).
+
+    Why this exists: the shipped neural bundle is a greedy one-action argmax
+    (submission/main.py:185 `argsort`), which is the exact failure this module
+    was written to fix — "a multi-prize lethal that needs item -> attach ->
+    attack is never assembled" (docstring above). The solver has only ever
+    shipped in the RULES bundle (build_submission.sh --agent rules), so the
+    neural line never got it. M22b measured the cost: on identical decks the
+    company's rule pilots beat our net ~2:1, and four generations of mirror
+    gains moved the out-of-loop number by nothing measurable.
+
+    ORDER MATTERS: `inner` is called on EVERY prompt, before any override.
+    The v4 model pilot runs `memory.observe(obs)` exactly once per own prompt
+    and caches a per-turn plan keyed on (turn, seat); short-circuiting it on
+    solve prompts would silently desync both. So we take the inner action for
+    its side effects and replace only the RESULT when the solver fires.
+
+    Only the LETHAL tier is enabled by default. That bar (>=1 prize or a win,
+    MIN_OVERRIDE_SCORE) is the one that already ships and measurably helped in
+    M7.5. ARCHITECTURE.md forecloses the rest: "Override-style consumption of
+    any eval signal on non-lethal turns | M8.1, M12, M13 | five measurements,
+    all below the 0.500 null." Do not widen without a new argument.
+    """
+    def agent(obs_dict):
+        base = inner(obs_dict)                 # ALWAYS — keeps inner state live
+        obs = to_observation_class(obs_dict)
+        if obs.select is None:
+            return base
+        fired = False
+        tier = solve_trigger(obs)
+        if stats is not None and tier:
+            stats[f"trig_{tier}"] = stats.get(f"trig_{tier}", 0) + 1
+        if tier is not None and (allow is None or tier in allow):
+            try:
+                pick = solve_turn(obs, deck, deadline_s=deadline_s, fixes=fixes,
+                                  leaf_value=leaf_value, max_nodes=max_nodes,
+                                  max_depth=max_depth)
+            except Exception:
+                pick = None                    # never cost the G1 crash gate
+            if pick is not None:
+                fired = True
+                if stats is not None:
+                    stats[f"fire_{tier}"] = stats.get(f"fire_{tier}", 0) + 1
+        elif dev and should_solve_dev(obs):
+            try:
+                pick = solve_turn(obs, deck, deadline_s=deadline_s, dev=True,
+                                  fixes=fixes, leaf_value=leaf_value,
+                                  max_nodes=max_nodes, max_depth=max_depth)
+            except Exception:
+                pick = None
+            if pick is not None:
+                fired = True
+        if stats is not None:
+            stats["prompts"] = stats.get("prompts", 0) + 1
+            stats["solver_fired"] = stats.get("solver_fired", 0) + int(fired)
+            if fired:
+                stats["changed"] = stats.get("changed", 0) + int(list(pick) != list(base))
+        return pick if fired else base
+
+    return agent
 
 
 def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False,

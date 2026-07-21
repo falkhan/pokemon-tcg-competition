@@ -77,7 +77,11 @@ class OptionScorerV2(nn.Module):
     the npz, and inference is a row lookup (M7-plan §3.1b).
     """
 
-    def __init__(self, hidden: int = 256, embed: int = EMBED_DIM):
+    def __init__(self, hidden: int = 256, embed: int = EMBED_DIM,
+                 option_dim: int = OPTION_V2_DIM):
+        # option_dim: OPTION_V2_DIM (=legacy 90) for pinned pre-M16 checkpoints;
+        # OPTION_V3_DIM (94) when trained on modern encode_option_v2 output
+        # (M23 replay-clone path). Loaders sniff it from option_enc.0.weight.
         super().__init__()
         self.embedding = nn.Embedding(N_CARD_IDS, embed, padding_idx=0)
         self.state_enc = nn.Sequential(
@@ -86,7 +90,7 @@ class OptionScorerV2(nn.Module):
             nn.Linear(hidden, hidden), nn.ReLU(),
         )
         self.option_enc = nn.Sequential(
-            nn.Linear(OPTION_V2_DIM + N_OPTION_IDS * embed, hidden), nn.ReLU(),
+            nn.Linear(option_dim + N_OPTION_IDS * embed, hidden), nn.ReLU(),
         )
         self.score_head = nn.Sequential(
             nn.Linear(2 * hidden, hidden), nn.ReLU(),

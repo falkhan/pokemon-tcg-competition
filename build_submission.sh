@@ -52,9 +52,19 @@ else
               rl/__init__.py rl/combat.py rl/encoders.py rl/card_features.npy)
 fi
 
+# M18.1 + M22c: --deck is REQUIRED. Twice we shipped the kyogre (Mega Abomasnow)
+# fossil default while training/gating on lucario — a broken bundle that passes
+# the "deck legal" gate. Fail loud instead of silently defaulting.
+if [[ -z "$DECK" ]]; then
+    echo "ERROR: --deck is required (e.g. --deck lucario)." >&2
+    echo "  A missing --deck silently ships the DEFAULT_DECK fossil (kyogre)." >&2
+    echo "  This shipped by accident in M18.1 and M22c. Pass the deck the net was gated on." >&2
+    exit 2
+fi
+
 EXPORT_ARGS=(--agent "$AGENT")
 [[ -n "$CHECKPOINT" ]] && EXPORT_ARGS+=(--checkpoint "$CHECKPOINT")
-[[ -n "$DECK" ]] && EXPORT_ARGS+=(--deck "$DECK")
+EXPORT_ARGS+=(--deck "$DECK")
 
 echo "\e[36m[1/3] Export artifacts (tcg.shipping export ${EXPORT_ARGS[*]})\e[0m"
 "${PY[@]}" -m tcg.shipping export "${EXPORT_ARGS[@]}"

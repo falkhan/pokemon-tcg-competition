@@ -477,6 +477,10 @@ class BCDatasetV2(torch.utils.data.Dataset):
         for k, v in opt_cols.items():
             setattr(self, k, np.concatenate(v))
         self.starts = np.concatenate(starts_list)
+        # M23: shards built by replay_bc after M16/M19 carry OPTION_V3_DIM (94)
+        # options; pre-M16 shards carry OPTION_V2_DIM (90). Width flows from
+        # the data so the model is sized to what it will actually be fed.
+        self.option_dim = int(self.options.shape[1])
 
     def __len__(self):
         return len(self.labels)
@@ -495,7 +499,7 @@ def collate_v2(batch):
 
     states = torch.zeros(B, STATE_V2_DIM + N_CONTEXTS)
     state_ids = torch.zeros(B, batch[0][1].shape[0], dtype=torch.long)
-    options = torch.zeros(B, maxN, OPTION_DIM)
+    options = torch.zeros(B, maxN, batch[0][2].shape[1])   # width from data (M23)
     option_ids = torch.zeros(B, maxN, 2, dtype=torch.long)
     valid = torch.zeros(B, maxN, dtype=torch.bool)
     labels = torch.zeros(B, dtype=torch.long)
@@ -587,7 +591,7 @@ def train_v2(epochs=10, lr=3e-4, batch_size=256, name="osv2_bc",
     val_dl = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                         collate_fn=collate_v2)
 
-    model = OptionScorerV2()
+    model = OptionScorerV2(option_dim=ds.option_dim)
     if init is not None:
         ckpt = Path(init)
         if not ckpt.is_absolute() and not ckpt.exists():

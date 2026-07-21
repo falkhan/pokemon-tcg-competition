@@ -36,8 +36,15 @@ def _copy_cg(dest: Path) -> None:
 
 
 def _deck_src(deck: str) -> Path:
+    # M24: fail loud on an unresolvable deck name (parity twin of
+    # tcg/shipping.py::deck_source — the silent root-deck fallback nearly
+    # shipped the kyogre fossil a third time via a typo'd name).
     src = ROOT / "decks" / f"{deck}.csv"
-    return src if src.exists() else ROOT / "deck.csv"   # fall back to the root deck
+    if not src.exists():
+        raise SystemExit(
+            f"deck '{deck}' not found at {src} — refusing the root-deck "
+            f"fallback (M18.1/M22c/M24 lesson: verify deck identity)")
+    return src
 
 
 def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:

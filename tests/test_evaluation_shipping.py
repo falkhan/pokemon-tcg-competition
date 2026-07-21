@@ -150,8 +150,13 @@ def test_deck_source_parity(tmp_path, monkeypatch):
     (tmp_path / "decks").mkdir()
     (tmp_path / "decks" / "known.csv").write_text("1\n")
     (tmp_path / "deck.csv").write_text("2\n")
-    for deck in ("known", "unknown"):
-        assert old_export._deck_src(deck) == new_shipping.deck_source(deck)
+    assert old_export._deck_src("known") == new_shipping.deck_source("known")
+    # M24: an unresolvable name is a hard error in BOTH twins — the silent
+    # root-deck fallback shipped the kyogre fossil twice and nearly a third time
+    with pytest.raises(SystemExit):
+        old_export._deck_src("unknown")
+    with pytest.raises(SystemExit):
+        new_shipping.deck_source("unknown")
 
 
 def old_style_driver(base: str) -> str:

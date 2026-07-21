@@ -67,6 +67,31 @@ def test_collate_plan_selects_and_pads(tmp_path):
     assert ppo.collate_plan(data, np.array([1])) is None
 
 
+def test_advantage_by_type_partitions_by_chosen_option(monkeypatch):
+    """M23 audit S4: stats are keyed by the CHOSEN option's type one-hot,
+    with PLAY split supporter/other via card identity."""
+    monkeypatch.setattr(ppo, "_SUPPORTER_IDS", {111})
+    opts = np.zeros((5, OPTION_V3_DIM), dtype=np.float32)
+    opts[0, 14] = 1   # row0 menu: END, ATTACK -> chooses ATTACK
+    opts[1, 13] = 1
+    opts[2, 7] = 1    # row1: PLAY supporter (card 111)
+    opts[3, 7] = 1    # row2: PLAY other (card 5)
+    opts[4, 14] = 1   # row3: END
+    data = dict(
+        starts=np.array([0, 2, 3, 4]),
+        actions=np.array([1, 0, 0, 0]),
+        options=opts,
+        option_ids=np.array([[0, 0], [9, 0], [111, 0], [5, 0], [0, 0]]),
+    )
+    stats = ppo.advantage_by_type(
+        data, np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    assert stats["attack"] == (1.0, 0.0, 1)
+    assert stats["play_supporter"] == (2.0, 0.0, 1)
+    assert stats["play_other"] == (3.0, 0.0, 1)
+    assert stats["end"] == (4.0, 0.0, 1)
+    assert "attach" not in stats                  # nothing chose ATTACH
+
+
 def test_plan_coef_zero_leaves_plan_head_untouched(tmp_path):
     write_plan_shards(tmp_path)
     data = ppo.load_shards(tmp_path)
@@ -142,3 +167,71 @@ def test_parse_pool_past_token_dropped_when_no_checkpoints(tmp_path,
                                 checkpoint="ck.pt")
     assert specs == [("solver", "lucario")]
     assert weights == pytest.approx([1.0])
+
+
+# --- M22b: resolved-identity dedupe -----------------------------------------
+# B3's mixture declared `solver:.../deck_20dcd3130bc0.csv=0.30` and
+# `solver:lucario=0.15` as two opponents. They are one — that csv is
+# byte-identical to decks/lucario.csv — so 45% of training was a single
+# opponent while the config read 0.30 and 0.15.
+
+def test_parse_pool_merges_specs_that_resolve_to_the_same_deck(monkeypatch):
+    import rl.matchrunner as mr
+    monkeypatch.setattr(mr, "resolve_deck",
+                        lambda d: [1, 2, 3] if d in ("lucario", "alias.csv") else [9])
+    specs, weights = parse_pool(
+        ["solver:alias.csv=0.30", "solver:lucario=0.15", "random:kyogre=0.55"],
+        checkpoint="ck.pt")
+    assert len(specs) == 2, "the two solver entries are one opponent"
+    assert weights == pytest.approx([0.45, 0.55])
+
+
+def test_parse_pool_keeps_distinct_decks_separate(monkeypatch):
+    import rl.matchrunner as mr
+    monkeypatch.setattr(mr, "resolve_deck",
+                        lambda d: {"lucario": [1], "iono": [2], "kyogre": [3]}[d])
+    specs, weights = parse_pool(
+        ["solver:lucario=0.5", "solver:iono=0.25", "random:kyogre=0.25"],
+        checkpoint="ck.pt")
+    assert len(specs) == 3
+    assert weights == pytest.approx([0.5, 0.25, 0.25])
+
+
+def test_parse_pool_same_deck_different_pilot_is_not_merged(monkeypatch):
+    """solver:lucario and rule:lucario share a deck but are different opponents."""
+    import rl.matchrunner as mr
+    monkeypatch.setattr(mr, "resolve_deck", lambda d: [1, 2, 3])
+    specs, weights = parse_pool(["solver:lucario=0.5", "rule:lucario=0.5"],
+                                checkpoint="ck.pt")
+    assert len(specs) == 2
+    assert weights == pytest.approx([0.5, 0.5])
+
+
+# --- M23: dragapult is the held-out evaluator — hard-blocked from training ---
+
+def test_parse_pool_rejects_rule_dragapult(monkeypatch):
+    monkeypatch.delenv("ALLOW_DRAGAPULT_TRAINING", raising=False)
+    with pytest.raises(ValueError, match="held-out"):
+        parse_pool(["rule:dragapult=0.5", "solver:lucario=0.5"],
+                   checkpoint="ck.pt")
+
+
+def test_parse_pool_rejects_the_dragapult_deck_under_any_pilot(monkeypatch):
+    monkeypatch.delenv("ALLOW_DRAGAPULT_TRAINING", raising=False)
+    with pytest.raises(ValueError, match="held-out"):
+        parse_pool(["solver:dragapult=1"], checkpoint="ck.pt")
+
+
+def test_parse_pool_dragapult_env_override(monkeypatch):
+    monkeypatch.setenv("ALLOW_DRAGAPULT_TRAINING", "1")
+    specs, weights = parse_pool(["rule:dragapult=1"], checkpoint="ck.pt")
+    assert specs == [("rule", "dragapult", "dragapult")]
+
+
+def test_parse_pool_unresolvable_deck_does_not_crash(monkeypatch):
+    import rl.matchrunner as mr
+    def _boom(d):
+        raise OSError("no such deck")
+    monkeypatch.setattr(mr, "resolve_deck", _boom)
+    specs, weights = parse_pool(["solver:ghost=1"], checkpoint="ck.pt")
+    assert specs == [("solver", "ghost")] and weights == pytest.approx([1.0])

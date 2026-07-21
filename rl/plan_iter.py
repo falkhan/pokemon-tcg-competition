@@ -859,9 +859,13 @@ def train(data_dirs: list, name: str, init: str | None = None,
                                            map_location="cpu"))
         print(f"warm-start from v2 {init_v2} (plan columns zero-init)")
     else:
-        from rl.encoders import N_STATE_IDS_V3, OPTION_V3_DIM
-        model = OptionScorerV3(n_state_ids=N_STATE_IDS_V3,
-                               option_dim=OPTION_V3_DIM)
+        # M23 audit E1: width-driven from the data, like the bc.py v2 path —
+        # replay-clone shards carry legacy 12-wide state_ids, and a net built
+        # at the hand-aware default 20 cannot consume them.
+        model = OptionScorerV3(n_state_ids=ds.state_ids.shape[1],
+                               option_dim=ds.options.shape[1])
+        print(f"fresh V3 (n_state_ids={model.n_state_ids}, "
+              f"option_dim={model.option_dim})")
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_acc = 0.0
 

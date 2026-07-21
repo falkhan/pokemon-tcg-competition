@@ -1,26 +1,28 @@
 # M22 live A/B — current state
 
-_Generated 2026-07-20T11:57:38+00:00 by `notebooks/m22_ab_monitor.ipynb`._
+_Generated 2026-07-21T07:15:48+00:00 by `notebooks/m22_ab_monitor.ipynb`._
 
 **Decidable: NO**
 
 ```
 arm            n     W-L      liveWR  95% CI            score   last seen
-54849475    34   13-21    0.382  [0.214, 0.550]    542.2  2026-07-20T11:08
-54846434    35   15-20    0.429  [0.263, 0.594]    536.8  2026-07-20T10:47
+54864190    39   18-20    0.474  [0.317, 0.631]    548.0  2026-07-21T06:47
+54849475    44   17-27    0.386  [0.239, 0.534]    541.9  2026-07-20T22:51
+54846434    44   19-25    0.432  [0.284, 0.580]    531.5  2026-07-20T22:23
 
-observed gap : -4.6pp  (54849475 minus 54846434)
-MDE at this n: 33.7pp  (80% power, alpha=0.05)
+observed gap : +8.8pp  (54864190 minus 54849475)
+MDE at this n: 30.8pp  (80% power, alpha=0.05)
 
-NO READ — the gap is INSIDE the noise floor. Resolving a true 4.6pp gap needs n=1838/arm (have 34 and 35).
+NO READ — the gap is INSIDE the noise floor. Resolving a true 8.8pp gap needs n=507/arm (have 39 and 44).
 Reporting a winner here would repeat the M21 error. Keep accruing.
 Note: at the 10pp design target, n=393/arm is required.
 ```
 
 | submission | arm | n | W–L | live WR | 95% CI | score |
 |---|---|---|---|---|---|---|
-| 54849475 | B3 — KL→0 self-play | 34 | 13–21 | 0.382 | [0.214, 0.55] | 542.2 |
-| 54846434 | B2 — encoder-v4 + plan-PPO | 35 | 15–20 | 0.429 | [0.263, 0.594] | 536.8 |
+| 54864190 | M22c-RL — sample-agent teacher | 39 | 18–20 | 0.474 | [0.317, 0.631] | 548.0 |
+| 54849475 | B3 — KL→0 self-play | 44 | 17–27 | 0.386 | [0.239, 0.534] | 541.9 |
+| 54846434 | B2 — encoder-v4 + plan-PPO | 44 | 19–25 | 0.432 | [0.284, 0.58] | 531.5 |
 | 54836093 | champion (context) | 45 | 22–23 | 0.489 | [0.343, 0.635] | 579.3 |
 
 ## For the next session

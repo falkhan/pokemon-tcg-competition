@@ -7,6 +7,28 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-20 · Every gate opponent was in the training pool → dragapult reserved as the only out-of-loop floor
+**Observation:** auditing B3's live mixture (`runs/m21_legB3.log:78`) against our gates found
+**nothing held out**: mirror's `solver:lucario` 0.45, the meta decks 0.55, `random:kyogre` 0.05,
+`rule:lucario` 0.05. Two distinct problems hid under "contamination" — **leakage** (trained on the
+evaluator; fixable by holding out) and **endogeneity** (the evaluator is our own artifact; NOT
+fixable by holding out). `rule:lucario` is a floor gate *and* a 5–10% training opponent, so its
+number partly measures how well we learned an opponent we trained against; note no current agent
+meets its 0.362 bar (B3 0.357, champ 0.341, B2 0.319), which is itself a sign it stopped gating.
+**Pivot (Piotr):** **`rule:dragapult` becomes the generalization floor** — the only opponent clean
+on *both* counts (absent from `collector.py`/`plan_iter.py`/`ppo.py`, and authored by The Pokémon
+Company rather than by us). Evaluation does not contaminate; only training does. `rule:lucario` is
+kept and relabelled a *training-distribution regression check* — it caught the Gate A collapses
+(0.225/0.305) and has a five-milestone series, so relabel rather than delete.
+Rejected: dropping `rule:lucario` from the pools. It would not decontaminate existing checkpoints
+(M22c continues PPO from B3, whose weights already encode the exposure), it would take the mixture
+to ~90% solver-or-self against the M7.5 precedent (mirror-heavy pools regressed vs *every* rules
+pilot, G3 0.44→0.145), and a 5% mixture change is far below what our instruments can resolve — a
+blind change with an unverifiable payoff.
+⚠️ **Dragapult is EVALUATION-ONLY. Adding it to any training pool retires it permanently and there
+is no replacement** — we cannot author an agent we did not author. A held-out harvested archetype
+is not equivalent: still solver-piloted, so it fixes leakage but stays endogenous.
+
 ### 2026-07-19 · Dragapult ex company sample agent ≈ Lucario-expert strength → third archetype package added
 **Observation:** the Pokemon-company "Dragapult ex" rule agent (repo-root
 `a-sample-rule-based-agent-dragapult-ex-deck.ipynb`, "Advanced Level" — Phantom Dive
