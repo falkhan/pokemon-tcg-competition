@@ -319,14 +319,25 @@ def align(subs: set[int] | None = None) -> dict:
 # ---------------------------------------------------------------------------
 def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
           include_ours: bool = False, winners_only: bool = False,
-          min_steps: int = 0, shard_size: int = 5000) -> None:
+          min_steps: int = 0, shard_size: int = 5000,
+          only_subs: set[int] | None = None,
+          only_deck_hash: str | None = None) -> None:
     """Encode qualifying replay seats into BC shards.
 
     Shard schema = collect_games_v2 (rl/bc.py) + additive columns the trainer
     treats as optional: teacher_score (leaderboard score of the imitated
     seat), seat_won (1/0), episode_ids (provenance). game_ids are one per
     EPISODE (both seats share it) so the by-game val split stays leak-free.
-    deck_idx indexes deck_registry.json at REPLAY_DECK_BASE+."""
+    deck_idx indexes deck_registry.json at REPLAY_DECK_BASE+.
+
+    only_subs (M23): restrict to these submission ids — the clone-one-opponent
+    path. Every other seat filter still applies, so pair it with a --min-score
+    at or below the target's actual score.
+
+    only_deck_hash (M24): restrict to seats whose decklist hash starts with
+    this prefix — the strong-pilots-on-OUR-deck corpus (deck_hash is the
+    order-invariant sha1 from rl.kaggle_ingest; a short unambiguous prefix
+    like '20dcd313' is enough)."""
     meta = _episode_meta()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -382,6 +393,9 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
             sub = m.get(f"submission_id_{seat}")
             score = m.get(f"updated_score_{seat}")
             reward, opp_reward = ep.rewards[seat], ep.rewards[1 - seat]
+            if only_subs is not None and sub not in only_subs:
+                skips["seat_not_target"] += 1
+                continue
             if not include_ours and (sub in OUR_SUBS or m.get("our_seat") == seat):
                 skips["seat_ours"] += 1
                 continue
@@ -390,6 +404,10 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
                 continue
             if ep.decks[seat] is None:
                 skips["seat_no_deck"] += 1
+                continue
+            if only_deck_hash is not None and not deck_hash(
+                    ep.decks[seat]).startswith(only_deck_hash):
+                skips["seat_other_deck"] += 1
                 continue
             if None in (reward, opp_reward):
                 skips["seat_no_reward"] += 1
@@ -432,7 +450,9 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
     (out_dir / "deck_registry.json").write_text(json.dumps({
         "base": REPLAY_DECK_BASE,
         "params": {"min_score": min_score, "winners_only": winners_only,
-                   "include_ours": include_ours, "min_steps": min_steps},
+                   "include_ours": include_ours, "min_steps": min_steps,
+                   "only_subs": sorted(only_subs) if only_subs else None,
+                   "only_deck_hash": only_deck_hash},
         "decks": [{"deck_idx": i, "hash": h}
                   for h, i in sorted(registry.items(), key=lambda kv: kv[1])],
     }, indent=2))
@@ -579,6 +599,11 @@ def _main() -> None:
     s.add_argument("--include-ours", action="store_true")
     s.add_argument("--min-steps", type=int, default=0)
     s.add_argument("--shard-size", type=int, default=5000)
+    s.add_argument("--only-subs", type=int, nargs="+", default=None,
+                   help="clone-one-opponent: keep only these submission ids")
+    s.add_argument("--deck-hash", type=str, default=None,
+                   help="M24: keep only seats whose deck_hash starts with "
+                        "this prefix (e.g. 20dcd313 = our lucario 60)")
 
     s = sub.add_parser("meta-eval", help="G4: candidate vs the frozen meta snapshot")
     s.add_argument("--a", required=True, help="matchrunner spec, e.g. model:<ckpt>:lucario")
@@ -604,7 +629,9 @@ def _main() -> None:
     elif a.cmd == "build":
         build(out_dir=a.out, min_score=a.min_score, winners_only=a.winners_only,
               include_ours=a.include_ours, min_steps=a.min_steps,
-              shard_size=a.shard_size)
+              shard_size=a.shard_size,
+              only_subs=set(a.only_subs) if a.only_subs else None,
+              only_deck_hash=a.deck_hash)
     elif a.cmd == "meta-eval":
         meta_eval(a.a, snapshot=a.snapshot, n=a.games, workers=a.workers,
                   seed=a.seed, checkpoint=a.checkpoint,

@@ -237,11 +237,52 @@ def judge_retreat(obs, chosen) -> Verdict | None:
     return Verdict("retreat", "neutral", float(gain), taken, detail)
 
 
+_SUPPORTER_IDS: frozenset | None = None
+
+
+def _supporter_ids() -> frozenset:
+    global _SUPPORTER_IDS
+    if _SUPPORTER_IDS is None:
+        from cg.api import CardType
+        _SUPPORTER_IDS = frozenset(
+            c.cardId for c in all_card_data()
+            if int(c.cardType) == int(CardType.SUPPORTER))
+    return _SUPPORTER_IDS
+
+
+def judge_supporter(obs, chosen) -> Verdict | None:
+    """Supporter-play AVAILABILITY by our-turn number — deliberately NOT a
+    strict-defect counter (the one exception to this module's denominator rule).
+
+    M23 rationale: the m22 shutout postmortems show the agent top-decking from
+    turn 4 with draw supporters rotting in hand, but pricing a declined
+    supporter needs a hand-quality model we do not have. So this is a
+    descriptive rate whose ONLY sanctioned use is a same-deck, same-opponent
+    contrast against a reference pilot (the company sample agent) — the
+    reference IS the pricing. `report` prints that caveat unconditionally.
+    """
+    st = obs.current
+    if getattr(st, "supporterPlayed", False):
+        return None
+    sup = _supporter_ids()
+    playable = [o for o in obs.select.option
+                if getattr(o, "type", None) == OptionType.PLAY
+                and _option_card_id(o, obs) in sup]
+    if not playable:
+        return None                       # no supporter to play — not a candidate
+    our_turn = (int(getattr(st, "turn", 0) or 0) + 1) // 2
+    tier = f"avail_t{our_turn}" if 1 <= our_turn <= 6 else "avail_late"
+    taken = (getattr(chosen, "type", None) == OptionType.PLAY
+             and _option_card_id(chosen, obs) in sup)
+    return Verdict("supporter", tier, 0.0, taken, {"our_turn": our_turn})
+
+
 def judge_state(obs, chosen) -> list[Verdict]:
     """Every verdict for one MAIN decision. The single definition site."""
     if obs.select is None or int(obs.select.context) != int(SelectContext.MAIN):
         return []
-    return [v for v in (judge_gust(obs, chosen), judge_retreat(obs, chosen)) if v]
+    return [v for v in (judge_gust(obs, chosen), judge_retreat(obs, chosen),
+                        judge_supporter(obs, chosen)) if v]
 
 
 # --------------------------------------------------------------------------
@@ -299,13 +340,14 @@ def from_series(a: str, b: str, n: int = 100, seed: int = 1,
     Instruments via a custom `game_fn` (the seam at rl/matchrunner.py:545) rather
     than `on_game`, which is per-GAME only. The engine loop hands the pilot one
     obs per decision, so unlike replays there is no off-by-one and no stale
-    INACTIVE select to filter.
+    INACTIVE select to filter. Side a's seat alternates per game (slot-fair), so
+    the instrumented seat comes from play_series's `a_seat` — never seat 0.
     """
     from rl.matchrunner import make_pilot, parse_spec, play_series
 
     acc = Counter()
 
-    def game_fn(fn0, fn1, deck0, deck1, stats):
+    def game_fn(fn0, fn1, deck0, deck1, stats, a_seat):
         from cg.game import battle_finish, battle_select, battle_start
         obs_dict, start = battle_start(list(deck0), list(deck1))
         if start.errorPlayer >= 0:
@@ -317,7 +359,7 @@ def from_series(a: str, b: str, n: int = 100, seed: int = 1,
                 seat = obs_dict["current"]["yourIndex"]
                 fn = fn0 if seat == 0 else fn1
                 picks = [int(i) for i in fn(obs_dict)]
-                if seat == 0:                       # instrument side A only
+                if seat == a_seat:                  # instrument side A only
                     obs = to_observation_class(obs_dict)
                     if obs.select is not None and obs.select.option:
                         try:
@@ -467,6 +509,17 @@ def report(acc: Counter) -> str:
         if strict == 0 and total:
             lines.append(f"    (no strict {kind} opportunities — a 0/0 headline is "
                          f"not a defect)")
+    sup_keys = [k for k in sorted(acc)
+                if k.startswith("supporter_avail") and not k.endswith("_taken")]
+    if sup_keys:
+        cells = []
+        for k in sup_keys:
+            label = k.removeprefix("supporter_avail_")
+            cells.append(f"{label} {acc[k + '_taken']}/{acc[k]}")
+        lines.append(f"  supporter play-rate by our-turn: {'  '.join(cells)}")
+        lines.append(
+            "    ⚠ AVAILABILITY rate, not a defect counter — meaningful ONLY as a "
+            "same-deck contrast vs a reference pilot (the reference is the pricing).")
     for k in sorted(acc):
         if k.startswith("drop_") and acc[k]:
             lines.append(f"  drop {k[5:]}: {acc[k]}")

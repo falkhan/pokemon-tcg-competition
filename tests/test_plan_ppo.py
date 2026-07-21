@@ -67,6 +67,31 @@ def test_collate_plan_selects_and_pads(tmp_path):
     assert ppo.collate_plan(data, np.array([1])) is None
 
 
+def test_advantage_by_type_partitions_by_chosen_option(monkeypatch):
+    """M23 audit S4: stats are keyed by the CHOSEN option's type one-hot,
+    with PLAY split supporter/other via card identity."""
+    monkeypatch.setattr(ppo, "_SUPPORTER_IDS", {111})
+    opts = np.zeros((5, OPTION_V3_DIM), dtype=np.float32)
+    opts[0, 14] = 1   # row0 menu: END, ATTACK -> chooses ATTACK
+    opts[1, 13] = 1
+    opts[2, 7] = 1    # row1: PLAY supporter (card 111)
+    opts[3, 7] = 1    # row2: PLAY other (card 5)
+    opts[4, 14] = 1   # row3: END
+    data = dict(
+        starts=np.array([0, 2, 3, 4]),
+        actions=np.array([1, 0, 0, 0]),
+        options=opts,
+        option_ids=np.array([[0, 0], [9, 0], [111, 0], [5, 0], [0, 0]]),
+    )
+    stats = ppo.advantage_by_type(
+        data, np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    assert stats["attack"] == (1.0, 0.0, 1)
+    assert stats["play_supporter"] == (2.0, 0.0, 1)
+    assert stats["play_other"] == (3.0, 0.0, 1)
+    assert stats["end"] == (4.0, 0.0, 1)
+    assert "attach" not in stats                  # nothing chose ATTACH
+
+
 def test_plan_coef_zero_leaves_plan_head_untouched(tmp_path):
     write_plan_shards(tmp_path)
     data = ppo.load_shards(tmp_path)
@@ -180,6 +205,27 @@ def test_parse_pool_same_deck_different_pilot_is_not_merged(monkeypatch):
                                 checkpoint="ck.pt")
     assert len(specs) == 2
     assert weights == pytest.approx([0.5, 0.5])
+
+
+# --- M23: dragapult is the held-out evaluator — hard-blocked from training ---
+
+def test_parse_pool_rejects_rule_dragapult(monkeypatch):
+    monkeypatch.delenv("ALLOW_DRAGAPULT_TRAINING", raising=False)
+    with pytest.raises(ValueError, match="held-out"):
+        parse_pool(["rule:dragapult=0.5", "solver:lucario=0.5"],
+                   checkpoint="ck.pt")
+
+
+def test_parse_pool_rejects_the_dragapult_deck_under_any_pilot(monkeypatch):
+    monkeypatch.delenv("ALLOW_DRAGAPULT_TRAINING", raising=False)
+    with pytest.raises(ValueError, match="held-out"):
+        parse_pool(["solver:dragapult=1"], checkpoint="ck.pt")
+
+
+def test_parse_pool_dragapult_env_override(monkeypatch):
+    monkeypatch.setenv("ALLOW_DRAGAPULT_TRAINING", "1")
+    specs, weights = parse_pool(["rule:dragapult=1"], checkpoint="ck.pt")
+    assert specs == [("rule", "dragapult", "dragapult")]
 
 
 def test_parse_pool_unresolvable_deck_does_not_crash(monkeypatch):

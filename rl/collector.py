@@ -35,6 +35,7 @@ Usage:  python -m rl.collector --games 400 --workers 4 --checkpoint checkpoints/
 """
 import argparse
 import multiprocessing as mp
+import os
 from pathlib import Path
 
 import numpy as np
@@ -145,8 +146,40 @@ def parse_pool(items: list[str], checkpoint: str,
             specs.append(parse_spec(spec_s))
             weights.append(w)
     specs, weights = _dedupe_pool(specs, weights)
+    _assert_dragapult_held_out(specs)
     total = sum(weights)
     return specs, [w / total for w in weights]
+
+
+def _assert_dragapult_held_out(specs: list) -> None:
+    """Refuse any training-pool spec that touches dragapult.
+
+    `rule:dragapult` is the campaign's only doubly-clean out-of-loop evaluator
+    (never in a pool, authored by The Pokémon Company — M22). Training against
+    it, or against its deck under any pilot, spends the instrument permanently
+    and there is no replacement: we cannot author an agent we did not author.
+    Convention-only rules have cost milestones twice (M18.1, M22c), so this one
+    is a hard error. `ALLOW_DRAGAPULT_TRAINING=1` is the deliberate override.
+    """
+    if os.environ.get("ALLOW_DRAGAPULT_TRAINING") == "1":
+        return
+    # Read the reference deck straight from the CSV — resolve_deck is a test
+    # seam (monkeypatched to constants in the pool tests) and going through it
+    # would make every spec look like dragapult under those patches.
+    try:
+        drag_csv = ROOT / "decks" / "dragapult.csv"
+        drag_deck = tuple(sorted(
+            int(x) for x in drag_csv.read_text().split() if x.strip()))
+    except (OSError, ValueError):
+        return                        # no dragapult assets in this checkout
+    for spec in specs:
+        by_agent = spec[0] == "rule" and len(spec) > 1 and spec[1] == "dragapult"
+        if by_agent or drag_deck in _pool_identity(spec):
+            raise ValueError(
+                f"opponent pool contains dragapult ({spec}) — it is the held-out "
+                "out-of-loop evaluator and training on it retires it permanently. "
+                "Set ALLOW_DRAGAPULT_TRAINING=1 only as a deliberate, documented "
+                "decision.")
 
 
 def _pool_identity(spec):

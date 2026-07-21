@@ -54,8 +54,16 @@ def copy_engine(dest: Path) -> None:
 
 
 def deck_source(deck: str) -> Path:
+    """M24: a named deck that does not resolve is a hard error. The silent
+    root-deck fallback survived the M18.1 --deck-required guard (the guard
+    checks presence, not resolution) and nearly shipped the kyogre fossil a
+    third time via a typo'd deck name."""
     src = ROOT / "decks" / f"{deck}.csv"
-    return src if src.exists() else ROOT / "deck.csv"   # fall back to the root deck
+    if not src.exists():
+        raise SystemExit(
+            f"deck '{deck}' not found at {src} — refusing the root-deck "
+            f"fallback (M18.1/M22c/M24 lesson: verify deck identity)")
+    return src
 
 
 def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:

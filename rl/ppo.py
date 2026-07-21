@@ -90,6 +90,41 @@ def trajectory_slices(data: dict[str, np.ndarray]) -> list[np.ndarray]:
     return slices
 
 
+_SUPPORTER_IDS: set | None = None
+
+
+def _supporter_ids() -> set:
+    global _SUPPORTER_IDS
+    if _SUPPORTER_IDS is None:
+        import polars as pl
+        df = pl.read_parquet(ROOT / "data" / "cards_features.parquet")
+        _SUPPORTER_IDS = set(
+            df.filter(pl.col("is_supporter") == 1)["card_id"].to_list())
+    return _SUPPORTER_IDS
+
+
+def advantage_by_type(data: dict[str, np.ndarray],
+                      advantages: np.ndarray) -> dict[str, tuple]:
+    """M23 audit S4 (Piotr-approved logging): GAE-advantage mean/std/n per
+    chosen-option type; PLAY split supporter/other by card identity. Read:
+    supporter advantages ~0 or noise-drowned while attack advantages are
+    clean = credit is not reaching card-economy actions."""
+    from rl.encoders import N_OPTION_TYPES
+    rows = data["starts"] + data["actions"]
+    kinds = data["options"][rows, :N_OPTION_TYPES].argmax(axis=1)
+    classes = {"attach": kinds == 8, "attack": kinds == 13, "end": kinds == 14}
+    play = kinds == 7
+    if "option_ids" in data:
+        sup = np.isin(data["option_ids"][rows, 0], list(_supporter_ids()))
+        classes["play_supporter"] = play & sup
+        classes["play_other"] = play & ~sup
+    else:
+        classes["play"] = play
+    return {name: (float(advantages[m].mean()), float(advantages[m].std()),
+                   int(m.sum()))
+            for name, m in classes.items() if m.any()}
+
+
 def collate_ppo(data: dict[str, np.ndarray], rows: np.ndarray,
                 advantages: np.ndarray, returns: np.ndarray):
     """Build one padded/masked minibatch from row indices (same padding idea as
@@ -454,13 +489,15 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             p_.requires_grad_(False)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
 
-    # M7.5 attempt 2: promotion tracks the FIXED goal opponent (the solver ship
-    # agent), not the drifting mirror champion. Bar = the current best's own
-    # measured rate, so a fresh warm start must genuinely improve to promote.
+    # M23: promotion tracks the TEACHER (the sample agent — the strongest
+    # observable opponent), not the solver the M22 audit demoted to an
+    # endogenous in-loop readout. Bar = the current best's own measured rate,
+    # so a fresh warm start must genuinely improve to promote. vs_solver is
+    # still measured and logged every eval; it just no longer gates.
     best_wr, _ = play_games(_as_kaggle_agent(best_path, eval_deck, "ppo_bp_base"),
-                            _solver_opponent(eval_deck, "ppo_sv_base"), eval_games,
-                            names=("best", "solver"))
-    print(f"baseline: current best vs_solver {best_wr:.1%}", flush=True)
+                            load_teacher("ppo_tc_base"), eval_games,
+                            names=("best", "teacher"))
+    print(f"baseline: current best vs_teacher {best_wr:.1%}", flush=True)
 
     for it in range(iterations):
         # 1. fresh self-play data with the CURRENT policy
@@ -490,6 +527,15 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             adv, ret = compute_gae(data["rewards"][rows], data["values"][rows])
             advantages[rows], returns[rows] = adv, ret
 
+        # M23 audit S4: advantage mass by chosen-option type (logging only)
+        adv_stats = advantage_by_type(data, advantages)
+        for name, (mu, sd, n) in adv_stats.items():
+            writer.add_scalar(f"adv/{name}_mean", mu, it)
+            writer.add_scalar(f"adv/{name}_std", sd, it)
+        print("iter %d: adv-by-type %s" % (it, "  ".join(
+            f"{k} {mu:+.3f}±{sd:.3f}(n={n})"
+            for k, (mu, sd, n) in sorted(adv_stats.items()))), flush=True)
+
         # 3. clipped update (M20 KL anchor; M21 plan surrogate + anneals)
         ec_it = _annealed(entropy_coef, entropy_anneal_to, it)
         kl_it = _annealed(kl_coef, kl_anneal_to, it) if kl_coef else 0.0
@@ -509,16 +555,16 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             challenger = _as_kaggle_agent(work, eval_deck, f"ppo_ch{it}")
             wr, _ = play_games(challenger, _solver_opponent(eval_deck, f"ppo_sv{it}"),
                                eval_games, names=("challenger", "solver"))
-            wr_teacher, _ = play_games(challenger, load_teacher(f"ev{it}"), 100,
+            wr_teacher, _ = play_games(challenger, load_teacher(f"ev{it}"), eval_games,
                                        names=("challenger", "teacher"))
             writer.add_scalar("eval/vs_solver", wr, it)
             writer.add_scalar("eval/vs_teacher", wr_teacher, it)
             print(f"iter {it}: vs_solver {wr:.1%}  vs_teacher {wr_teacher:.1%}")
-            if wr > best_wr:
-                best_wr = wr
+            if wr_teacher > best_wr:
+                best_wr = wr_teacher
                 torch.save(model.state_dict(), best_path)
                 torch.save(model.state_dict(), CKPT_DIR / f"ppo{suffix}_it{it:04d}.pt")
-                print(f"iter {it}: PROMOTED (best vs_solver {wr:.1%})")
+                print(f"iter {it}: PROMOTED (best vs_teacher {wr_teacher:.1%})")
 
 
 if __name__ == "__main__":

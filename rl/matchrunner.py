@@ -29,6 +29,7 @@ Usage:
   python -m rl.matchrunner play --a generic:lucario --b random:kyogre -n 60
 """
 import argparse
+import inspect
 import json
 import multiprocessing as mp
 import random
@@ -467,13 +468,19 @@ def make_pilot(spec: OpponentSpec, instance: str):
         if "embedding.weight" in sd:
             # Encoders-v2 checkpoint (OptionScorerV2, M7.3): id embeddings +
             # deck-context pools — the pilot closes over its own deck list.
-            # M16: legacy option encoding — these checkpoints predate the
-            # option-identity block.
-            from rl.encoders import (encode_option_v2_legacy as
-                                     encode_option_v2)
-            from rl.encoders import encode_state_v2
+            # Option width is sniffed from option_enc.0.weight: pinned pre-M16
+            # checkpoints are OPTION_V2_DIM (legacy encoding, no option-identity
+            # block); M23 replay-clones are OPTION_V3_DIM (modern encoding).
+            from rl.encoders import N_OPTION_IDS, OPTION_V3_DIM, encode_state_v2
             from rl.policy import OptionScorerV2
-            m2 = OptionScorerV2()
+            embed = sd["embedding.weight"].shape[1]
+            option_dim = sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * embed
+            if option_dim == OPTION_V3_DIM:
+                from rl.encoders import encode_option_v2
+            else:
+                from rl.encoders import (encode_option_v2_legacy as
+                                         encode_option_v2)
+            m2 = OptionScorerV2(embed=embed, option_dim=option_dim)
             m2.load_state_dict(sd)
             m2.eval()
             deck_ids = resolve_deck(spec[2])
@@ -570,13 +577,21 @@ def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
                 on_game=None) -> list[int]:
     """Slot-fair series: a takes seat g%2. Returns 0 = a won, 1 = b won, 2 = draw
     per game. `game_fn(fn0, fn1, deck0, deck1, stats)` is the test seam (defaults
-    to the [ENGINE] loop). `stats`, if given, accumulates per-SIDE ("a"/"b")
+    to the [ENGINE] loop). A game_fn that declares an `a_seat` parameter also
+    receives side a's seat for this game — per-seat instrumentation MUST use it:
+    fn0/deck0 are seat-0's, which is side a only on even games, so hardcoding
+    `seat == 0` records the OPPONENT half the time (the M22 from_series defect).
+    `stats`, if given, accumulates per-SIDE ("a"/"b")
     move/time/error totals across the series; pre-seed it with
     {"collect_samples": True} to also keep every per-move latency under
     side["samples"] (the M7.4a p99 input). `on_game(g, result, seat_stats)`
     is called after each game with a's result and that game's raw stats — the
     loss-forensics hook (the CLI's --diag)."""
     game = game_fn or _engine_game
+    try:
+        wants_a_seat = "a_seat" in inspect.signature(game).parameters
+    except (TypeError, ValueError):   # builtins / C callables
+        wants_a_seat = False
     fn_a, deck_a = make_pilot(spec_a, instance=f"mr{seed}_a")
     fn_b, deck_b = make_pilot(spec_b, instance=f"mr{seed}_b")
     collect = stats is not None and bool(stats.get("collect_samples"))
@@ -588,7 +603,9 @@ def play_series(spec_a: OpponentSpec, spec_b: OpponentSpec, n_games: int,
         seat_stats: dict | None = None
         if stats is not None or on_game:
             seat_stats = {"collect_samples": True} if collect else {}
-        res = game(fns[0], fns[1], decks[0], decks[1], seat_stats)
+        res = (game(fns[0], fns[1], decks[0], decks[1], seat_stats, a_seat=a_seat)
+               if wants_a_seat else
+               game(fns[0], fns[1], decks[0], decks[1], seat_stats))
         if stats is not None:
             for seat in (0, 1):
                 if seat not in seat_stats:

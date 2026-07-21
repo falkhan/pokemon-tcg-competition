@@ -143,6 +143,56 @@ class TestRetreat:
         assert v.tier != "strict"
 
 
+class TestSupporterAvailability:
+    """M23: an AVAILABILITY rate by design — the module's one sanctioned
+    exception to the strictly-worse denominator rule; the reference pilot is
+    the pricing. These tests pin the candidate definition and the caveat."""
+
+    @pytest.fixture
+    def sup_option(self, monkeypatch):
+        monkeypatch.setattr(bh, "_SUPPORTER_IDS", frozenset({9}))
+        return b.option(OptionType.PLAY, card_id=9)
+
+    def _obs_at_turn(self, options, turn, supporter_played=False):
+        me = b.player(active=b.pokemon(1), hand=[b.hand_card(9)])
+        opp = b.player(active=b.pokemon(4))
+        return b.observation(me=me, opponent=opp, options=options, turn=turn,
+                             supporter_played=supporter_played)
+
+    def test_playable_supporter_declined_counts_availability_not_taken(self, sup_option):
+        end = b.option(OptionType.END)
+        v = bh.judge_supporter(self._obs_at_turn([sup_option, end], turn=5), end)
+        assert v.tier == "avail_t3" and not v.taken     # raw turn 5 = our turn 3
+
+    def test_playing_the_supporter_is_taken(self, sup_option):
+        v = bh.judge_supporter(self._obs_at_turn([sup_option], turn=1), sup_option)
+        assert v.tier == "avail_t1" and v.taken
+
+    def test_supporter_already_played_is_not_a_candidate(self, sup_option):
+        obs = self._obs_at_turn([sup_option], turn=1, supporter_played=True)
+        assert bh.judge_supporter(obs, sup_option) is None
+
+    def test_no_supporter_on_menu_is_not_a_candidate(self, sup_option):
+        end = b.option(OptionType.END)
+        assert bh.judge_supporter(self._obs_at_turn([end], turn=1), end) is None
+
+    def test_late_turns_bucket_separately(self, sup_option):
+        v = bh.judge_supporter(self._obs_at_turn([sup_option], turn=15), sup_option)
+        assert v.tier == "avail_late"
+
+    def test_non_play_option_with_supporter_card_id_is_ignored(self, sup_option):
+        discard = b.option(OptionType.DISCARD, card_id=9)
+        end = b.option(OptionType.END)
+        assert bh.judge_supporter(self._obs_at_turn([discard, end], turn=1), end) is None
+
+    def test_report_prints_rates_and_the_availability_caveat(self):
+        acc = bh.Counter({"games": 2, "supporter_avail_t2": 4,
+                          "supporter_avail_t2_taken": 1, "supporter_avail_late": 3})
+        out = bh.report(acc)
+        assert "t2 1/4" in out and "late 0/3" in out
+        assert "AVAILABILITY rate, not a defect counter" in out
+
+
 class TestReport:
     def test_headline_prints_neutral_adjacent_to_strict(self):
         acc = bh.Counter({"games": 5, "gust_strict": 2, "gust_strict_taken": 1,
