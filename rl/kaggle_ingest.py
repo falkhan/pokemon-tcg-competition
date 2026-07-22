@@ -29,7 +29,6 @@ Usage:
   python -m rl.kaggle_ingest refresh --subs 54474043 --max-new 100
   python -m rl.kaggle_ingest harvest --min-games 3
   python -m rl.kaggle_ingest meta --top-k 8 --dedupe-by archetype
-  python -m rl.kaggle_ingest bc-shards --min-score 600
   python -m rl.kaggle_ingest forensics --sub 54474043
 """
 import argparse
@@ -752,51 +751,6 @@ def build_meta_field(top_k: int = 8, dedupe_by: str = "archetype") -> list[Oppon
 
 
 # ---------------------------------------------------------------------------
-# BC-on-winners audit ([ENGINE][NET] — encoding deferred until the spike
-# confirms observations are present and in what schema; see docs/M7.md)
-# ---------------------------------------------------------------------------
-def bc_shards_from_opponents(min_score: float, out: Path | None = None) -> list[str]:
-    """Audit which high-scoring opponent seats have (observation, action) streams.
-
-    M7.0 scope is the audit only: shard encoding needs the engine's observation
-    classes AND a confirmed obs schema, neither available offline. Returns shard
-    paths once implemented; today prints the audit and returns [].
-    """
-    meta = ({r["episode_id"]: r for r in pl.read_parquet(EPISODES_PQ).iter_rows(named=True)}
-            if EPISODES_PQ.exists() else {})
-    qualifying = []
-    for path in sorted(RAW_DIR.glob("episode_*.json.gz")):
-        eid = int(path.stem.split("_")[1].split(".")[0])
-        raw = json.loads(gzip.decompress(path.read_bytes()))
-        ep = parse_episode(raw, episode_id=eid)
-        m = meta.get(eid, {})
-        for seat in (0, 1):
-            if m.get("our_seat") == seat:
-                continue
-            score = m.get(f"updated_score_{seat}")
-            if score is None or score < min_score:
-                continue
-            has_stream = any(
-                isinstance(step[seat], dict) and _substantive_obs(step[seat])
-                and step[seat].get("action") is not None
-                for step in raw["steps"][1:]
-            )
-            qualifying.append((eid, seat, score, has_stream))
-
-    with_obs = [q for q in qualifying if q[3]]
-    print(f"bc-shards audit: {len(qualifying)} opponent seats with score >= {min_score}; "
-          f"{len(with_obs)} have (observation, action) streams", flush=True)
-    if with_obs:
-        print("encoding to shards is not implemented yet — pending M7.0 schema "
-              "verification (docs/M7.md assumptions table)", flush=True)
-    else:
-        print("no encodable seats: the BC-on-winners edge is not available "
-              "(docs/M7-plan.md §8 risk 2 — harvested decks are still the bigger win)",
-              flush=True)
-    return []
-
-
-# ---------------------------------------------------------------------------
 # Forensics — why did a submission win/lose, by opponent archetype
 # ---------------------------------------------------------------------------
 def forensics(submission_id: int) -> dict:
@@ -931,8 +885,6 @@ def _main() -> None:
     s.add_argument("--top-k", type=int, default=8)
     s.add_argument("--dedupe-by", choices=["archetype", "deck_hash"], default="archetype")
 
-    s = sub.add_parser("bc-shards", help="audit BC-on-winners viability")
-    s.add_argument("--min-score", type=float, default=600)
 
     s = sub.add_parser("forensics", help="W/L by opponent archetype for a submission")
     s.add_argument("--sub", type=int, required=True)
@@ -970,8 +922,6 @@ def _main() -> None:
     elif a.cmd == "meta":
         for spec in build_meta_field(top_k=a.top_k, dedupe_by=a.dedupe_by):
             print(spec)
-    elif a.cmd == "bc-shards":
-        bc_shards_from_opponents(a.min_score)
     elif a.cmd == "forensics":
         forensics(a.sub)
 

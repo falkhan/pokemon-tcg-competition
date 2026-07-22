@@ -76,7 +76,7 @@ def resolve_deck(deck) -> list[int]:
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
     return spec[2] if spec[0] in ("rule", "model", "solved", "ext", "rank",
-                                  "vsolver") else spec[1]
+                                  "vsolver", "mcts") else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -299,7 +299,7 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # stock 800 nodes / 0.4s deadline took the mean to 116.6ms — 2.3x over.
         # Tightened here rather than globally so make_solver_pilot (the rules
         # bundle, which passes G6 today) keeps its measured behaviour.
-        stats = SOLVED_STATS if SOLVED_STATS is not None else None
+        stats = SOLVED_STATS
         return wrap_with_solver(inner_fn, ids, deadline_s=SOLVED_DEADLINE_S,
                                 max_nodes=SOLVED_MAX_NODES,
                                 allow=SOLVED_ALLOW, stats=stats), ids
@@ -703,6 +703,9 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
     if workers <= 1 or game_fn is not None:
         if workers > 1:
             raise ValueError("game_fn requires workers<=1 (not picklable)")
+        if checkpoint:
+            print("warning: --checkpoint ignored on the in-process path "
+                  "(no resume)", flush=True)
         return [play_series(a, b, n, seed=1000 + seed + k, game_fn=game_fn)
                 for k, (a, b, n) in enumerate(pairs)]
 
@@ -777,6 +780,9 @@ def _main() -> None:
                   flush=True)
     stats = {"collect_samples": True} if a.latency else None
     if a.diag or a.latency or a.workers <= 1:
+        if a.checkpoint:
+            print("warning: --checkpoint ignored on the in-process path "
+                  "(no resume)", flush=True)
         results = play_series(spec_a, spec_b, a.games, seed=a.seed,
                               stats=stats, on_game=on_game)
     else:

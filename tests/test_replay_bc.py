@@ -37,3 +37,22 @@ def test_encode_decisions_hand_aware_widens_state_ids(monkeypatch):
                                hand_aware=True)
     assert rows[0][1].shape == (N_STATE_IDS_V3,)
     assert sorted(rows[0][1][12:14].tolist()) == [3, 7]
+
+
+def test_iter_replay_decisions_truncated_next_step_is_a_drop():
+    """A malformed replay whose next step has fewer per-agent entries must
+    count as no_next_action, not crash the whole build with IndexError."""
+    obs = {"select": {"option": [{}, {}], "context": 0},
+           "current": {"players": [{}, {}]}}
+    steps = [
+        [{"status": "ACTIVE", "observation": obs},
+         {"status": "ACTIVE", "observation": obs}],
+        [{"status": "ACTIVE", "observation": obs, "action": [0]}],  # seat 1 gone
+    ]
+    drops = Counter()
+    assert list(rb.iter_replay_decisions(steps, seat=1, drops=drops)) == []
+    assert drops["no_next_action"] == 1
+    # The intact seat still yields its decision.
+    drops0 = Counter()
+    rows = list(rb.iter_replay_decisions(steps, seat=0, drops=drops0))
+    assert [(i, a) for i, _, a in rows] == [(0, [0])]

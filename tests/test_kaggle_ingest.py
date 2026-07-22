@@ -280,7 +280,7 @@ def test_build_meta_field_snapshot_and_specs(kdirs):
     assert (ki.KAGGLE_DIR / "meta_v2").exists()
 
 
-# --- forensics + bc-shards audit ---------------------------------------------
+# --- forensics ----------------------------------------------------------------
 
 def test_forensics_by_archetype_counts(kdirs):
     _seed_harvest(kdirs)
@@ -291,7 +291,3 @@ def test_forensics_by_archetype_counts(kdirs):
     assert report["first_ko"] is None  # deferred until the obs schema is confirmed
 
 
-def test_bc_shards_returns_empty_when_no_obs(kdirs, capsys):
-    _seed_harvest(kdirs)
-    assert ki.bc_shards_from_opponents(min_score=600) == []
-    assert "no encodable seats" in capsys.readouterr().out
