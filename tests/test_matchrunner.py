@@ -49,6 +49,9 @@ def test_resolve_and_spec_deck_contract():
     assert mr.resolve_deck(LUCARIO) == LUCARIO
     assert mr.spec_deck(("rule", "lucario", "kyogre")) == "kyogre"
     assert mr.spec_deck(("generic", "lucario")) == "lucario"
+    # mcts specs are (kind, ckpt, deck, n_sims) — the deck is slot 2, not the
+    # checkpoint path (league/replay_bc resolve the returned value as a deck)
+    assert mr.spec_deck(("mcts", "checkpoints/x.pt", "lucario", 16)) == "lucario"
     # deck_search's historic helpers still delegate here
     assert ds._resolve_deck("lucario") == LUCARIO
 

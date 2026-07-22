@@ -23,7 +23,7 @@ NUMPY_MODULES = ["tcg.selfplay", "tcg.value_training"]
 # M7 modules live in rl/ only (no tcg twin — M7-plan risk 6)
 M7_MODULES = ["rl.matchrunner", "rl.kaggle_ingest", "rl.deck_build", "rl.league"]
 POLARS_MODULES = ["tcg.encoders", "tcg.deck_search"] + M7_MODULES
-TORCH_MODULES = ["tcg.network", "tcg.behavior_cloning", "tcg.ppo", "tcg.search"]
+TORCH_MODULES = ["tcg.network", "tcg.behavior_cloning", "tcg.ppo"]
 KAGGLE_ENV_MODULES = ["tcg.evaluation", "tcg.shipping"]
 
 

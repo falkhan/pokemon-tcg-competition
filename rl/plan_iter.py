@@ -482,7 +482,7 @@ def _collect_chunk(args):
 def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             checkpoint: str | None = None, tau: float = 1.0,
             dirichlet: float = 0.0, deadline: float = 2.0,
-            label_deadline: float = 0.5, workers: int = 12,
+            label_deadline: float = 0.5, workers: int = 8,
             shard_size: int = 200, seed: int = 0,
             opponents: list | None = None,
             value_ckpt: str | None = None,
@@ -867,7 +867,7 @@ def train(data_dirs: list, name: str, init: str | None = None,
     else:
         # M23 audit E1: width-driven from the data, like the bc.py v2 path —
         # replay-clone shards carry legacy 12-wide state_ids, and a net built
-        # at the hand-aware default 20 cannot consume them.
+        # at the hand-aware width (20) cannot consume them.
         model = OptionScorerV3(n_state_ids=ds.state_ids.shape[1],
                                option_dim=ds.options.shape[1])
         print(f"fresh V3 (n_state_ids={model.n_state_ids}, "
@@ -895,7 +895,7 @@ def train(data_dirs: list, name: str, init: str | None = None,
                     ptotal += int(mask.sum())
         return correct / max(1, total), pcorrect / max(1, ptotal)
 
-    if init is not None or init_v2 is not None:
+    if any(p is not None for p in (init, init_v2, init_v3h, init_v3o)):
         acc0, pacc0 = evaluate()
         print(f"init val_acc {acc0:.3f}  plan_acc {pacc0:.3f}")
 
@@ -1031,7 +1031,7 @@ if __name__ == "__main__":
     c.add_argument("--dirichlet", type=float, default=0.0)
     c.add_argument("--deadline", type=float, default=2.0)
     c.add_argument("--label-deadline", type=float, default=0.5)
-    c.add_argument("--workers", type=int, default=12)
+    c.add_argument("--workers", type=int, default=8)
     c.add_argument("--shard-size", type=int, default=200)
     c.add_argument("--seed", type=int, default=0)
     c.add_argument("--opponents", type=str, nargs="+", default=None,

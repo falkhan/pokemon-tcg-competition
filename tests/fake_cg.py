@@ -155,9 +155,9 @@ def to_observation_class(obs_dict):
     return obs_dict
 
 
-# Determinized-search API (rl/mcts.py, tcg/search.py). The stub only provides
-# the names so the modules import; tests monkeypatch the module-bound names
-# (e.g. ``tcg.search.search_step``) with scripted engines.
+# Determinized-search API (rl/mcts.py). The stub only provides the names so
+# the modules import; tests monkeypatch the module-bound names
+# (e.g. ``rl.mcts.search_step``) with scripted engines.
 def search_begin(*args, **kwargs):
     raise NotImplementedError("monkeypatch the consuming module's search_begin")
 

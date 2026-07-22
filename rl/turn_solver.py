@@ -248,7 +248,7 @@ def _candidate_actions(obs, fixes: frozenset = frozenset()) -> list[list[int]]:
     score_option (+ END, so every prompt has a turn-terminating child).
     Multi-select prompts keep the MAX_MULTI_COMBOS best exact-maxCount
     combinations by summed member score (the house action semantics —
-    tcg/search.py enumerate_actions)."""
+    rl/mcts.py _enumerate_actions)."""
     sel = obs.select
     n = len(sel.option)
     scores = [score_option(o, obs, fixes) for o in sel.option]
@@ -534,7 +534,7 @@ def make_solver_pilot(deck: list[int], instance: str = "ts", dev: bool = False,
     boards the lethal triggers ignore (`solver-dev:` matchrunner spec).
 
     Solves at ANY prompt the trigger fires on — including submenu prompts
-    mid-combo (unlike rl/hybrid.py's MAIN-only guard), otherwise the line
+    mid-combo (unlike the retired hybrid agent's MAIN-only guard), otherwise the line
     found at the MAIN prompt would derail one action later. Any solver error
     falls back to the greedy pick: the wrapper must never cost the G1 crash
     gate."""

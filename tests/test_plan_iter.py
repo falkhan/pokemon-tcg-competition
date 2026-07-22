@@ -9,8 +9,8 @@ np = pytest.importorskip("numpy")
 torch = pytest.importorskip("torch")
 
 import rl.plan_iter as pi
-from rl.encoders import (N_CONTEXTS, N_OPTION_IDS, N_STATE_IDS, OPTION_DIM,
-                         STATE_V2_DIM)
+from rl.encoders import (N_CONTEXTS, N_OPTION_IDS, N_STATE_IDS,
+                         N_STATE_IDS_V3, OPTION_DIM, STATE_V2_DIM)
 from rl.plan import PLAN_DIM
 from rl.policy import OptionScorerV2, OptionScorerV3
 
@@ -473,3 +473,41 @@ def test_encode_state_v3_hand_ids():
     assert ids.shape == (N_STATE_IDS_V3,)
     assert sorted(ids[12:15].tolist()) == [3, 6, 7]   # sorted hand ids
     assert not ids[15:].any()                          # zero padding
+
+
+def test_collect_workers_default_is_the_hard_cap():
+    """CLAUDE.md hard rule: 12 workers deadlocks mp.Pool via the native
+    libcg.so corruption (M17/m19b); 8 is the proven-stable ceiling."""
+    import inspect
+    assert inspect.signature(pi.collect).parameters["workers"].default == 8
+
+
+def test_train_v3h_warm_start_prints_init_val_acc(tmp_path, monkeypatch,
+                                                  capsys):
+    """--init-v3h/--init-v3o warm starts get the same pre-training baseline
+    read as --init/--init-v2 (was silently skipped for the M25 ship path)."""
+    import torch
+    rng = np.random.default_rng(7)
+    src = pi.OptionScorerV3(n_state_ids=N_STATE_IDS, option_dim=OPTION_DIM)
+    ckpt = tmp_path / "legacy_v3.pt"
+    torch.save(src.state_dict(), ckpt)
+    d = tmp_path / "shards"
+    d.mkdir()
+    n = 4
+    np.savez_compressed(                          # 1-option menus, 2 games
+        d / "shard_0000.npz",
+        states=rng.standard_normal(
+            (n, STATE_V2_DIM + N_CONTEXTS)).astype(np.float32),
+        state_ids=rng.integers(0, 1268, (n, N_STATE_IDS_V3)).astype(np.int32),
+        options=rng.standard_normal((n, OPTION_DIM)).astype(np.float32),
+        option_ids=rng.integers(0, 1268, (n, 2)).astype(np.int32),
+        n_options=np.ones(n, dtype=np.int32),
+        labels=np.zeros(n, dtype=np.int32),
+        game_ids=np.arange(n, dtype=np.int32) // 2,
+        results=np.ones(n, dtype=np.float32),
+        deck_idx=np.zeros(n, dtype=np.int32),
+    )
+    monkeypatch.setattr(pi, "ROOT", tmp_path)     # redirect checkpoints/
+    pi.train([d], name="_v3h_init", epochs=1, batch_size=4,
+             init_v3h=str(ckpt))
+    assert "init val_acc" in capsys.readouterr().out

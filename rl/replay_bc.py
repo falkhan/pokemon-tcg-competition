@@ -19,7 +19,7 @@ trap postmortem never hits: the INACTIVE seat carries a stale, repeated
 
 This module is [ENGINE] (encoders import rl.combat -> cg); rl/kaggle_ingest.py
 stays engine-free per its docstring contract and is imported for the parse /
-cache layer only. Its ``bc-shards`` audit stub is superseded by ``build`` here.
+cache layer only.
 
 Usage:
   python -m rl.replay_bc audit                      # G0: converter integrity, zero games
@@ -83,7 +83,9 @@ def iter_replay_decisions(steps: list, seat: int, drops: Counter):
         if not 0 <= int(sel.get("context", -1)) < N_CONTEXTS:
             drops["context_overflow"] += 1  # SelectContext beyond the one-hot head-room
             continue
-        nxt = steps[i + 1][seat] if i + 1 < len(steps) and isinstance(steps[i + 1][seat], dict) else None
+        nxt = (steps[i + 1][seat] if i + 1 < len(steps)
+               and seat < len(steps[i + 1])
+               and isinstance(steps[i + 1][seat], dict) else None)
         action = nxt.get("action") if nxt else None
         if not (isinstance(action, list) and action
                 and all(isinstance(a, (int, float)) for a in action)):
@@ -212,7 +214,7 @@ def align_roundtrip(n_games: int = 6, out_dir: Path | None = None) -> dict:
     bundle = str(ROOT / "submission_rules" / "main.py")
     tmp = tempfile.TemporaryDirectory() if out_dir is None else None
     out = Path(out_dir) if out_dir else Path(tmp.name)
-    wr, _ = play_games(bundle, bundle, n_games, json_prefix=str(out / "ep"))
+    play_games(bundle, bundle, n_games, json_prefix=str(out / "ep"))
 
     drops: Counter = Counter()
     first = full = total = 0

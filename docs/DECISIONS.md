@@ -7,6 +7,23 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-22 · M25 cleanup: dead code retired; the gate's sys.path shadow makes tcg/deck_search load-bearing
+**Observation:** an import-graph sweep against the live M25 pipeline found `rl/hybrid.py` fully
+orphaned, `tcg/search.py` reachable only from its parity test, and the search half of
+`tcg/deck_search.py` (mutate/hill_climb/evolve — M4, long dead) unused. But the first attempt to
+repoint `tcg.shipping.deck_check` at `rl.deck_search` was caught by the build dry-run: by gate
+time the bundle's `main.py` has put `submission/` first on `sys.path`, so `rl` resolves to the
+bundle's stripped package — the tcg twin of `validate_deck` is what keeps the deck gate importable.
+**Pivot:** retired `rl/hybrid.py` + `tcg/search.py` + stale pre-M24 scripts/logs/stubs
+(all recoverable from git); trimmed `tcg/deck_search.py` to card tables + `validate_deck`; ported
+the old-vs-new parity suites to direct pins on the surviving rl copies (`tests/test_mcts.py`,
+rewritten `tests/test_deck_search.py`). Low-risk fixes shipped with tests: `plan_iter` workers
+default 12→8 (the M17/m19b deadlock cap), `iter_replay_decisions` truncated-step guard,
+`spec_deck` mcts slot, `--checkpoint` in-process warning; riskier findings (OUR_SUBS drift,
+`WHOLE_BOARD_THREAT` wrong-side board_ids, argmax tie-break train/serve skew, shipping CLI
+kyogre default) deferred to the cleanup PR's findings list, not fixed. Rebuilt bundle verified
+byte-identical to shipped 54897966 (deck md5 8e8cf124).
+
 ### 2026-07-20 · Every gate opponent was in the training pool → dragapult reserved as the only out-of-loop floor
 **Observation:** auditing B3's live mixture (`runs/m21_legB3.log:78`) against our gates found
 **nothing held out**: mirror's `solver:lucario` 0.45, the meta decks 0.55, `random:kyogre` 0.05,
