@@ -95,10 +95,11 @@ if _IS_V3:
 
 _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
 # M26 attach-override arms (rl/plan.apply_attach_overrides): comma-separated
-# fix names ("telepath", "backstop"). SHIP DEFAULT IS OFF — an approved ship
-# of an override arm changes this default string, never the predicate.
+# fix names ("telepath", "backstop"). Ship default = "telepath" (O1, Piotr's
+# 2026-07-22 sign-off — docs/M26.md candidate matrix); an approved ship
+# changes this default string, never the predicate.
 _ATTACH_FIXES = frozenset(
-    f for f in os.environ.get("PKM_ATTACH_FIXES", "").split(",") if f)
+    f for f in os.environ.get("PKM_ATTACH_FIXES", "telepath").split(",") if f)
 
 
 def _log_net(rec: dict) -> None:
