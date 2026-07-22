@@ -337,7 +337,10 @@ def memory_parity_check(steps: int = 60) -> int:
 
 def deck_check(base: str = "submission") -> int:
     """Shipped deck.csv is a legal deck. Returns deck size."""
-    from rl.deck_search import validate_deck
+    # MUST be the tcg twin: by gate time the bundle's main.py has put
+    # submission/ first on sys.path, so ``rl`` is the bundle's stripped
+    # package and rl.deck_search is unreachable in this process.
+    from tcg.deck_search import validate_deck
 
     deck = [int(x) for x in open(f"{base}/deck.csv") if x.strip()]
     legal, reasons = validate_deck(deck)

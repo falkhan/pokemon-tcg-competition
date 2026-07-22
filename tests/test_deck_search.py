@@ -1,7 +1,11 @@
-"""Unit pins for rl/deck_search.py (legality checker, mutations, search loops).
+"""Unit pins for rl/deck_search.py (legality checker, mutations, search loops)
+plus rl↔tcg parity of the legality twin.
 
-Ported from the retired old-vs-new parity suite when tcg/deck_search.py was
-removed — parity assertions became invariant + seeded-determinism pins.
+Ported from the old-vs-new parity suite when tcg/deck_search.py was trimmed
+to the ship-gate's validate_deck — the search-half parity assertions became
+invariant + seeded-determinism pins on the surviving rl copy; the legality
+checker keeps its twin parity pins (tcg.shipping.deck_check imports the tcg
+twin because the gate's sys.path shadows ``rl`` with the bundle).
 matchup() needs the real engine — import-smoke only; the tournament/search
 loops run against a monkeypatched deterministic matchup.
 """
@@ -13,6 +17,7 @@ pytest.importorskip("numpy")
 pytest.importorskip("polars")
 
 import rl.deck_search as ds
+import tcg.deck_search as tds
 from tcg.decks import load_deck
 
 LUCARIO = load_deck("lucario")
@@ -20,22 +25,22 @@ IONO = load_deck("iono")
 KYOGRE = load_deck("kyogre")
 
 
-def test_card_tables():
+def test_card_tables_parity():
     assert (ds.DECK_SIZE, ds.MAX_COPIES) == (60, 4)
-    assert len(ds.ALL_IDS) > 0
-    row = ds._ft[ds.ALL_IDS[0]]
-    for key in ("is_basic_energy", "is_pokemon", "is_ace_spec"):
-        assert key in row
+    assert tds.ALL_CARD_IDS == ds.ALL_IDS
+    assert tds.CARD_ROWS == ds._ft
+    assert (tds.DECK_SIZE, tds.MAX_COPIES) == (ds.DECK_SIZE, ds.MAX_COPIES)
 
 
 @pytest.mark.parametrize("deck", [LUCARIO, IONO, KYOGRE])
-def test_validate_deck_repo_decks(deck):
+def test_validate_deck_parity_repo_decks(deck):
+    assert ds.validate_deck(deck) == tds.validate_deck(deck)
     ok, reasons = ds.validate_deck(deck)
     assert ok
     assert reasons == []
 
 
-def test_validate_deck_illegal_cases():
+def test_validate_deck_parity_illegal_cases():
     non_energy = next(i for i in LUCARIO if not ds._ft[i]["is_basic_energy"])
     cases = [
         LUCARIO[:59],                       # wrong size
@@ -48,6 +53,7 @@ def test_validate_deck_illegal_cases():
     if len(ace_specs) >= 2:
         cases.append(LUCARIO[:58] + ace_specs[:2])    # two ACE SPECs
     for deck in cases:
+        assert ds.validate_deck(deck) == tds.validate_deck(deck)
         ok, reasons = ds.validate_deck(deck)
         assert not ok
         assert reasons
