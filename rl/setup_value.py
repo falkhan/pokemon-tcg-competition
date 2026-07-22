@@ -94,7 +94,7 @@ def _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
 
     stop_file = out / ".stop"
     for game in range(lo, hi):
-        if stop_file.exists():       # graceful drain (m13_collect.sh Ctrl-C)
+        if stop_file.exists():       # graceful drain (wrapper-script Ctrl-C)
             break
         picks_idx = [rng.randrange(len(population)) for _ in range(2)]
         decks = [population[picks_idx[0]], population[picks_idx[1]]]
@@ -143,7 +143,7 @@ def _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
 
         if (game - lo + 1) % shard_size == 0:
             flush()
-        # progress beacon for wrapper UIs (m13_collect.sh): one tiny file per
+        # progress beacon for wrapper UIs: one tiny file per
         # worker, overwritten per game — cheap, crash-safe, poll-friendly.
         (out / f".progress_w{worker:02d}").write_text(str(game - lo + 1))
         if game - lo + 1 == 25:
