@@ -331,17 +331,28 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # determinization (rl/determinize.py). Dimension-aware like "model".
         import torch
         from rl.determinize import load_meta
-        from rl.mcts import make_mcts_agent
-        from rl.policy import OptionScorer
+        from rl.mcts import V3Evaluator, make_mcts_agent
+        from rl.policy import OptionScorer, OptionScorerV3, option_dim_of
         ckpt = Path(spec[1])
         if not ckpt.is_absolute() and not ckpt.exists():
             ckpt = ROOT / ckpt
         sd = torch.load(ckpt, map_location="cpu")
-        m = OptionScorer(state_ctx_dim=sd["state_enc.0.weight"].shape[1])
-        m.load_state_dict(sd)
-        m.eval()
         ids = resolve_deck(spec[2])
-        return make_mcts_agent(m, ids, n_sims=int(spec[3]), meta=load_meta()), ids
+        if "plan_enc.0.weight" in sd:
+            # M28: v3 checkpoints drive the search through V3Evaluator, which
+            # carries the decklist the v3 state encoder needs. The M8.4 kill
+            # was measured on the v1 value head only (docs/M22.md).
+            from rl.plan_iter import _n_ids_of
+            m3 = OptionScorerV3(n_state_ids=_n_ids_of(sd),
+                                option_dim=option_dim_of(sd))
+            m3.load_state_dict(sd)
+            m3.eval()
+            model = V3Evaluator(m3, ids)
+        else:
+            model = OptionScorer(state_ctx_dim=sd["state_enc.0.weight"].shape[1])
+            model.load_state_dict(sd)
+            model.eval()
+        return make_mcts_agent(model, ids, n_sims=int(spec[3]), meta=load_meta()), ids
     if kind == "random":
         rng = random.Random(hash(instance) & 0xFFFF)
         fn = lambda od: rng.sample(range(len(od["select"]["option"])),  # noqa: E731

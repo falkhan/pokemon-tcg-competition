@@ -224,3 +224,50 @@ def test_mcts_search(monkeypatch):
     # From the root player's perspective action 0 leads only to wins,
     # action 1 only to losses/draws.
     assert root.W[0] > root.W[1]
+
+
+def test_v3_evaluator_priors_match_the_live_inference_path():
+    """M28: the MCTS V3 adapter must encode EXACTLY like the matchrunner v3
+    pilot, or the search would explore a different game than the one we ship.
+    Pins priors to softmax(logits) and value to the value head."""
+    import numpy as np
+    import torch
+
+    from rl.encoders import (N_STATE_IDS_V3, encode_context, encode_option_v2,
+                             encode_state_v3)
+    from rl.mcts import V3Evaluator
+    from rl.plan import PLAN_DIM
+    from rl.policy import OptionScorerV3
+    from tests.builders import hand_card, observation, option, player, pokemon
+    from tests.fake_cg import AreaType, OptionType
+
+    torch.manual_seed(0)
+    # hand-aware ids (20) — what encode_state_v3 emits and what the shipped
+    # lineage uses; the bare default is the 12-id legacy width.
+    net = OptionScorerV3(n_state_ids=N_STATE_IDS_V3)
+    deck = [1] * 60
+    obs = observation(
+        me=player(active=pokemon(1), bench=[pokemon(3)], hand=[hand_card(6)]),
+        opponent=player(active=pokemon(2)),
+        options=[option(OptionType.ATTACH, area=int(AreaType.HAND), index=0,
+                        in_play_area=int(AreaType.ACTIVE), in_play_index=0),
+                 option(OptionType.END)])
+
+    # the adapter
+    probs, value = V3Evaluator(net, deck).priors_and_value(obs)
+
+    # the live path, spelled out (rl/matchrunner.py fn3)
+    num, sids = encode_state_v3(obs.current, deck)
+    sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
+    pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+    opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+    oids = np.stack([i for _, i in pairs])
+    with torch.no_grad():
+        logits, val = net(torch.from_numpy(sc).unsqueeze(0),
+                          torch.zeros(1, PLAN_DIM),
+                          torch.from_numpy(sids).long().unsqueeze(0),
+                          torch.from_numpy(opts).unsqueeze(0),
+                          torch.from_numpy(oids).long().unsqueeze(0))
+    assert np.allclose(probs, torch.softmax(logits.squeeze(0), 0).numpy(), atol=1e-6)
+    assert abs(value - float(val)) < 1e-6
+    assert abs(probs.sum() - 1.0) < 1e-6

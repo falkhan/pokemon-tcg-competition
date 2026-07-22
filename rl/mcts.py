@@ -73,18 +73,60 @@ def _enumerate_actions(select, probs: np.ndarray):
     return actions, pri
 
 
+class V3Evaluator:
+    """M28 adapter: lets the v1-era search drive an OptionScorerV3.
+
+    `mcts_search` (Piotr's core) only ever passes `model` through to
+    `make_node`, so wrapping the net here keeps that loop byte-untouched while
+    carrying the two things the v3 encoders need and the v1 ones did not: the
+    decklist (encode_state_v3's deck-context pools) and the id vectors.
+
+    The plan input is fed as ZEROS — docs/M27.md Probe 4 measured the plan block
+    as inert in the replay-BC lineage (1 top-1 flip in 2800 rows), and the plan
+    head gets no gradient there, so committing a plan inside the search would be
+    adding noise, not information.
+    """
+
+    def __init__(self, net, deck: list[int]):
+        self.net = net
+        self.deck = list(deck)
+
+    def priors_and_value(self, obs):
+        from rl.encoders import encode_option_v2, encode_state_v3
+        from rl.plan import PLAN_DIM
+        num, sids = encode_state_v3(obs.current, self.deck)
+        sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
+        pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+        opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+        oids = np.stack([i for _, i in pairs])
+        with torch.no_grad():
+            logits, value = self.net(
+                torch.from_numpy(sc).unsqueeze(0),
+                torch.zeros(1, PLAN_DIM),
+                torch.from_numpy(sids).long().unsqueeze(0),
+                torch.from_numpy(opts).unsqueeze(0),
+                torch.from_numpy(oids).long().unsqueeze(0))
+        return torch.softmax(logits.squeeze(0), dim=0).numpy(), float(value)
+
+
 @torch.no_grad()
-def evaluate(state, model: OptionScorer):
+def evaluate(state, model):
     """Neural (or terminal) evaluation of a search state.
 
     Returns (value, to_move, actions, priors). `value` is from `to_move`'s
-    perspective: +1 this player has won, -1 lost, else the value head's estimate."""
+    perspective: +1 this player has won, -1 lost, else the value head's estimate.
+    `model` is an OptionScorer (v1) or a V3Evaluator (M28)."""
     obs = state.observation
     st = obs.current
     to_move = st.yourIndex
     if st.result >= 0:                                  # terminal
         v = 0.0 if st.result == 2 else (1.0 if st.result == to_move else -1.0)
         return v, to_move, [], np.array([])
+
+    if isinstance(model, V3Evaluator):
+        probs, value = model.priors_and_value(obs)
+        actions, priors = _enumerate_actions(obs.select, probs)
+        return value, to_move, actions, priors
 
     sc = np.concatenate([encode_state(st), encode_context(obs.select.context)])
     # Pre-M3 checkpoints (bc_v1, the M8.4b instrument stack) are exactly
