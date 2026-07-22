@@ -114,10 +114,17 @@ daily slots, and competes for the episode throughput the arms need.
 - **Win/loss contrast for loss anatomy.** `postmortem --batch` was run over losses only; a flag
   appearing equally in wins carries no information. Baseline every flag against the win side
   before it may motivate a leg.
-- **Decontaminate the floors.** `rule:lucario` is simultaneously a floor gate (SKILL.md:41,
-  "no regression vs 0.362") and a 5–10% training opponent (M21.md:208). Either drop it from
-  training pools or replace it as a floor. `dragapult` is the only sample agent absent from
-  `collector.py`, `plan_iter.py`, and `ppo.py` — the cleanest out-of-loop opponent we own.
+- ~~**Decontaminate the floors.**~~ **DECIDED + IN PROGRESS (Piotr, 07-20).** `rule:dragapult`
+  becomes the **generalization floor**; `rule:lucario` is **kept and relabelled** a
+  *training-distribution regression check* (it caught the Gate A collapses and has a
+  five-milestone series — relabel, don't delete). Baseline battery running: B2/B3/champion
+  × 2 seeds × n=400 vs `rule:dragapult`.
+  **Rejected — dropping `rule:lucario` from the pools:** it would not decontaminate existing
+  checkpoints (M22c continues PPO from B3, whose weights already encode the exposure), it takes
+  the mixture to ~90% solver-or-self against the M7.5 precedent (G3 0.44→0.145 vs *every* rules
+  pilot), and a 5% mixture change is far below what our instruments resolve — a blind change with
+  an unverifiable payoff. Full rationale in `docs/DECISIONS.md`.
+  ⚠️ **Dragapult is EVALUATION-ONLY; adding it to a training pool retires it permanently.**
 - **Label instruments honestly.** Head-to-head vs champion is valid for *progress* ("is this
   checkpoint better than the last"), invalid for *live prediction* (endogenous). Both are needed;
   the M21 failure was the mislabeling, not the instrument.
@@ -145,7 +152,214 @@ Slot budget: **4/day**, 2 used on 07-20 (B2 06:13, B3 08:54 UTC).
 3. Set an explicit accrual **target and decision date**: ~150–300 games/arm. At 2 arms and
    current throughput that is ~4–8 days; each added arm extends it proportionally.
 
-## M22c — the next shippable model (was M22b)
+## M22c — close the out-of-loop gap (rescoped 07-20)
+
+M22b measured a **~30pp out-of-loop collapse** and showed that four generations of mirror gains
+(+8.0pp, resolvable) bought **no measurable out-of-loop gain** (0.2037 → 0.1719, inside a 5.5pp
+MDE). "Scale PPO self-play" is therefore no longer the plan of record: it optimises harder against
+`solver:lucario`, which is 45% of the training mixture and the one number shown to move
+independently of real strength.
+
+Three levers, in the order the evidence supports.
+
+### C1 — inference-time search (IN PROGRESS)
+
+The shipped agent does **zero engine calls** (`submission/main.py:143-193`: encode → plan argmax →
+one forward pass → `argsort`), while `rl/turn_solver.py` — a working within-turn DFS whose
+docstring names our exact failure — ships only under `build_submission.sh --agent rules`.
+
+Built: `wrap_with_solver` (`rl/turn_solver.py`) + the `solved:<ckpt>:<deck>` spec, so it is a
+clean A/B against the plain `model:` pilot. **Lethal tier only** — `ARCHITECTURE.md` forecloses
+widening ("override-style consumption of any eval signal on non-lethal turns | M8.1, M12, M13 |
+five measurements, all below the 0.500 null").
+
+Gates before this can ship: out-of-loop gain > 5.5pp MDE · no mirror regression · **G6 mean move
+< 50ms** (`rl/league.py:353-357`) — the solver's `SOLVE_DEADLINE_S=0.4` is 8× the whole budget, so
+it survives only because `should_solve` gates it to a minority of prompts. Measure, don't assume.
+Shipping also requires `turn_solver.py` in the neural bundle plus re-establishing purity, and
+fixing `ARCHITECTURE.md`'s known-gap #2: `rl/plan.py` is missing from the archive `REQUIRED` check
+and from `test_imports.py`'s purity tier — "the least-protected file on the shipping path".
+
+### C1 status (07-20 EOD queue)
+
+**Solid — the solver is triggering far too loosely.** Per-tier instrumentation
+(`solve_trigger` + `trig_*`/`fire_*` stats), 30 games, single config so no divergence:
+
+| tier | triggered | % prompts | overrode | hit rate |
+|---|---|---|---|---|
+| T1 KO ≤1 attach | 549 | 39.2% | 15 | 2.7% |
+| T2 trainer gap | 149 | 10.6% | 3 | 2.0% |
+| T4 closing | 111 | 7.9% | 1 | 0.9% |
+| T3 multi-prize | **0** | 0% | 0 | never fires |
+| **total** | **809** | **57.8%** | **19** | **2.3%** |
+
+We pay search cost on 57.8% of prompts to change **7 actions in 1400 (0.5%)**. That is the
+latency problem and it explains the modest +3.5pp directly. `should_solve`'s docstring calls
+itself a trigger for "when a combo could plausibly pay off" — at 57.8% it is not that.
+
+**Discarded — my budget sweep was unsound.** Fire counts at 30 games: 120 nodes → 19,
+240 → 1 (seed 5) but 13 (seed 11), 800 → 44. Two flaws: (a) each budget changes actions, so the
+configs play *different games* — this is not a controlled comparison; (b) fires are rare events
+and n=30 cannot separate them. **No conclusion about depth is supported.**
+
+### EOD queue (Piotr on the laptop until then)
+
+1. **Strength resolution, ~4000 games / ~2.5h.** Both arms need ~2000: with plain fixed at n=800
+   the MDE floor is 3.9pp even at infinite n on the solved arm.
+   `plain model:` and `solved:` vs `rule:dragapult`, n=1000 × 2 seeds each.
+2. **Fixed-trajectory budget sweep** — the sound version of the failed diagnostic. Record states
+   from ONE plain-pilot run, then replay the *same* states through each budget and count
+   overrides. No divergence, and far more sample-efficient than replaying whole games.
+3. Only after (2): pick the trigger/budget point. Headroom math — plain 11.5ms of a 50ms gate,
+   per-solve cost ~linear in `max_nodes` — gives: 240 nodes free at the current rate, 400 nodes at
+   75% of it, 800 nodes at 37%. `SOLVED_ALLOW` gates tiers; T3 is free to drop (never fires).
+
+## M22c-RL — upgrade the teacher, retrain PPO (the shippable candidate)
+
+**Direction (Piotr):** leaderboard leaders are all RL, so the shippable artifact stays RL.
+Rule-agent work is diagnostic only.
+
+**Why the teacher, quantified.** `rule:lucario` (the Pokemon Company sample agent) beats
+`solver:lucario` **0.670** on the same deck (n=200, slot-fair). Our RL agent trains **45%** against
+`solver:lucario` — which wraps `make_generic_pilot`, a pilot a free rule agent beats 2:1. Five
+milestones of mirror gains were climbing a ladder against a weak wall. The RL agent's 0.51 mirror
+= "beats a weak sparring partner 51% of the time", which is why it collapses to 0.17 out-of-loop.
+
+**The pilot diff (2025 sample-agent vs generic_pilot) says the gap is learnable.** Two capabilities
+account for 0.22 vs 0.50, both with every input already in the encoder (so a policy CAN learn them):
+- **Gap A — prize-race / Mega-exposure denial** (policy gap): don't over-commit the 3-prize Mega
+  when the opponent can cash it. Inputs present in `_combat_features`/`glob`.
+- **Gap B — coordinated within-turn line** (sequencing gap): gust→attach→attack on one target.
+  Inputs present; needs sequential training against an opponent that punishes incoherent lines.
+
+A stronger training opponent addresses BOTH without hand-specifying either — the opposite of the
+M20/M21 shaping traps.
+
+### The experiment — one variable
+
+Take B3's **exact** opponent-weight profile and upgrade only the same-deck teacher: the 0.45 that
+was `solver:` on our deck (`solver:lucario` 0.15 + the byte-identical `solver:deck_20dcd…csv` 0.30)
+becomes **`rule:lucario`**. Everything else held: meta-deck solvers ~0.25, mirror 0.10, past 0.10,
+random 0.05. Same distribution SHAPE, teacher quality 0.22 → 0.50. Start from `ppo_current_m21legB3`.
+
+**Gate — out-of-loop, pre-registered:** `rule:dragapult` n=800 2-seed, must beat B3's 0.172 by
+>5.5pp (the MDE). Mirror (`solver:lucario`) reported but NOT a ship criterion — it is the
+contaminated metric this whole milestone demoted.
+
+**Why dragapult being held out makes this self-checking:** "you become what you train against"
+(overfit to the now-deterministic `rule:lucario`) would show as a HIGH rule:lucario score and a
+FLAT dragapult score. Because dragapult is never in the pool, the instrument detects its own
+primary failure mode. No extra design needed.
+
+### Risks and bounds
+
+- **Determinism.** `rule:lucario` is largely deterministic; 0.45 on one opponent risks memorisation.
+  Mitigated by the held-out gate above and by keeping mirror/past/meta/random diversity (the M7.5
+  bound: never 100% one opponent). If dragapult stays flat while rule:lucario soars, that is the
+  memorisation signature and the leg is killed.
+- **`rule:lucario` stops being a floor** — already replaced by `rule:dragapult` in M22b, so the
+  timing is deliberate.
+- **Dragapult stays OUT of the pool** or the gate is spent.
+- Cost: one collect+train PPO leg (hours) + the n=1600 gate. Multi-hour — launch at a chosen time.
+
+### If it works / if it does not
+
+- **Moves dragapult >5.5pp:** the teacher was the bottleneck; this is the shippable candidate and
+  the recipe generalises (upgrade every solver slot to a rule agent where one exists).
+- **Flat:** the teacher is not sufficient alone; Gap B needs an explicit plan/search head trained
+  in the loop (a real architecture change), and Gap A may need the shaping fallback. Either way we
+  learned it for the cost of one leg, not a milestone.
+
+### C2 — fix the threat representation (SCOPED 07-20, FALSIFIED — see docs/M22.md)
+
+**The confirmed defect** (p<0.0001): our opponent model asks only *"can their ACTIVE KO my
+ACTIVE"* — `opp_ttk` + `return_ko` + `concedes`, all computed against `op_active` vs `attacker`
+(`rl/plan.py:106-117`). The solver leaf has the same blindness: `W_COUNTER` is documented as
+"opp active can return-KO my **active**" (`rl/turn_solver.py:74`). Dragapult spreads damage to
+our bench; the median loss puts a third of the damage there, the median lucario game puts none.
+
+**The data problem is small.** `cg.api.Attack` exposes only `(attackId, name, text, damage,
+energies)` — no structural notion of spread; `text` is free-form English and `_ATK` discards it.
+But across every deck we actually face, only **5 attacks** mention bench damage and only **3** are
+real threats:
+
+| id | name | effect |
+|---|---|---|
+| 154 | Phantom Dive | 200 + **6 damage counters anywhere on our bench** |
+| 183 | Cruel Arrow | 100 to **any** of our Pokémon, bench included |
+| 412 | Insta-Strike | 30 + 30 to one benched Pokémon |
+
+So this is a **3-entry curated table**, exactly the `CONDITIONAL_ATTACKS` pattern already at
+`rl/combat.py:26` ("card FACTS the tables can't otherwise see", mirrored in `tcg/`, change BOTH).
+
+#### C2.0 — falsify it cheaply FIRST (no retrain)
+
+Before touching the encoder, test the hypothesis where it costs nothing: extend the **solver
+leaf's** counter term from active-only to whole-board, and measure `solver:lucario` vs
+`rule:dragapult`. The solver is a rule pilot — no training, no migration, results same-day.
+
+- If whole-board threat awareness does **not** help the solver, the representation story is wrong
+  and C2 stops here having cost a day instead of a milestone.
+- If it does help, we have a measured effect size *before* committing to a retrain.
+
+This is the step M21 skipped when it spent a whole leg on the gust "defect".
+
+#### C2.1 — the threat function
+
+`incoming_threat(op, me, board_ids) -> per-slot damage`: their best affordable attack evaluated
+against **every** slot of our board, consuming the spread table. Pure `rl/combat.py`-style dict
+math, bundle-safe (no numpy/torch), mirrored to `tcg/`.
+
+Reuse `_best_damage` (affordability-gated) — not `_charged_best`, per the M22b lesson.
+
+#### C2.2 — feed it to the net (the expensive half)
+
+Two consumers, both width changes:
+- **plan vector** (`PLAN_DIM=27`): add whole-board risk terms — how many of our Pokémon they can
+  KO next turn, and whether that concedes the game.
+- **state encoder**: per-slot incoming-threat features alongside the existing per-slot offence.
+
+Either changes tensor width → **encoder v5 + `migrate_v4_to_v5` zero-init warm start** (the 6th
+use of that invariant) → **a PPO leg to retrain** → **all baselines re-pin**. That is milestone-
+sized, which is exactly why C2.0 must gate it.
+
+#### Explicitly NOT in scope
+
+Making `enumerate_plans` multi-target. Our deck has no spread attack — the defect is *defensive*
+(we cannot see their spread), not offensive. Representing multi-KO plans is only worth it if we
+ever pilot a spreading deck, which is C2d/deck-surgery territory.
+
+### C2 (superseded outline) — fix the plan representation
+
+`rl/plan.py` is **one-turn, single-target, committed at the first MAIN prompt and never revised**;
+the entire opponent model is `opp_ttk` plus two booleans, computed by dict arithmetic on the
+opponent's current visible active.
+
+- **Spread damage.** `enumerate_plans` cannot represent a multi-KO plan at all. Dragapult solves
+  this with a knapsack-style subset enumeration over the 6-slot board
+  (`sample-agent-dragapult/main.py:216-235`) — the reference implementation.
+- **In-turn re-planning.** The plan is keyed `(turn, seat)` and cached in a module global, so a
+  line that derails one action in leaves the option head conditioned on a stale plan.
+- **Truncation bias.** `MAX_PLAN_CANDS=48` hard-returns (`rl/plan.py:163`) and the target list puts
+  the active before bench, so truncation preferentially drops gust lines.
+- **Hidden information.** Dragapult tracks card counts and serials to deduce prize contents;
+  `rl/memory.py` `OppMemory` is the M21 analogue but much thinner.
+
+### C3 — fix the training distribution
+
+45% of B3's mixture is `solver:lucario` — our own artifact, and the opponent the mirror gate
+measures. That is not self-play; it is fitting a fixed endogenous opponent.
+
+- Population/league training with **exogenous anchors**; `rl/league.py` already has anchors, gates
+  and standings.
+- Entropy/KL annealing already exist — the missing ingredient is opponent *diversity*, not
+  exploration machinery.
+- ⚠️ Constrained by M7.5 ("you become what you train against": mirror-heavy pools regressed
+  G3 0.44→0.145 vs *every* rules pilot) and by the fact that a 5% mixture change is far below what
+  our instruments resolve. Any change here must be paired with an out-of-loop measurement.
+- ⚠️ **Dragapult stays out of every pool** or the instrument that found all this is spent.
+
+## M22d — the next shippable model (was M22b)
 
 Justified by the one hypothesis that survived the power analysis: **PPO > BC**, Gate A kills at
 18–26pp against a 7pp MDE. Extend B3's recipe from `ppo_current_m21legB3.pt`: longer legs,

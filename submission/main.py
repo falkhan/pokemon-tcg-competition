@@ -1,14 +1,30 @@
-"""Kaggle entry point for the NEURAL v2 submission: OptionScorerV2 (M7.3 id
-embeddings + deck-conditioned encoders v2) exported to .npz and replayed here
-in pure numpy — Kaggle provides numpy but neither torch nor polars.
+"""Kaggle entry point for the neural submission: an OptionScorer checkpoint
+exported to .npz by tcg/shipping.py and replayed here in pure numpy — Kaggle
+provides numpy but neither torch nor polars.
 
-Ships the ACTUAL encoder modules (rl/encoders.py + rl/combat.py, no
-drift-prone hand-copy — the M6 bundle doctrine): rl/encoders.py falls back to
-the exported rl/card_features.npy when the training parquet is absent, so the
-bundle never imports polars. Greedy argmax matches evaluation
-(rl/matchrunner.py model pilot, greedy=True).
+One main.py replays every export tier, auto-sniffed from the weights:
+- v2 (M7.3): OptionScorerV2 — card-id embeddings + deck-conditioned encoders.
+- v3 (M11): OptionScorerV3 — plan-conditioned. Plans are scored once per turn
+  at the first own MAIN prompt (plan_head) and held for that turn's submenus;
+  M15 hand-aware exports (20 state ids) are sniffed from the trunk width.
+- v4 (M21): encoder v4 — full observable state + per-game opponent memory
+  (rl/memory.py OppMemory), declared by the `enc_ver` buffer. v4 implies v3.
+Current ships (M22: B2/B3 and the PPO-trained M22c-RL, all lucario) are
+v3+v4 exports; PPO checkpoints carry value_head keys in the npz which are
+simply unused at play time (logits only here).
 
-Built by `python -m tcg.shipping export --checkpoint <ckpt> --deck <deck>`.
+Ships the ACTUAL encoder modules (rl/encoders.py + rl/plan.py + rl/memory.py
++ rl/combat.py, no drift-prone hand-copy — the M6 bundle doctrine):
+rl/encoders.py falls back to the exported rl/card_features.npy when the
+training parquet is absent, so the bundle never imports polars. Greedy argmax
+and the per-turn plan/memory state machine match evaluation exactly
+(rl/matchrunner.py model pilot fn4, greedy=True).
+
+Built by `./build_submission.sh --checkpoint <ckpt> --deck <deck>` (--deck is
+MANDATORY — the M18.1/M22c fossil-deck accidents), a thin wrapper over
+`python -m tcg.shipping export` + `gate`; the gate replays this file against
+the torch net (weight parity, plan-head parity, live-game encoder parity, v4
+memory-drift parity) before packaging.
 
 Per-decision net-internals log (M19): one compact `NN|{json}` line per agent
 call on stderr — Kaggle stores agent stderr per step (episode agent logs,

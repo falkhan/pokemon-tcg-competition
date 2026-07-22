@@ -244,7 +244,7 @@ def test_harvest_writes_opp_decks_and_min_games_filters_summary(kdirs):
     assert summary["n_games"][0] == 3
 
 
-def test_archetypes_exact_hash_then_core_cosine(kdirs):
+def test_archetypes_named_from_own_top2_pokemon(kdirs):
     # same Pokémon core, one trainer swapped -> different hash, same archetype
     lucario_variant = list(LUCARIO)
     trainers = [i for i, c in enumerate(lucario_variant) if not ki._ft[c]["is_pokemon"]]
@@ -257,6 +257,11 @@ def test_archetypes_exact_hash_then_core_cosine(kdirs):
     ])
     assert labels[ki.deck_hash(LUCARIO)] == labels[ki.deck_hash(lucario_variant)]
     assert labels[ki.deck_hash(IONO)] != labels[ki.deck_hash(LUCARIO)]
+    # the label is the deck's OWN top-2 core — independent of what else is in the pool
+    # (the old cosine cluster-join let a big cluster absorb and rename smaller decks)
+    assert labels[ki.deck_hash(IONO)] == ki._archetype_name(IONO)
+    solo = ki._assign_archetypes([(ki.deck_hash(IONO), IONO, 1)])
+    assert solo[ki.deck_hash(IONO)] == labels[ki.deck_hash(IONO)]
 
 
 def test_build_meta_field_snapshot_and_specs(kdirs):

@@ -134,6 +134,37 @@ def test_dataset_mixes_old_and_new_shards(tmp_path):
     assert weights.tolist() == [1.0] * 7          # weightless shards -> ones
 
 
+def test_train_fresh_is_width_driven(tmp_path, monkeypatch):
+    """M23 audit E1: a fresh (no-init) train on legacy-width shards (12 ids,
+    90-wide options — the replay-clone corpus shape) must build the net from
+    the DATA widths, not the hand-aware defaults (20/94)."""
+    rng = np.random.default_rng(7)
+    d = tmp_path / "shards"
+    d.mkdir()
+    n = 4
+    np.savez_compressed(                          # 1-option menus: val_acc 1.0
+        d / "shard_0000.npz",                     # guarantees a checkpoint save
+        states=rng.standard_normal(
+            (n, STATE_V2_DIM + N_CONTEXTS)).astype(np.float32),
+        state_ids=rng.integers(0, 1268, (n, N_STATE_IDS)).astype(np.int32),
+        options=rng.standard_normal((n, OPTION_DIM)).astype(np.float32),
+        option_ids=rng.integers(0, 1268, (n, 2)).astype(np.int32),
+        n_options=np.ones(n, dtype=np.int32),
+        labels=np.zeros(n, dtype=np.int32),
+        game_ids=np.arange(n, dtype=np.int32) // 2,
+        results=np.ones(n, dtype=np.float32),
+        deck_idx=np.zeros(n, dtype=np.int32),
+    )
+    monkeypatch.setattr(pi, "ROOT", tmp_path)     # redirect checkpoints/
+    pi.train([d], name="_fresh_width", epochs=1, batch_size=4)
+    import torch
+    sd = torch.load(tmp_path / "checkpoints" / "_fresh_width.pt",
+                    map_location="cpu")
+    assert pi._n_ids_of(sd) == N_STATE_IDS        # 12, from the data
+    from rl.policy import option_dim_of
+    assert option_dim_of(sd) == OPTION_DIM        # 90, from the data
+
+
 def test_dataset_weights_default_and_passthrough(tmp_path):
     rng = np.random.default_rng(9)
     old_dir, new_dir = tmp_path / "old", tmp_path / "new"
@@ -276,6 +307,16 @@ def test_v3o_masked_identity_equals_v3h():
         (sc.shape[0], 4, PLAN_DIM)).astype(np.float32))
     assert torch.allclose(v3h.plan_logits(sc, sids, cands),
                           v3o.plan_logits(sc, sids, cands), atol=1e-6)
+
+
+def test_v3_into_v3h_preserves_option_identity_width():
+    # M25 bug: load_v3_into_v3h hardcoded legacy OPTION_V2_DIM and silently
+    # broke on option-identity (OPTION_V3_DIM) sources, the default since M16
+    from rl.encoders import OPTION_V3_DIM
+    torch.manual_seed(11)
+    src = OptionScorerV3(option_dim=OPTION_V3_DIM)
+    v3h = pi.load_v3_into_v3h(src.state_dict())
+    assert v3h.option_dim == OPTION_V3_DIM
 
 
 def test_v3o_from_v3h_hand_aware_source():

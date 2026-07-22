@@ -35,6 +35,7 @@ Usage:  python -m rl.collector --games 400 --workers 4 --checkpoint checkpoints/
 """
 import argparse
 import multiprocessing as mp
+import os
 from pathlib import Path
 
 import numpy as np
@@ -144,8 +145,95 @@ def parse_pool(items: list[str], checkpoint: str,
         else:
             specs.append(parse_spec(spec_s))
             weights.append(w)
+    specs, weights = _dedupe_pool(specs, weights)
+    _assert_dragapult_held_out(specs)
     total = sum(weights)
     return specs, [w / total for w in weights]
+
+
+def _assert_dragapult_held_out(specs: list) -> None:
+    """Refuse any training-pool spec that touches dragapult.
+
+    `rule:dragapult` is the campaign's only doubly-clean out-of-loop evaluator
+    (never in a pool, authored by The Pokémon Company — M22). Training against
+    it, or against its deck under any pilot, spends the instrument permanently
+    and there is no replacement: we cannot author an agent we did not author.
+    Convention-only rules have cost milestones twice (M18.1, M22c), so this one
+    is a hard error. `ALLOW_DRAGAPULT_TRAINING=1` is the deliberate override.
+    """
+    if os.environ.get("ALLOW_DRAGAPULT_TRAINING") == "1":
+        return
+    # Read the reference deck straight from the CSV — resolve_deck is a test
+    # seam (monkeypatched to constants in the pool tests) and going through it
+    # would make every spec look like dragapult under those patches.
+    try:
+        drag_csv = ROOT / "decks" / "dragapult.csv"
+        drag_deck = tuple(sorted(
+            int(x) for x in drag_csv.read_text().split() if x.strip()))
+    except (OSError, ValueError):
+        return                        # no dragapult assets in this checkout
+    for spec in specs:
+        by_agent = spec[0] == "rule" and len(spec) > 1 and spec[1] == "dragapult"
+        if by_agent or drag_deck in _pool_identity(spec):
+            raise ValueError(
+                f"opponent pool contains dragapult ({spec}) — it is the held-out "
+                "out-of-loop evaluator and training on it retires it permanently. "
+                "Set ALLOW_DRAGAPULT_TRAINING=1 only as a deliberate, documented "
+                "decision.")
+
+
+def _pool_identity(spec):
+    """A spec's identity as the sampler actually experiences it: (pilot, RESOLVED deck).
+
+    Deck-slot position mirrors rl.matchrunner.spec_deck so the two cannot drift.
+    """
+    from rl.matchrunner import resolve_deck
+    i = 2 if spec[0] in ("rule", "model", "solved", "ext", "rank",
+                         "vsolver") else 1
+    if i >= len(spec):
+        return spec
+    try:
+        deck_key = tuple(sorted(resolve_deck(spec[i])))
+    except (OSError, ValueError, TypeError):
+        deck_key = ("unresolved", str(spec[i]))
+    return tuple(spec[:i]) + (deck_key,) + tuple(spec[i + 1:])
+
+
+def _dedupe_pool(specs: list, weights: list) -> tuple[list, list]:
+    """Merge pool entries that resolve to the SAME (pilot, deck), summing weights.
+
+    M22b: B3's mixture declared `solver:.../deck_20dcd3130bc0.csv=0.30` and
+    `solver:lucario=0.15` as two opponents. They are one — that csv is
+    byte-identical to decks/lucario.csv (md5 aef8da62…). So 45% of training was a
+    single opponent while the config read 0.30 and 0.15, and the mirror gate
+    measures exactly that opponent.
+
+    Merging does NOT change the sampling distribution (two entries at 0.30 and
+    0.15 already put 0.45 of the mass there). What it changes is legibility: the
+    warning below is the only thing that would have surfaced the collapse.
+    Spec STRINGS differ while resolved decks match, so string-keyed dedupe
+    cannot catch this.
+    """
+    order: list = []
+    merged: dict = {}
+    for spec, w in zip(specs, weights):
+        key = _pool_identity(spec)
+        if key in merged:
+            merged[key] = (merged[key][0], merged[key][1] + w, merged[key][2] + [spec])
+        else:
+            merged[key] = (spec, w, [spec])
+            order.append(key)
+    out_specs, out_weights = [], []
+    for key in order:
+        spec, w, dupes = merged[key]
+        if len(dupes) > 1:
+            names = ", ".join(str(d) for d in dupes)
+            print(f"WARNING: opponent pool declared {len(dupes)} entries that resolve "
+                  f"to the SAME (pilot, deck) — merged to weight {w:.3f}: {names}",
+                  flush=True)
+        out_specs.append(spec)
+        out_weights.append(w)
+    return out_specs, out_weights
 
 
 _PLAN_GUST_IDX = 18   # encode_plan: v[18] = needs_gust (rl/plan.py)

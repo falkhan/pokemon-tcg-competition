@@ -49,3 +49,6 @@ When running a pipeline to ship a new model use hermes integration to send perio
   command) — the heartbeat reporter greps a `game N` line and will re-echo a
   stale line after the run's real `done:` line lands, which looks like a freeze
   but is not; always confirm against the `done:` line and live shard growth.
+  - Do not ship a model unless explicitly asked to. If not provided in a prompt, ask the user which deck - always confirm which deck should be shipped.
+  - Always save down pipelines or shell commands for reusability locally or as skills. Reuse existing scripts or ask the user whether they can be modified.
+  - ALWAYS before an important review, change or shipping, review `verify-before-consequential-actions.md`.

@@ -40,7 +40,7 @@ import polars as pl
 from cg.api import to_observation_class
 from rl.deck_search import DECK_SIZE
 from rl.encoders import (N_CONTEXTS, encode_context, encode_option_v2,
-                         encode_state_v2)
+                         encode_state_v2, encode_state_v3)
 from rl.kaggle_ingest import EPISODES_PQ, KAGGLE_DIR, RAW_DIR, deck_hash, parse_episode
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,14 +99,21 @@ def iter_replay_decisions(steps: list, seat: int, drops: Counter):
 
 
 def encode_decisions(steps: list, seat: int, deck_ids: list[int],
-                     drops: Counter, contexts: Counter | None = None) -> list[tuple]:
+                     drops: Counter, contexts: Counter | None = None,
+                     hand_aware: bool = False) -> list[tuple]:
     """One seat's decisions -> collect_games_v2-shaped rows (rl/bc.py):
     (state_ctx, state_ids, opts, opt_ids, label). Identical encoder calls to
-    the model pilot's inference path."""
+    the model pilot's inference path.
+
+    hand_aware (M25): use encode_state_v3 (12 board + 8 hand ids) instead of
+    encode_state_v2 (12 board ids) — the replay observation is the deciding
+    seat's own, so its hand is fully visible; M15's hand-aware encoder was
+    never wired up to replay corpora until now."""
+    encode_state = encode_state_v3 if hand_aware else encode_state_v2
     rows = []
     for _i, obs_dict, action in iter_replay_decisions(steps, seat, drops):
         obs = to_observation_class(obs_dict)
-        state_num, state_ids = encode_state_v2(obs.current, deck_ids)
+        state_num, state_ids = encode_state(obs.current, deck_ids)
         state_ctx = np.concatenate([state_num, encode_context(obs.select.context)])
         pairs = [encode_option_v2(o, obs) for o in obs.select.option]
         opts = np.stack([num for num, _ in pairs])
@@ -319,14 +326,30 @@ def align(subs: set[int] | None = None) -> dict:
 # ---------------------------------------------------------------------------
 def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
           include_ours: bool = False, winners_only: bool = False,
-          min_steps: int = 0, shard_size: int = 5000) -> None:
+          min_steps: int = 0, shard_size: int = 5000,
+          only_subs: set[int] | None = None,
+          only_deck_hash: str | None = None,
+          hand_aware: bool = False) -> None:
     """Encode qualifying replay seats into BC shards.
 
     Shard schema = collect_games_v2 (rl/bc.py) + additive columns the trainer
     treats as optional: teacher_score (leaderboard score of the imitated
     seat), seat_won (1/0), episode_ids (provenance). game_ids are one per
     EPISODE (both seats share it) so the by-game val split stays leak-free.
-    deck_idx indexes deck_registry.json at REPLAY_DECK_BASE+."""
+    deck_idx indexes deck_registry.json at REPLAY_DECK_BASE+.
+
+    only_subs (M23): restrict to these submission ids — the clone-one-opponent
+    path. Every other seat filter still applies, so pair it with a --min-score
+    at or below the target's actual score.
+
+    only_deck_hash (M24): restrict to seats whose decklist hash starts with
+    this prefix — the strong-pilots-on-OUR-deck corpus (deck_hash is the
+    order-invariant sha1 from rl.kaggle_ingest; a short unambiguous prefix
+    like '20dcd313' is enough).
+
+    hand_aware (M25): encode state_ids with encode_state_v3 (board + own-hand
+    ids) instead of encode_state_v2 (board only) — pair with `plan_iter train
+    --init-v3h` to warm-start a hand-aware net from a legacy checkpoint."""
     meta = _episode_meta()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -382,6 +405,9 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
             sub = m.get(f"submission_id_{seat}")
             score = m.get(f"updated_score_{seat}")
             reward, opp_reward = ep.rewards[seat], ep.rewards[1 - seat]
+            if only_subs is not None and sub not in only_subs:
+                skips["seat_not_target"] += 1
+                continue
             if not include_ours and (sub in OUR_SUBS or m.get("our_seat") == seat):
                 skips["seat_ours"] += 1
                 continue
@@ -391,6 +417,10 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
             if ep.decks[seat] is None:
                 skips["seat_no_deck"] += 1
                 continue
+            if only_deck_hash is not None and not deck_hash(
+                    ep.decks[seat]).startswith(only_deck_hash):
+                skips["seat_other_deck"] += 1
+                continue
             if None in (reward, opp_reward):
                 skips["seat_no_reward"] += 1
                 continue
@@ -399,7 +429,8 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
                 skips["seat_not_winner"] += 1
                 continue
 
-            rows = encode_decisions(raw["steps"], seat, ep.decks[seat], drops)
+            rows = encode_decisions(raw["steps"], seat, ep.decks[seat], drops,
+                                    hand_aware=hand_aware)
             if not rows:
                 skips["seat_no_decisions"] += 1
                 continue
@@ -432,7 +463,9 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
     (out_dir / "deck_registry.json").write_text(json.dumps({
         "base": REPLAY_DECK_BASE,
         "params": {"min_score": min_score, "winners_only": winners_only,
-                   "include_ours": include_ours, "min_steps": min_steps},
+                   "include_ours": include_ours, "min_steps": min_steps,
+                   "only_subs": sorted(only_subs) if only_subs else None,
+                   "only_deck_hash": only_deck_hash, "hand_aware": hand_aware},
         "decks": [{"deck_idx": i, "hash": h}
                   for h, i in sorted(registry.items(), key=lambda kv: kv[1])],
     }, indent=2))
@@ -461,31 +494,103 @@ def _latest_snapshot() -> Path:
 
 
 def meta_eval(a: str, snapshot: Path | None = None, n: int = 60,
-              workers: int = 8, seed: int = 0, checkpoint: str | None = None) -> dict:
-    """Play spec `a` against every deck of a meta snapshot, piloted by our
-    solver ("each archetype played competently"). Prints per-archetype win
-    rate and the manifest-weighted mean — the M10 "meta score"."""
-    from rl.matchrunner import parse_spec, run_pairs, series_wr
+              workers: int = 8, seed: int = 0, checkpoint: str | None = None,
+              exclude_mirror: bool = True, min_games: int = 3) -> dict:
+    """Play spec `a` against the OFF-MIRROR archetypes of a meta snapshot.
+
+    M22b retarget. The old form played every snapshot deck at equal n and
+    reported a manifest-weighted mean. Two defects made that number worse than
+    useless:
+
+    1. **Its dominant cell IS the mirror gate.** `deck_20dcd3130bc0.csv` (weight
+       0.899) is byte-identical to `decks/lucario.csv` — md5 aef8da62… — and both
+       sides are solver-piloted. So ~90% of the "meta score" re-measured, at n=60,
+       exactly what the mirror gate measures at n=800. There was never a
+       mirror-vs-meta trade: one quantity, two replicates, and the disagreement
+       between them was read as signal across M18 and M21.
+    2. **The weighted mean laundered precision.** Sum(w_i^2) = 0.815 gives an
+       effective n of 147 for 480 games spent — 69% of the compute wasted — and an
+       MDE of 16.3pp. B2 shipped on a 4.4pp edge from this instrument (z=0.68, 11%
+       power), and its two seeds spanned 8.2pp, which is 1.00 SD of what the
+       instrument produces by chance.
+
+    So: drop any snapshot deck identical to the deck `a` pilots (the mirror gate
+    covers it properly), drop archetypes seeded on fewer than `min_games` observed
+    games (meta_v2's 4th deck came from a SINGLE game), and spend the whole budget
+    on what is left — the only part of the field mirror cannot see.
+
+    Reports a PANEL with per-cell CIs, not a weighted scalar. `tail_score` is
+    returned but is explicitly only over the surviving decks; `coverage` says what
+    fraction of the frozen field that is. Never quote tail_score as a whole-field
+    number.
+    """
+    import math
+
+    from rl.matchrunner import (parse_spec, resolve_deck, run_pairs, series_wr,
+                                spec_deck)
 
     snap = Path(snapshot) if snapshot else _latest_snapshot()
     manifest = json.loads((snap / "manifest.json").read_text())
     decks = manifest["decks"]
     spec_a = parse_spec(a)
-    pairs = [(spec_a, ("solver", str(snap / d["csv"])), n) for d in decks]
+    total_w = sum(d["weight"] for d in decks) or 1.0
+
+    try:
+        own = tuple(sorted(resolve_deck(spec_deck(spec_a))))
+    except (OSError, ValueError, TypeError, IndexError):
+        own = None
+
+    keep, dropped = [], []
+    for d in decks:
+        try:
+            same = own is not None and tuple(sorted(resolve_deck(snap / d["csv"]))) == own
+        except (OSError, ValueError):
+            same = False
+        if exclude_mirror and same:
+            dropped.append((d, "IS the mirror deck — mirror gate measures it at n=800"))
+        elif d.get("n_games", 0) < min_games:
+            dropped.append((d, f"only {d.get('n_games', 0)} observed games — sampling artifact"))
+        else:
+            keep.append(d)
+
+    budget = n * len(decks)                      # same compute as the old form
+    print(f"meta-eval (tail): {a} vs {snap.name}, seed={seed}, budget={budget} games",
+          flush=True)
+    for d, why in dropped:
+        print(f"  DROPPED {d['archetype']:<40} (weight {d['weight'] / total_w:.3f}) — {why}",
+              flush=True)
+    if not keep:
+        print("  no off-mirror archetypes survive — this snapshot measures only the "
+              "mirror, which the mirror gate already covers.", flush=True)
+        return {"snapshot": snap.name, "per_deck": {}, "tail_score": None,
+                "coverage": 0.0, "dropped": [d["archetype"] for d, _ in dropped]}
+
+    per = max(budget // len(keep), 1)             # equal split — panel, not a mean
+    pairs = [(spec_a, ("solver", str(snap / d["csv"])), per) for d in keep]
     results = run_pairs(pairs, workers=workers, seed=seed, checkpoint=checkpoint)
 
-    total_w = sum(d["weight"] for d in decks) or 1.0
-    meta_score = 0.0
-    print(f"meta-eval: {a} vs {snap.name} (n={n}/deck, seed={seed})", flush=True)
-    per_deck = {}
-    for d, res in zip(decks, results):
-        wr = series_wr(res)
-        meta_score += wr * d["weight"] / total_w
-        per_deck[d["archetype"]] = wr
+    coverage = sum(d["weight"] for d in keep) / total_w
+    keep_w = sum(d["weight"] for d in keep) or 1.0
+    tail_score, per_deck = 0.0, {}
+    for d, res in zip(keep, results):
+        wr, m = series_wr(res), len(res)
+        half = 1.96 * math.sqrt(0.25 / m) if m else 0.0
+        tail_score += wr * d["weight"] / keep_w
+        per_deck[d["archetype"]] = {"wr": wr, "n": m,
+                                    "ci95": (max(0.0, wr - half), min(1.0, wr + half))}
         print(f"  vs {d['archetype']:<40} wr={wr:.3f}  "
-              f"(weight {d['weight'] / total_w:.2f}, n={len(res)})", flush=True)
-    print(f"meta score (weighted): {meta_score:.3f}", flush=True)
-    return {"snapshot": snap.name, "meta_score": meta_score, "per_deck": per_deck}
+              f"95%CI [{max(0.0, wr - half):.3f}, {min(1.0, wr + half):.3f}]  n={m}",
+              flush=True)
+    print(f"tail score: {tail_score:.3f}  — covers {coverage:.1%} of the FROZEN field; "
+          f"the rest is the mirror matchup (use the mirror gate, n=800).", flush=True)
+    print("  NB frozen weights understate the tail: the field drifted after the "
+          "snapshot (solrock 0.892->0.761, kangaskhan 0.087->0.155, drakloak "
+          "0.021->0.085; chi2=33.9, p=4.4e-08), so these archetypes are ~24% of "
+          "the CURRENT field.", flush=True)
+    print("Do NOT quote tail score as a whole-field number, and do not compare it "
+          "across candidates below its MDE.", flush=True)
+    return {"snapshot": snap.name, "per_deck": per_deck, "tail_score": tail_score,
+            "coverage": coverage, "dropped": [d["archetype"] for d, _ in dropped]}
 
 
 def _main() -> None:
@@ -507,6 +612,14 @@ def _main() -> None:
     s.add_argument("--include-ours", action="store_true")
     s.add_argument("--min-steps", type=int, default=0)
     s.add_argument("--shard-size", type=int, default=5000)
+    s.add_argument("--only-subs", type=int, nargs="+", default=None,
+                   help="clone-one-opponent: keep only these submission ids")
+    s.add_argument("--deck-hash", type=str, default=None,
+                   help="M24: keep only seats whose deck_hash starts with "
+                        "this prefix (e.g. 20dcd313 = our lucario 60)")
+    s.add_argument("--hand-aware", action="store_true",
+                   help="M25: encode state_ids with encode_state_v3 (board + "
+                        "own-hand ids) instead of encode_state_v2 (board only)")
 
     s = sub.add_parser("meta-eval", help="G4: candidate vs the frozen meta snapshot")
     s.add_argument("--a", required=True, help="matchrunner spec, e.g. model:<ckpt>:lucario")
@@ -515,6 +628,12 @@ def _main() -> None:
     s.add_argument("--workers", type=int, default=8)
     s.add_argument("--seed", type=int, default=0)
     s.add_argument("--checkpoint", default=None)
+    s.add_argument("--include-mirror", action="store_true",
+                   help="keep snapshot decks identical to the deck `a` pilots. OFF by "
+                        "default: that cell IS the mirror gate, measured there at n=800")
+    s.add_argument("--min-games", type=int, default=3,
+                   help="drop archetypes seeded on fewer observed games (meta_v2's "
+                        "4th deck came from a single game)")
 
     a = p.parse_args()
     if a.cmd == "audit":
@@ -526,10 +645,13 @@ def _main() -> None:
     elif a.cmd == "build":
         build(out_dir=a.out, min_score=a.min_score, winners_only=a.winners_only,
               include_ours=a.include_ours, min_steps=a.min_steps,
-              shard_size=a.shard_size)
+              shard_size=a.shard_size,
+              only_subs=set(a.only_subs) if a.only_subs else None,
+              only_deck_hash=a.deck_hash, hand_aware=a.hand_aware)
     elif a.cmd == "meta-eval":
         meta_eval(a.a, snapshot=a.snapshot, n=a.games, workers=a.workers,
-                  seed=a.seed, checkpoint=a.checkpoint)
+                  seed=a.seed, checkpoint=a.checkpoint,
+                  exclude_mirror=not a.include_mirror, min_games=a.min_games)
 
 
 if __name__ == "__main__":

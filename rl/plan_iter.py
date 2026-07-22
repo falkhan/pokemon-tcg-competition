@@ -696,9 +696,15 @@ def load_v3_into_v3h(v3_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     """M15 warm start: legacy 12-id v3 weights into a hand-aware (20-id) net.
     All shared weights copy verbatim; the 8 new hand-embedding column blocks
     of state_enc.0 are ZERO-initialized, so hand-aware(zero-hand-ids) ==
-    legacy net exactly (the warm-start invariant, third use)."""
-    from rl.encoders import N_STATE_IDS_V3
-    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=N_STATE_IDS_V3)
+    legacy net exactly (the warm-start invariant, third use). option_dim is
+    INFERRED from the source checkpoint (M25 fix — was hardcoded to legacy
+    OPTION_V2_DIM, which silently broke on the option-identity (OPTION_V3_DIM)
+    checkpoints that have been the default since M16; same inference `_n_ids_of`
+    /`load_v3h_into_v3o` already use for their own dims)."""
+    from rl.encoders import EMBED_DIM, N_OPTION_IDS, N_STATE_IDS_V3
+    option_dim = v3_sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * EMBED_DIM
+    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=N_STATE_IDS_V3,
+                           option_dim=option_dim)
     sd = model.state_dict()
     for k, v in v3_sd.items():
         if k == "state_enc.0.weight":
@@ -859,9 +865,13 @@ def train(data_dirs: list, name: str, init: str | None = None,
                                            map_location="cpu"))
         print(f"warm-start from v2 {init_v2} (plan columns zero-init)")
     else:
-        from rl.encoders import N_STATE_IDS_V3, OPTION_V3_DIM
-        model = OptionScorerV3(n_state_ids=N_STATE_IDS_V3,
-                               option_dim=OPTION_V3_DIM)
+        # M23 audit E1: width-driven from the data, like the bc.py v2 path —
+        # replay-clone shards carry legacy 12-wide state_ids, and a net built
+        # at the hand-aware default 20 cannot consume them.
+        model = OptionScorerV3(n_state_ids=ds.state_ids.shape[1],
+                               option_dim=ds.options.shape[1])
+        print(f"fresh V3 (n_state_ids={model.n_state_ids}, "
+              f"option_dim={model.option_dim})")
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_acc = 0.0
 

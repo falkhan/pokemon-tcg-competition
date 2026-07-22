@@ -79,6 +79,24 @@ def test_play_series_is_slot_fair_and_maps_draws(monkeypatch):
     assert r == [2, 2]
 
 
+def test_play_series_passes_a_seat_to_declaring_game_fns(monkeypatch):
+    _fake_pilots(monkeypatch)
+    seen = []
+
+    def game_fn(fn0, fn1, deck0, deck1, stats, a_seat):
+        # a's pilot really is at the reported seat this game
+        assert (fn0 if a_seat == 0 else fn1).endswith("_a")
+        seen.append(a_seat)
+        return 0
+
+    mr.play_series(("generic", "lucario"), ("generic", "iono"), 4, game_fn=game_fn)
+    assert seen == [0, 1, 0, 1]   # slot-fair alternation, exposed to the seam
+    # 5-arg game_fns (and *args lambdas without keywords) keep working untouched
+    r = mr.play_series(("generic", "lucario"), ("generic", "iono"), 2,
+                       game_fn=lambda fn0, fn1, d0, d1, stats: 2)
+    assert r == [2, 2]
+
+
 def test_play_series_uses_distinct_pilot_instances(monkeypatch):
     record = []
     _fake_pilots(monkeypatch, record)

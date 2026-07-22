@@ -94,8 +94,8 @@ flowchart TD
 | [M6](M6.md) | 07-08 | Deck-agnostic pilot | `rl/generic_pilot.py` tier scorer on combat core; `tcg/` twins | 0.95 vs random; 0.25–0.30 vs expert | ✅ GO (as evaluator) | THE teacher/evaluator for everything after |
 | [M7](M7.md) | 07-09→12 | Deck factory + close the expert gap | ingestion, league, race-math L1, turn solver L2, BC v2, PPO retry | solver A/B 0.533; play-tier bug found; vs-expert 0.362 | ✅ shipped 54586430, 54621283 | solver pilot (= campaign opponent), fixed pilot, league infra |
 | [M8](M8.md) | 07-12→13 | Beat the ship agent (0.55) | measurement reset, BC refresh, PPO probe, L4 instruments | `osv2_bc2` 0.345; PPO peak 0.359; sims ladder flat | ❌ bar not cleared | pinned baselines; 3 dead ends; L3 determinizer + value fix |
-| [M10](M10.md) | 07-15→16 | Imitate stronger leaderboard teachers | 2,123-ep harvest → replay BC, 2 recipes | G3 kills 0.318 / 0.292; fidelity caps 0.527 | ❌ NO-GO | harvest+converter infra; meta_v2 co-gate; deck = meta proof |
 | [M9](M9-plan.md) | 07-14→16 | 0.55 via pilot fixes + observable-teacher ladder | Leg 1 pilot v2 fixes ∥ Leg 2 DAgger ∥ Leg 0 ext-agent probe | buddy 0.615/meta 0.578; all own legs killed | ⚖️ no ship; teacher found | `ext:` spec, buddy analysis, dead ends |
+| [M10](M10.md) | 07-15→16 | Imitate stronger leaderboard teachers | 2,123-ep harvest → replay BC, 2 recipes | G3 kills 0.318 / 0.292; fidelity caps 0.527 | ❌ NO-GO | harvest+converter infra; meta_v2 co-gate; deck = meta proof |
 | [M11](M11-plan.md) | 07-16→17 | buddy-like plan coherence, learned not hand-coded | plan-conditioned OptionScorerV3 + expert iteration vs widened solver | `osv3_plan0c` **0.415** pooled n=1200 (campaign-best neural); EI rounds 0.314/0.357 killed | ⚖️ +7pp over BC, below ship bar | plan infra, pinned baseline, EI dead ends |
 | [M12](M12-plan.md) | 07-17 | value-as-ranker (M9 Leg 4) | pairwise ranker on widened sibling scores → confident-override pilot | Gate 1 ✅ pairwise 0.873; Gate 2 ❌ pilot 0.383 | ❌ score_leaf is the bottleneck | ranking-loss fix proven; score_siblings; the bottleneck diagnosis |
 | [M13](M13-plan.md) | 07-17→18 | learn THE deck from game volume | outcome-grounded setup value (matched-pair ranking) → value-guided search | V0 ✅ 0.704→**0.768** (10k games); S1 ❌ 0.458/0.484/0.453 | ⚖️ value proven, override consumer dead | setup value asset; safari pipeline; the override law |
@@ -108,6 +108,11 @@ flowchart TD
 | [M19](M19-plan.md) | 07-19 | repair the two replay-observed pilot defects: over-attach + no save-the-active retreat (deck engineering deferred) | teacher tier fixes (saturated attach −150×surplus; retreat tier 2b 1450) + ATTACH/RETREAT encoder extras (width 94 unchanged) + `[over-attach]` flag + `NN\|` net logging; 800-game re-collect (SETUP 3.47/g, 0 vs_errors) → m19a/b/c with rare-class label weights | m19a mirror **0.4275 pooled n=800** (parity vs plan5 0.4294) but flags unmoved (retreat 0.07/g); m19b (retreat 8×) fixes behavior **retreat 0.93/g** at mirror **0.3987** (−3pp); m19c (+decline-sat 4×) mirror **0.331** (−10pp, KILL); meta 2-seed all ~0.46 vs pin ~0.498 → **NO-SHIP** | 🔴 killed (infra kept) | label-reweighting at high dose = dead end (cost ∝ reweighted-row fraction); never read strength from 40-game flag samples; teacher fixes + encoder extras + NN-log instrumentation all landed for future nets |
 | [M20](M20.md) | 07-19 | revive PPO: test over-attach penalty + KL-anchor as strength/behavior lever | leg A defect-penalty 0.1 clip-only vs leg B defect-penalty 0.1 + KL-anchor 0.1, both 8 iters × 400g on plan5 (V3 encoder), lucario/lucario | legB mirror **0.488 pooled n=800** (0.469/0.507, +5.9pp vs plan5 0.4294 — campaign record); meta_v2 2-seed **~0.494** (parity vs champion ~0.498); random:kyogre **0.920/0.915** (clears floor plan5 misses); rule:lucario 0.341 (no regression); behavior objective unmoved (over-attach 0.72/g vs plan5 ~0.58–0.75); **SHIPPED 54836093** (Piotr call) | 🔭 live observation | PPO-on-V3 is a live strength lever (M8.3's "PPO is dead" does not transfer from v2 nets); in-loop n=200 evals = promotion triggers only, never evidence (legA's in-loop 37% "collapse" did not reproduce at n=800); campaign 0.55 bar still unmet at 0.488 |
 | [M21](M21-plan.md) | 07-19→20 | complete observable state (encoder v4: logs-derived opponent memory + gap features) + plan-head-in-PPO + annealed-KL legs + opponent-mixture curriculum | forensics (gust 0/27, retreat 2/25, teacher commits ZERO gust plans in 37.8k rows) → logs probe (per-seat, 100% opp coverage) → v4 encoder (341 dims + OppMemory) + zero-init migration (sanity 0.487 ✓) → Gate A killed TWICE (0.225 / 0.305 — supervised relabel un-learns PPO gains; Phase A scrapped) → B1 killed (0.457) → **B2** meta-mixture + first-ever plan-head PPO: mirror 0.4894, meta ~0.538 → SHIPPED 54846434 → **B3** KL-annealed-to-0 pure self-play + guided gust exploration: mirror **0.5094 pooled n=800 — campaign's first neural >0.50**, floors best-ever (random 0.935/0.935, rule 0.357), retreat 4→9/139, but meta 0.503 → **SHIPPED 54849475** (Piotr: two live agents = mirror↔meta A/B) | 🔭 live A/B; **early: B2 529.1 & 13W-19L vs champion 579.2 — meta edge NOT translating** | v4 infra + memory-parity ship gate; **KL→0 self-play is the strength lever**; dead ends: supervised relabel post-PPO (any weighting), plan-PPO alone vs gust (two-head deadlock); **the "never gusts" defect was largely a measurement artifact — 138/142 gust targets are 1-prize and in 78/142 the active was also KO-able (worth more 38×, equal 38×, gust better 2×); a behavioral metric must price the opportunity cost**; meta_v2 n=60/deck can't resolve 4pp (B2's own seeds spanned 8pp); plan-tau<1 sharpens |
+| [M22](M22.md) | 07-20 | fix the instrument (M22a), then scale PPO self-play (M22b) — became the endogeneity audit | step-0 forensics: meta-gate power math (Σwᵢ²=0.815 → n_eff 147 of 480 games, MDE 16.3pp; BOTH M21 ship decisions were noise, z=0.68/0.80) → 🔴 every gate opponent found inside the training pool → `rl/behavior.py` strict counters + pool dedupe + meta-eval retargeted to the off-mirror tail → out-of-loop probe vs `rule:dragapult` (never trained against) | **THE FINDING: a ~30pp out-of-loop collapse — every pilot in our lineage (neural / neural+search / rule+search) sits 0.17–0.22 vs dragapult while the company sample agent hits ~0.50 on our exact deck; four generations of mirror gains (0.429→0.509) bought ZERO out-of-loop strength**; cause A threat-blindness confirmed p<0.0001 (median ⅓ of loss damage lands on our bench vs 0.000 in the mirror); the loss-anatomy flag taxonomy = ALL phantoms under the win/loss contrast | 🔬 diagnosis milestone — no ship of its own | dragapult = the ONLY doubly-clean instrument (never in any pool, not authored by us); mirror is contaminated + endogenous; the meta gate was 90% the mirror gate by deck identity (decks byte-identical); pilot quality dominates archetype in every cell; MDE refusal gates adopted campaign-wide; → M22c-RL runs the one-variable teacher test |
+| M22c-RL | 07-20→21 | test the teacher-weakness thesis: is our RL agent weak because it trains 45% against our own 0.22 solver? | M22a pipeline + M22b instruments (dragapult floor, meta-eval retarget, behavior counters) → diagnostic: rule:lucario (sample agent) beats solver:lucario 0.67 same-deck; pilot diff isolates 2 learnable gaps (prize-race denial, coordinated line) → one-variable PPO leg: B3 config, same-deck teacher solver→rule:lucario (0.22→0.50) | out-of-loop rule:dragapult **0.1888 n=800 vs B3 0.172 = +1.68pp, INSIDE 5.48pp MDE** (not a gain); mirror 0.480, floor random 0.920; rule:lucario 0.365 (50% of training, no overfit); **SHIPPED 54864190** (lucario; 54864089 was a kyogre mis-ship — corrected same night); Piotr: ship anyway, slots free | 🔭 live arm | teacher upgrade alone did not move out-of-loop in ONE leg — but agent only reached 0.365 vs the new teacher (mid-learning, not converged), so weak test; C1 within-turn search +2.25pp (unresolved), C2 whole-board threat falsified p=0.548; **every pilot we build sits 0.17-0.22 vs dragapult, the sample agent 0.50 — the gap is a plan/search head, next** |
+| [M23](M23-plan.md) | 07-21 | converge against strong opponents, then decide the architecture | Phase 0 instruments (play_series seat fix, dragapult hard-guard, supporter counter) → Phase 1: 20 iters from `ppo_current_m22cRL`, `rule:lucario`-heavy pool, KL=0, promotion regated on vs_teacher → gate battery → Phase 3: BC-clone leaderboard agent 54618168 as evaluator (`--only-subs` filter + width-driven v2 train/load path) | in-loop vs_teacher 33→plateau 35–39 (peak 43 = promotion noise); offline: teacher **0.3575 FLAT** vs 0.365, dragapult **0.151/0.176 flat-to-down** vs 0.1888 (MDE 5.5pp), mirror 0.435, floor s2 0.835 watch → **NO SHIP; fork resolves: teacher-weakness thesis DEAD at convergence** · clone: fidelity 0.664, **0.59 vs rule:lucario — first pilot ever to beat a company agent**, 0.25 vs dragapult | ✅ CLOSED (incl. same-day signal audit) | **capacity is NOT the bottleneck** (a plan-head-less OptionScorerV2 clone plays 0.59); draw-engine gap: strong pilots play supporters 0.5–0.9/turn midgame, ours 0.34; in-loop n=200 promotion evals misled a 3rd time; zsh `$var:l` modifier mangles specs — brace+quote; **signal audit (same day, all pre-registered): S2 = supporter↔win signal ABSENT/negative in our self-play; S3 exploration fine 16.3%; S5 critic 0.23→0.47; S6 plan head NOT decorative (0.90/0.68 consistency); S7 entropy healthy; E1 = fresh V3-as-BC fidelity 0.657 + 0.5625 pooled n=400 vs rule:lucario (bar 0.54) → ARCHITECTURE EXONERATED; the defect is the SIGNAL SOURCE** → M24 |
+| [M24](M24-plan.md) | 07-21→ | can leaderboard-replay BC as the PRIMARY signal (self-play PPO demoted to fine-tuner) produce the first live 0.5-class agent? | Phase 0: snowball 1000+400 eps → 6 per-teacher corpora (~108k decisions) + our-deck-hash corpus (came back EMPTY — no >820-score pilot plays our stock 60) → Phase 1: single-teacher vs pooled × clone-deck vs our-deck screen grid → full battery on winner | **vs `rule:lucario` 0.605 pooled n=400 — first ever above company-agent parity; vs `rule:dragapult` 0.290 pooled n=400 — campaign out-of-loop record (+10pp vs 0.1888, outside MDE)**; floors 0.950–0.955; latency 0.7ms; zero-shot deck transfer FAILS (0.23–0.31) | 🔭 **SHIPPED 54885173** (m24_bc_54618168 + clone deck, Piotr's call) | deck+pilot are a unit — the C-ours arm died in screens (live our-deck arms serve as the A/B side); pooling two teachers cost on-deck strength (0.570 vs 0.660); typo'd deck name nearly shipped the kyogre fossil a THIRD time — `deck_source` now hard-errors on unresolvable names; next teacher candidate: the 3121746f cluster (54861775@1268) |
+| [M25](M25-plan.md) | 07-21→ | get PAST the frontier BC converges to | REFINED (07-21 ~22:30, [M25.md](M25.md)): Phase 0 live read of 54885173 → Phase 1 **labeler fix first** + BC headroom (3121746f **Grimmsnarl-control** teacher, fidelity push) → Phase 2 S2-flip test then PPO fine-tune from the BC base → Phase 3 deck+pilot co-adaptation loop | first live read: 49 games 25W–24L, **600→723** (~145 pts above the 4 our-deck arms, pre-gate); true-archetype matchup: lucario field 8–6, dragapult 4–1, mirror 5–5, **Grimmsnarl control 1–4** + Team Rocket 1–3 = the bleeds; 🔴 archetype labeler systemically broken (cos-0.95 greedy merge collapses distinct decks; labels unstable across harvests) — 1268 deck `3121746f` is Grimmsnarl mill, not lucario | 🔭 **SHIPPED 54897966** (m25_bc_alakazam_v3h + clone deck, Piotr's call) | Phase 1.0 DONE (07-21 late): labeler fixed (per-deck top-2 Pokémon, cosine merge removed), field re-read — ladder is alakazam (1614 rows) + grimmsnarl-control (1192) heavy, NOT 76% lucario mirror; loss anatomy: deck-out vs kangaskhan/crustle walls (6 prizes left!), mill race lost vs grimmsnarl; flag audit: `fetch-dead-evolution` + `trainer-hoarded` DOUBLE teacher rates (fidelity targets), teacher BEATS grimmsnarl 0.59/n=79 (fidelity fixes bleed #1) but bleeds vs walls 0.31/n=39 (teacher-level hole → second teacher). **Phase 1.1 (07-22 ~00:00) KILLED**: both single-teacher Grimmsnarl clones (val_acc 0.565/0.580) screened 0.330/0.325 vs `rule:lucario` n=200 — floor-band, ~27pp below the 0.605 alakazam-clone comparator; card-data check confirmed the Darkness>Psychic weakness (2× dmg, `tcg/constants.py`) explains the LIVE Alakazam bleed but is type-neutral (mild Fighting-resist favors Grimmsnarl) in this screen — genuine fidelity/gameplan-fit failure, not a type artifact. **Phase 1.2 (07-22 ~08:30) fidelity push, 2/3 levers null/killed**: more epochs (25 vs 10, fresh V3) val_acc plateaus at the same 0.655, screen 0.600 vs the 0.660 pin — flat, no gain; score-weighting (`bc.py --arch v2 --weighting score`) val_acc 0.625 (below V2 clone's 0.664), screen **0.403 vs the 0.59 V2 comparator — KILL, −19pp**. **Lever 3 (hand-aware ids) WINS**: fixed two real bugs to unblock it (`replay_bc` never wired `encode_state_v3`; `load_v3_into_v3h` hardcoded the legacy pre-M16 option width, dead code for every option-identity checkpoint since M24) — new checkpoint `m25_bc_alakazam_v3h` val_acc 0.668, full battery **rule:lucario 0.660 pooled n=400 (+5.5pp vs 0.605 pin, seed spread 2pp vs original's 11pp)**, **rule:dragapult 0.3075 pooled (+1.75pp, new out-of-loop record)**, floors 0.965. **SHIPPED sub 54897966** (07-22 ~09:17, same clone54618168 deck, md5-verified 8e8cf124, model_monitor.ipynb updated + re-executed, deck identity confirmed from a live replay). |
 
 ## Per-milestone notes
 
@@ -411,44 +416,6 @@ flowchart LR
     style V8 fill:#ffebee,stroke:#c62828,color:#000
 ```
 
-### M10 — clone the leaderboard ([M10.md](M10.md)) ❌ NO-GO
-The one beyond-teacher path: imitate 600–1345-scoring teams from Kaggle episode replays.
-Built the snowball harvest (2,123 episodes, 236,446 decisions, 3,619 teacher seats ≥550) and
-the replay→shard converter with G0/G1 gates. Both recipes died at G3 (fine-tune 0.318,
-elite-only 0.292, vs base 0.345): elite fidelity **saturated at 0.527** — the same signature as
-the retired rule-pilot teacher. Generalized dead end: **BC from replays of agents whose
-reasoning is search/hidden-state (unobservable)**. Keepers: harvest infra, converter, the
-**meta_v2 co-gate** (ship 0.448 · osv2_bc2 0.405), and proof our deck IS the meta (~89%
-Lucario mirrors at the top; dominant list diffs empty vs `decks/lucario.csv`).
-
-```mermaid
-flowchart LR
-    subgraph IN10["Data / inputs"]
-        A10["Kaggle leaderboard teams scoring 600–1,345"]
-        B10["warm start osv2_bc2.pt ·<br/>self-play corpus data/bc_v2b 200k decisions"]
-    end
-    subgraph RUN10["Code that ran"]
-        C10["kaggle_ingest leaderboard · targets ·<br/>refresh --opp-subs — snowball harvest"]
-        D10["rl/replay_bc.py — audit · roundtrip ·<br/>build --min-score 550 / 800 · meta-eval"]
-        E10["rl/bc.py train — multi-dir · --init · --weighting"]
-        F10["rl/matchrunner.py play — G3 screens seeds 716/717"]
-    end
-    subgraph ART10["Artifacts"]
-        G10M["2,123-episode cache, 172MB"]
-        H10["data/bc_kaggle/ 236k decisions ·<br/>data/bc_kaggle_elite/ 34k"]
-        I10["osv2_kbc1.pt · osv2_kbc2.pt ·<br/>data/kaggle/meta_v2/ frozen pool"]
-    end
-    subgraph GATE10["Gates / eval"]
-        J10["G0 PASS · G1 roundtrip 1.0000 — 722/722"]
-        K10["G2 offline 0.651→0.691 PASS"]
-        L10["G3 KILLS: A 0.318 · B′ 0.292 vs 0.345 base"]
-        M10N["elite fidelity saturates 0.527 — mechanism"]
-    end
-    V10["❌ NO-GO — unobservable teachers; keepers:<br/>harvest · converter · meta co-gate · deck=meta"]
-    IN10 --> RUN10 --> ART10 --> GATE10 --> V10
-    style V10 fill:#ffebee,stroke:#c62828,color:#000
-```
-
 ### M9 — pilot-fix + learning ladder ([M9.md](M9.md), spec [M9-plan.md](M9-plan.md)) ⚖️ closed
 Restored 2026-07-16 as lead track, closed 07-16 with no ship: **every one of its own legs was
 killed**, but Leg 0's external-agent probe found the milestone's real payload — the buddy agent
@@ -487,6 +454,44 @@ flowchart LR
     V9["⚖️ CLOSED — own legs killed; Leg 0 found<br/>buddy 0.615 mirror / 0.578 meta → the M11+ target"]
     IN9 --> RUN9 --> ART9 --> GATE9 --> V9
     style V9 fill:#fff8e1,stroke:#f9a825,color:#000
+```
+
+### M10 — clone the leaderboard ([M10.md](M10.md)) ❌ NO-GO
+The one beyond-teacher path: imitate 600–1345-scoring teams from Kaggle episode replays.
+Built the snowball harvest (2,123 episodes, 236,446 decisions, 3,619 teacher seats ≥550) and
+the replay→shard converter with G0/G1 gates. Both recipes died at G3 (fine-tune 0.318,
+elite-only 0.292, vs base 0.345): elite fidelity **saturated at 0.527** — the same signature as
+the retired rule-pilot teacher. Generalized dead end: **BC from replays of agents whose
+reasoning is search/hidden-state (unobservable)**. Keepers: harvest infra, converter, the
+**meta_v2 co-gate** (ship 0.448 · osv2_bc2 0.405), and proof our deck IS the meta (~89%
+Lucario mirrors at the top; dominant list diffs empty vs `decks/lucario.csv`).
+
+```mermaid
+flowchart LR
+    subgraph IN10["Data / inputs"]
+        A10["Kaggle leaderboard teams scoring 600–1,345"]
+        B10["warm start osv2_bc2.pt ·<br/>self-play corpus data/bc_v2b 200k decisions"]
+    end
+    subgraph RUN10["Code that ran"]
+        C10["kaggle_ingest leaderboard · targets ·<br/>refresh --opp-subs — snowball harvest"]
+        D10["rl/replay_bc.py — audit · roundtrip ·<br/>build --min-score 550 / 800 · meta-eval"]
+        E10["rl/bc.py train — multi-dir · --init · --weighting"]
+        F10["rl/matchrunner.py play — G3 screens seeds 716/717"]
+    end
+    subgraph ART10["Artifacts"]
+        G10M["2,123-episode cache, 172MB"]
+        H10["data/bc_kaggle/ 236k decisions ·<br/>data/bc_kaggle_elite/ 34k"]
+        I10["osv2_kbc1.pt · osv2_kbc2.pt ·<br/>data/kaggle/meta_v2/ frozen pool"]
+    end
+    subgraph GATE10["Gates / eval"]
+        J10["G0 PASS · G1 roundtrip 1.0000 — 722/722"]
+        K10["G2 offline 0.651→0.691 PASS"]
+        L10["G3 KILLS: A 0.318 · B′ 0.292 vs 0.345 base"]
+        M10N["elite fidelity saturates 0.527 — mechanism"]
+    end
+    V10["❌ NO-GO — unobservable teachers; keepers:<br/>harvest · converter · meta co-gate · deck=meta"]
+    IN10 --> RUN10 --> ART10 --> GATE10 --> V10
+    style V10 fill:#ffebee,stroke:#c62828,color:#000
 ```
 
 ### M11 — learned turn-planning ([M11.md](M11.md), spec [M11-plan.md](M11-plan.md)) ⚖️
@@ -994,7 +999,7 @@ flowchart LR
     style V20 fill:#e3f2fd,stroke:#1565c0,color:#000
 ```
 
-### M21 — complete observable state + plan-head-in-PPO ([M21.md](M21.md), spec [M21-plan.md](M21-plan.md)) 🚧 in progress
+### M21 — complete observable state + plan-head-in-PPO ([M21.md](M21.md), spec [M21-plan.md](M21-plan.md)) 🔭 shipped ×2 (B2 + B3)
 Kicked off 2026-07-19 on `feature/m21`, pinned against champion `ppo_best_m20legB` + lucario
 (mirror 0.488, sub 54836093). Step-0 forensics over 22 episodes of the live champion quantified
 two defects Piotr spotted in replays, and the numbers are stark: **Boss's Orders was in hand in
@@ -1034,9 +1039,183 @@ flowchart LR
         L21["B2 promotion: strict gust-conversion improvement"]
         M21N["campaign bar unchanged: 0.55, n≥800 2-seed pooled"]
     end
-    V21["🚧 IN PROGRESS — plan head gets a PPO<br/>gradient for the first time"]
+    V21["🔭 SHIPPED ×2 — B2 54846434 + B3 54849475<br/>mirror 0.5094 = first neural >0.50"]
     IN21 --> RUN21 --> ART21 --> GATE21 --> V21
     style V21 fill:#e3f2fd,stroke:#1565c0,color:#000
+```
+
+**Outcome.** Gate A killed TWICE (0.225 with EI weights, 0.305 uniform — supervised relabel of
+a post-PPO checkpoint un-learns its PPO gains at any weighting; Phase A scrapped). B1 killed at
+0.457. **B2** (meta-mixture + first-ever plan-head PPO, mirror 0.4894, meta ~0.538) shipped as
+54846434; **B3** (KL annealed to 0 → pure self-play, guided gust exploration, plan-tau 1.5)
+shipped as 54849475 with **mirror 0.5094 pooled n=800 — the campaign's first neural agent past
+0.50 vs the solver** — as a deliberate mirror↔meta live A/B. Two findings aged badly within a
+day (see M22): both ship edges were inside instrument noise (z=0.68 / 0.80), and the founding
+"never gusts" defect was largely a measurement artifact — 138/142 gust targets were 1-prize and
+in 78/142 states the active was also KO-able for equal or more prizes. The durable laws: KL→0
+self-play is a strength lever; plan-PPO alone cannot fix a behavior the option head never
+samples (two-head deadlock); a behavioral-defect metric must price the opportunity cost of the
+action it demands.
+
+### M22 — the endogeneity audit ([M22.md](M22.md), spec [M22-plan.md](M22-plan.md), post-mortem [m22-post-mortem.md](m22-post-mortem.md)) 🔬 diagnosis, no ship
+Began as "fix the instrument (M22a), then scale PPO self-play (M22b)" and never got to the
+scaling: step-0 forensics found the meta co-gate resolves only 16.3pp (its 0.899-weight cell is
+byte-identical to the mirror deck → n_eff 147 of 480 games; **both M21 ship decisions were
+noise**, z=0.68/0.80), and then that **every gate opponent was inside the training pool** —
+four generations of "gains" were measured against the training distribution. The one doubly
+clean opponent we own (never trained against, not authored by us), `rule:dragapult`, delivered
+THE campaign finding: **every pilot in our lineage — neural, neural+search, rule+search — sits
+at 0.17–0.22 out-of-loop while the company sample agent scores ~0.50 on our exact deck**, and
+four generations of mirror gains (0.429→0.509) bought zero of it. Cause A (threat blindness)
+confirmed at p<0.0001: dragapult's bench spread lands where the v2/v3 opponent model never
+looks (median ⅓ of loss damage on our bench vs 0.000 in the mirror). The loss-anatomy flag
+taxonomy died under a win/loss contrast — all phantoms. Instruments that survive: strict
+behavior counters (`rl/behavior.py`), the retargeted off-mirror tail gate, MDE refusal gates,
+and dragapult as the only out-of-loop floor — evaluation-only, forever.
+
+```mermaid
+flowchart LR
+    subgraph IN22["Data / inputs"]
+        A22["M21 live A/B (B2/B3) + champion pins"]
+        B22["meta_v2 manifest + weights"]
+        C22["decks/dragapult.csv + company sample agent"]
+    end
+    subgraph RUN22["Code run"]
+        D22["power math on every gate (MDE table)"]
+        E22["pool-membership audit of all gate opponents"]
+        F22["rl/behavior.py strict counters + pool dedupe"]
+        G22["out-of-loop probe battery vs rule:dragapult"]
+    end
+    subgraph ART22["Artifacts"]
+        H22["docs/M22.md diary · m22-post-mortem.md"]
+        I22["retargeted tail meta-eval · MDE tables"]
+    end
+    subgraph GATE22["Findings"]
+        J22["meta gate n_eff 147 → 16.3pp MDE"]
+        K22["~30pp out-of-loop collapse, all pilots"]
+        L22["threat blindness p<0.0001"]
+    end
+    V22["🔬 DIAGNOSIS — the loop optimized an<br/>endogenous mirror for four generations"]
+    IN22 --> RUN22 --> ART22 --> GATE22 --> V22
+    style V22 fill:#fff3e0,stroke:#e65100,color:#000
+```
+
+### M22c-RL — the one-variable teacher test ([M22.md](M22.md) 07-21 entries, [M22c-morning-report.md](M22c-morning-report.md)) 🔭 shipped (54864190)
+The cheapest lever M22 left standing: swap the 45%-of-pool teacher from our 0.22 solver to the
+0.50 sample agent (`rule:lucario`), hold everything else at the B3 recipe, 10 PPO iterations.
+Out-of-loop did NOT move (+1.68pp vs B3, inside the 5.48pp MDE); shipped anyway on Piotr's call
+(slots were free, live signal is the scarce resource) as **54864190** — after first shipping
+the kyogre deck by mistake (54864089, M18.1 repeated; `build_submission.sh` now hard-errors
+without `--deck` and the md5 ritual is standing). Live forensics at n=39: mirror is a
+setup-tempo coin flip; kangaskhan losses are 0–6 shutouts with the hand empty from turn 4 and
+Carmine ×3 unplayed — Gap A live on the ladder. The offline kangaskhan cell (0.808, solver-
+piloted) vs live (0.30, other teams' pilots) at Fisher p=0.001 sealed the endogeneity story:
+**pilot quality dominates archetype in every cell.** C1 within-turn search (+2.25pp, 6.7×
+compute, zero actions changed) and C2 threat tiebreak (p=0.548) both nulled. The honest read:
+10 iterations was signal-starved, still climbing vs the new teacher — convergence became M23.
+
+```mermaid
+flowchart LR
+    subgraph IN22c["Data / inputs"]
+        A22c["ppo_current_m21legB3.pt warm start"]
+        B22c["teacher swap: solver:lucario → rule:lucario"]
+    end
+    subgraph RUN22c["Code run"]
+        C22c["10-iter PPO leg, B3 recipe held fixed"]
+        D22c["C1 search probe · C2 threat-tiebreak A/B"]
+    end
+    subgraph ART22c["Artifacts"]
+        E22c["ppo_current_m22cRL.pt · sub 54864190"]
+        F22c["--deck hard guard in build_submission.sh"]
+    end
+    subgraph GATE22c["Gates"]
+        G22c["dragapult 0.1888 n=800 (+1.68pp, inside MDE)"]
+        H22c["mirror 0.480 · random 0.920 · teacher 0.365"]
+    end
+    V22c["🔭 LIVE ARM — teacher upgrade alone did not<br/>move out-of-loop in one unconverged leg"]
+    IN22c --> RUN22c --> ART22c --> GATE22c --> V22c
+    style V22c fill:#e3f2fd,stroke:#1565c0,color:#000
+```
+
+### M23 — converge, then audit the signal ([M23.md](M23.md), spec [M23-plan.md](M23-plan.md), audit [m23-signal-audit-plan.md](m23-signal-audit-plan.md)) ✅ resolved, no ship
+Three phases, one day. **Phase 0 instruments:** `play_series` seat defect fixed (per-seat
+counters recorded the opponent half the time), dragapult hard-guarded out of every training
+pool in `parse_pool`, and a seat-correct supporter counter that immediately quantified the
+draw-engine gap: from turn 3 the sample agent plays a draw supporter ~2× as often as our model
+(0.73–0.80 vs 0.34/turn). **Phase 1, the convergence test:** 20 more iterations against the
+strong teacher (30 total on the recipe) — offline vs-teacher **FLAT** (0.3575 vs 0.365) and
+dragapult flat (0.151/0.176 vs 0.1888) → the teacher-weakness thesis is dead at convergence;
+in-loop promotion evals misled a third time. **Phase 3, the breakthrough:** BC-cloning the
+1251-score leaderboard sub 54618168 from 348 harvested replays produced `bc_clone_54618168`
+(fidelity 0.664) playing **0.59 vs the sample agent — the first pilot in the campaign to beat
+a company agent**, with no plan head, no search, no v4 memory. The same-day **signal audit**
+(all thresholds pre-registered) then closed every "fix our side" branch: S2 = supporter↔win
+correlation in our own self-play is ~zero/negative (the signal PPO needs is ABSENT from its
+data); S3 exploration fine (16.3% ≫ 5%); S5 critic moderate; S6 plan head NOT decorative
+(0.90/0.68 plan-consistency); S7 entropy healthy; E1 = a fresh OptionScorerV3 BC-trained on
+the clone corpus hits fidelity 0.657 and **0.5625 pooled n=400 vs the sample agent (bar 0.54)
+→ architecture exonerated**. The defect is the signal source, and only there.
+
+```mermaid
+flowchart LR
+    subgraph IN23["Data / inputs"]
+        A23["ppo_current_m22cRL.pt + rule:lucario-heavy pool"]
+        B23["snowball refresh → 351 episodes of sub 54618168"]
+        C23["m23p1 final-iter shards (400 games, stored plans)"]
+    end
+    subgraph RUN23["Code run"]
+        D23["Phase 0: seat fix · dragapult guard · supporter counter"]
+        E23["Phase 1: 20-iter convergence leg (vs_teacher promotion)"]
+        F23["Phase 3: replay_bc --only-subs → bc_clone train"]
+        G23["signal audit S1–S7 + E1 (scripts/m23_signal_audit.py)"]
+    end
+    subgraph ART23["Artifacts"]
+        H23["bc_clone_54618168.pt (0.59) · bc_clone_v3_54618168.pt (0.5625)"]
+        I23["S4 adv-by-type logging in rl/ppo.py · audit script"]
+    end
+    subgraph GATE23["Verdicts (pre-registered)"]
+        J23["teacher FLAT 0.3575 · dragapult flat → thesis dead"]
+        K23["S2: signal ABSENT/negative in self-play"]
+        L23["E1: 0.5625 ≥ 0.54 → architecture EXONERATED"]
+    end
+    V23["✅ RESOLVED — the bottleneck is the SIGNAL<br/>SOURCE, not architecture/optimizer/exploration"]
+    IN23 --> RUN23 --> ART23 --> GATE23 --> V23
+    style V23 fill:#e8f5e9,stroke:#2e7d32,color:#000
+```
+
+### M24 — the pipeline inversion ([M24-plan.md](M24-plan.md)) 🚧 underway
+The audit's conclusion, operationalized: **leaderboard-replay BC becomes the primary training
+signal; self-play PPO is demoted to an optional, gated fine-tuner with exogenous clone
+opponents.** Piotr's scoping calls (07-21 evening): replay-BC on other teams' public replays
+is an approved ship path; the deck question resolves as a **both-decks A/B** (the clone's 60,
+hash `9294d9d8…`, vs our lucario 60, hash `20dcd313…` — which is itself the 0.899-weight meta
+deck, so strong pilots play OUR exact list on-ladder); corpus expansion now (top-10 subs ≥1140
+snowball + `--deck-hash` corpus filter landed); no early clone ship — one ship per milestone,
+after identical gate batteries (dragapult primary, MDE discipline). Phase 2, if earned: PPO
+fine-tune from the BC base with S4 advantage-by-type logging watching whether credit reaches
+card-economy actions, kill-gated against any regression vs the BC base.
+
+```mermaid
+flowchart LR
+    subgraph IN24["Data / inputs"]
+        A24["snowball: top-10 subs ≥1140 + 4 live arms"]
+        B24["per-teacher + our-deck-hash corpora"]
+    end
+    subgraph RUN24["Code to run"]
+        C24["V3-as-BC per corpus (plan_iter train, E1 recipe)"]
+        D24["A/B: clone-deck arm vs our-deck arm"]
+        E24["contingent: PPO fine-tune vs clone opponents"]
+    end
+    subgraph ART24["Artifacts"]
+        F24["docs/M24.md diary · candidate checkpoints"]
+    end
+    subgraph GATE24["Gates"]
+        G24["dragapult n=400×2 PRIMARY · teacher pin 0.5625"]
+        H24["random floor · latency · md5 deck ritual"]
+    end
+    V24["🚧 UNDERWAY — first campaign leg where the<br/>training data provably contains the winning signal"]
+    IN24 --> RUN24 --> ART24 --> GATE24 --> V24
+    style V24 fill:#e3f2fd,stroke:#1565c0,color:#000
 ```
 
 ## Cross-cutting findings
@@ -1074,21 +1253,45 @@ flowchart LR
   search-based agents (M10) · expert iteration on a teacher whose improvement operator fires
   rarely (M11) · distilling `score_leaf` preferences into a confident override (M12, M13) ·
   offline disagreement-weighted BC repair (M18) · high-dose label reweighting (M19) ·
-  high-volume plain expert imitation without a working value teacher (M17). **Un-made:**
-  M8.3's "more PPO is dead" is scoped to v2 nets and does **not** transfer — PPO-on-V3 is a
-  confirmed strength lever (M20).
-- **Current pinned baselines (2-seed pooled, vs post-attach-fix `solver:lucario`):** champion
-  `ppo_best_m20legB` mirror **0.488** · meta_v2 **~0.494** · `random:kyogre` 0.920/0.915 ·
-  `rule:lucario` 0.341. Predecessor `osv3o_plan5` 0.4294 / ~0.498. Historic, on the *pre*-fix
-  solver and not comparable: `osv2_bc2` 0.345, `osv3_plan0c` 0.415.
+  high-volume plain expert imitation without a working value teacher (M17) · supervised
+  relabel of a post-PPO checkpoint at any weighting (M21 Gate A ×2) · plan-PPO alone against
+  a behavior the option head never samples (M21 two-head deadlock) · loss-only flag
+  taxonomies without a win/loss contrast (M22) · deeper within-turn search (M22 C1) ·
+  whole-board threat tiebreaks (M22 C2) · converged strong-teacher self-play PPO as an
+  out-of-loop lever (M23: 30 iters, flat everywhere). **Un-made:** M8.3's "more PPO is dead"
+  is scoped to v2 nets and does **not** transfer — PPO-on-V3 is a confirmed strength lever
+  (M20), demoted to fine-tuner (not falsified) by M23's signal audit.
+- **The endogeneity law (M22, the campaign's costliest lesson):** a gate whose opponent lives
+  in the training pool — or is piloted by our own solver — measures the training distribution,
+  not strength. Offline kangaskhan 0.808 vs live 0.30 (p=0.001); **pilot quality dominates
+  archetype in every cell**. Corollary: `rule:dragapult` is the only doubly clean instrument
+  (never trained against, not authored by us) and must never enter a training pool.
+- **The signal-source law (M23 audit, all thresholds pre-registered):** on-policy RL cannot
+  learn behaviors its own data never rewards — our self-play showed ~zero/NEGATIVE
+  supporter↔win correlation while every strong pilot plays supporters 0.5–0.9/turn. With
+  architecture, exploration, critic, entropy, and plan head all individually exonerated
+  (S3/S5/S6/S7 + E1 0.5625 ≥ bar 0.54), the fix is the data: imitate strong exogenous
+  policies first, fine-tune second (M24).
+- **Current pinned baselines (2-seed pooled):** mirror — B3 `ppo_current_m21legB3` **0.5094**
+  n=800, B2 0.4894, M20 champion 0.488, M22c-RL 0.480 · out-of-loop `rule:dragapult` —
+  M22c-RL **0.1888** n=800, B3 0.172 (sample agent ~0.50 same deck; clone lineage 0.20–0.25)
+  · `rule:lucario` — E1 V3-as-BC **0.5625** n=400 and V2 clone 0.59 n=100 (our PPO lineage
+  0.32–0.37) · `random:kyogre` floors 0.92–0.935. MDEs: mirror n=800 7.0pp, dragapult n=800
+  5.5pp — no sub-MDE claims.
 - **Ship history:** 54444045 (bc_v1, M1) → 54474043 (rules probe, M6) → 54586430
   (solver-on, M7.4a) → 54621283 (solver + 5 pilot fixes, M7.5) → 54790886 (osv3_plan2, M14
   observation) → 54793851 (osv3h_plan1 hand-aware, M15, settled 422.9) → 54801291
   (osv3o_plan1 option-identity, M16, settled 519.8 — but see M18.1: this bundle piloted the
   abomasnow deck) → 54817441 (osv3o_plan5, M18) → 54817813 (same net + lucario, M18.1) →
-  **54836093 (ppo_best_m20legB, M20 — current live)**.
-- **Where the campaign stands:** 0.488 vs the 0.55 bar, 6.2pp short. The largest untouched
-  lever is **deck surgery** — every milestone since M11 has moved the policy, not the deck.
+  54836093 (ppo_best_m20legB, M20) → 54846434 (B2, M21) → 54849475 (B3, M21) →
+  54864089 (M22c kyogre mis-ship — dead arm) → **54864190 (M22c-RL, current newest live
+  arm; B2/B3/M20-champion still accruing)**.
+- **Where the campaign stands (post-M23 audit):** the mirror-vs-0.55 frame is retired — the
+  real gap is **out-of-loop: our lineage 0.17–0.22 vs dragapult against the sample agent's
+  ~0.50**, and the strongest pilots we own are replay clones (0.59 / 0.5625 vs the sample
+  agent) that our RL loop never approached. M24 inverts the pipeline: replay-BC primary,
+  PPO fine-tuner, both-decks A/B; the M19-era "deck surgery" lever is absorbed into the A/B
+  (the clone's tuned 60 vs our meta 60).
 
 ## Glossary
 
