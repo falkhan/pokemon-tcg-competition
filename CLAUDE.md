@@ -50,5 +50,12 @@ When running a pipeline to ship a new model use hermes integration to send perio
   stale line after the run's real `done:` line lands, which looks like a freeze
   but is not; always confirm against the `done:` line and live shard growth.
   - Do not ship a model unless explicitly asked to. If not provided in a prompt, ask the user which deck - always confirm which deck should be shipped.
+  - PRE-SHIP HUMAN QC (mandatory, 2026-07-22): before ANY Kaggle submit, after
+    the export so `submission/` is the exact ship state, play 3 games with the
+    actual bundle — `tcg.evaluation.play_games("submission/main.py", <opponent
+    that exercises the changed behavior>, 3, replay_prefix="mXX_qc_<arm>")` —
+    which saves them to `replays/` for the ptcgvis visualizer, then STOP and
+    wait for the user's manual replay review and explicit go. No submit without
+    it, even when every offline gate passes.
   - Always save down pipelines or shell commands for reusability locally or as skills. Reuse existing scripts or ask the user whether they can be modified.
   - ALWAYS before an important review, change or shipping, review `verify-before-consequential-actions.md`.
