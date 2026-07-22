@@ -236,7 +236,7 @@ def test_encode_option_v2_parity_and_ids():
         a_num, a_ids = old.encode_option_v2(opt, obs)
         b_num, b_ids = new.encode_option_v2(opt, obs)
         assert np.array_equal(a_num, b_num) and np.array_equal(a_ids, b_ids)
-        assert a_num.shape == (old.OPTION_V3_DIM,)
+        assert a_num.shape == (old.OPTION_M28_DIM,)
         # the v1 prefix stays byte-identical (M16 block is additive)
         assert np.array_equal(a_num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.encode_option_v2(attach, obs)[1].tolist() == [0, 1]  # target = active card 1
@@ -371,3 +371,110 @@ def test_race_features_reflect_the_won_race():
     assert race[1] == 0.1            # 1 turn to first KO
     assert race[6] == 1.0            # opponent can never KO (capped)
     assert race[7] > 0.8             # race clearly won
+
+
+# --- M27 play-precondition block ---------------------------------------------
+# docs/M27.md Probe 3: on identical menus the clone plays supporters at 0.51x
+# and stadiums at 0.06x the teacher's rate. The 0.505 sample agent expresses
+# these as binary preconditions, not preferences (docs/M27-sample-agent-diff.md).
+
+BOSS_ORDERS = 1182   # supporter AND the gust card (rl.plan.GUST_IDS)
+HILDA = 1225         # plain supporter
+NIGHTTIME_MINE = 1266  # stadium
+
+
+def _kind_patch(monkeypatch, mod, mapping):
+    """Point the module's card-kind table at `mapping`. The test suite runs on
+    the fake engine, whose card DB has no supporters or stadiums at all."""
+    monkeypatch.setattr(mod, "_PLAY_KIND", dict(mapping), raising=True)
+
+
+def _play_block(mod, card_id, obs):
+    """The M27 tail of encode_option_v2 for a PLAY of `card_id` from hand."""
+    me = obs.current.players[obs.current.yourIndex]
+    idx = [c.id for c in me.hand].index(card_id)
+    opt = option(OptionType.PLAY, area=AreaType.HAND, index=idx)
+    num, _ = mod.encode_option_v2(opt, obs)
+    return num[mod.OPTION_V3_DIM:]
+
+
+def test_supporter_slot_tracks_the_once_per_turn_budget(monkeypatch):
+    me = player(active=pokemon(1), hand=[hand_card(HILDA)])
+    fresh = observation(me=me, opponent=player(active=pokemon(2)),
+                        supporter_played=False)
+    spent = observation(me=me, opponent=player(active=pokemon(2)),
+                        supporter_played=True)
+    for mod in (old, new):
+        _kind_patch(monkeypatch, mod, {HILDA: "SUPPORTER"})
+        assert _play_block(mod, HILDA, fresh)[0] == 1.0
+        assert _play_block(mod, HILDA, spent)[0] == 0.0
+
+
+def test_stadium_slot_tracks_an_occupied_stadium(monkeypatch):
+    me = player(active=pokemon(1), hand=[hand_card(NIGHTTIME_MINE)])
+    empty = observation(me=me, opponent=player(active=pokemon(2)))
+    occupied = observation(me=me, opponent=player(active=pokemon(2)),
+                           stadium=[hand_card(NIGHTTIME_MINE)])
+    for mod in (old, new):
+        _kind_patch(monkeypatch, mod, {NIGHTTIME_MINE: "STADIUM"})
+        assert _play_block(mod, NIGHTTIME_MINE, empty)[1] == 1.0
+        assert _play_block(mod, NIGHTTIME_MINE, occupied)[1] == 0.0
+
+
+def test_card_kind_lookup_is_keyed_on_the_enum_NAME():
+    """Guards the collision that ints would allow: the fake engine numbers
+    CardType 0..3 (TRAINER=1), the real one 0..6 (SUPPORTER=3) — an int-keyed
+    table would encode a special energy as a supporter."""
+    for mod, table in ((old, old._play_kind()), (new, new.play_kind())):
+        assert all(isinstance(v, str) for v in table.values())
+
+
+def test_gust_slot_fires_when_the_bench_is_the_better_target(monkeypatch):
+    """Boss's Orders is worth playing when a BENCHED Pokemon outscores the
+    active — a port of the sample agent's `pokemon_score` argmax
+    (`plan.target >= 1`), computed from the observation because the plan block
+    is inert (docs/M27.md Probe 4). Same card id on both sides, so the
+    comparison turns purely on attached energy."""
+    def board(active_energies, bench):
+        me = player(active=pokemon(1), hand=[hand_card(BOSS_ORDERS)])
+        return observation(
+            me=me,
+            opponent=player(active=pokemon(2, hp=100, energies=active_energies),
+                            bench=bench))
+
+    juicy = board([], [pokemon(2, hp=100, energies=[FIGHTING] * 3)])
+    worthless = board([FIGHTING] * 3, [pokemon(2, hp=100)])
+    empty_bench = board([], [])
+
+    for mod, dmg_name in ((old, "_best_damage"), (new, "best_damage")):
+        _kind_patch(monkeypatch, mod, {BOSS_ORDERS: "SUPPORTER"})
+        monkeypatch.setattr(mod, dmg_name, lambda a, b, **k: 300)  # lethal either way
+        assert _play_block(mod, BOSS_ORDERS, juicy)[2] == 1.0
+        assert _play_block(mod, BOSS_ORDERS, worthless)[2] == 0.0
+        assert _play_block(mod, BOSS_ORDERS, empty_bench)[2] == 0.0
+
+
+def test_gust_slot_is_off_for_non_gust_supporters(monkeypatch):
+    """Only Boss's Orders (rl.plan.GUST_IDS) gets the bench-target signal."""
+    me = player(active=pokemon(1), hand=[hand_card(HILDA)])
+    obs = observation(me=me,
+                      opponent=player(active=pokemon(2, hp=100),
+                                      bench=[pokemon(2, hp=100,
+                                                     energies=[FIGHTING] * 3)]))
+    for mod in (old, new):
+        _kind_patch(monkeypatch, mod, {HILDA: "SUPPORTER"})
+        assert _play_block(mod, HILDA, obs)[2] == 0.0
+
+
+def test_m27_block_is_additive_so_narrower_checkpoints_are_unaffected():
+    """The whole width-shim contract: [:OPTION_V3_DIM] must be byte-identical
+    to what an OPTION_V3_DIM checkpoint trained on."""
+    me = player(active=pokemon(1), hand=[hand_card(BOSS_ORDERS)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)),
+                      supporter_played=False)
+    opt = option(OptionType.PLAY, area=AreaType.HAND, index=0)
+    num, _ = old.encode_option_v2(opt, obs)
+    assert num.shape == (old.OPTION_M28_DIM,)
+    assert np.array_equal(num[:old.OPTION_DIM], old.encode_option(opt, obs))
+    assert old.OPTION_M27_DIM == old.OPTION_V3_DIM + old.N_OPTION_PLAY_PRE
+    assert old.OPTION_M28_DIM == old.OPTION_M27_DIM + old.N_OPTION_PHASE

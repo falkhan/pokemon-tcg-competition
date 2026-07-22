@@ -66,6 +66,9 @@ DECK = [int(x) for x in open(os.path.join(_BASE, "deck.csv")) if x.strip()]
 _EMBED = WEIGHTS["embedding.weight"]
 _IS_V3 = "plan_enc.0.weight" in WEIGHTS          # M11 plan-conditioned export
 _IS_V4 = "enc_ver" in WEIGHTS                    # M21 encoder-v4 export
+# M27: this bundle's option width, sniffed from option_enc.0 (torch stores
+# (out, in); the trailing 2*EMBED columns are the option-id embeddings).
+_OPTION_DIM = WEIGHTS["option_enc.0.weight"].shape[1] - 2 * _EMBED.shape[1]
 if _IS_V3:
     from cg.api import SelectContext
     from rl.plan import (PLAN_DIM, apply_attach_overrides, encode_plan,
@@ -129,7 +132,9 @@ def score_options_v2(state_ctx, state_ids, options, option_ids):
 
     state_ctx: (STATE_V2_DIM+N_CONTEXTS,); state_ids: (N_STATE_IDS,) int;
     options: (N, OPTION_V2_DIM); option_ids: (N, N_OPTION_IDS) int.
+    M27 width shim: truncate to this bundle's trained option width.
     """
+    options = options[:, :_OPTION_DIM]
     se = _EMBED[state_ids].reshape(-1)                                # (IDS*E,)
     s = _relu(_linear(_relu(_linear(np.concatenate([state_ctx, se]),
                                     "state_enc.0")), "state_enc.2"))  # (H,)
@@ -146,7 +151,12 @@ def _trunk_v3(state_ctx, plan, state_ids):
 
 
 def score_options_v3(state_ctx, plan, state_ids, options, option_ids):
-    """Numpy twin of tcg.network.OptionScorerV3.forward, logits only."""
+    """Numpy twin of tcg.network.OptionScorerV3.forward, logits only.
+
+    M27 width shim (twin of the torch one): encode_option_v2 appends new blocks
+    and the leading slice stays byte-identical, so truncate to whatever width
+    THIS bundle's weights were trained on."""
+    options = options[:, :_OPTION_DIM]
     s = _trunk_v3(state_ctx, plan, state_ids)
     oe = _EMBED[option_ids].reshape(len(options), -1)
     o = _relu(_linear(np.concatenate([options, oe], axis=1), "option_enc.0"))

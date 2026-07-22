@@ -32,7 +32,8 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from cg.api import OptionType, SelectContext, to_observation_class
+from cg.api import (CardType, OptionType, SelectContext, all_card_data,
+                    to_observation_class)
 from cg.game import battle_finish, battle_select, battle_start
 from rl.turn_solver import MIN_OVERRIDE_SCORE
 from rl.bc import load_population
@@ -47,6 +48,10 @@ ROOT = Path(__file__).resolve().parent.parent
 
 WIDE_NODES = 4000          # widened data-gen budget (inference default: 800)
 WIDE_DEPTH = 10            # (inference default: 8)
+
+# card id -> CardType int, for --card-kind-weight (M27). Same source of truth as
+# rl/plan.py's _IS_ENERGY, so a card-data change moves both at once.
+_CARD_KIND = {c.cardId: int(c.cardType) for c in all_card_data()}
 
 # M14 setup-plan teacher: the M13 value consumed at DATA-GEN only (the
 # override law bans live consumption). Constants carry their provenance:
@@ -761,6 +766,36 @@ def load_v3h_into_v3o(v3h_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     return model
 
 
+def load_v3o_into_v3m(v3o_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
+    """M27 warm start: an OPTION_V3_DIM checkpoint into an OPTION_M27_DIM net.
+
+    Same shape as load_v3h_into_v3o (sixth use of the warm-start invariant):
+    option_enc.0's N_OPTION_PLAY_PRE new numeric columns are ZERO-init and the
+    embedding column block shifts right, so at init the new net reproduces the
+    old one EXACTLY on any input — the M27 play-precondition slots start with
+    no influence and have to earn it from the gradient.
+    """
+    from rl.encoders import (EMBED_DIM, N_OPTION_IDS, OPTION_M28_DIM,
+                             V4_EXTRA_DIM)
+    OPTION_M27_DIM = OPTION_M28_DIM          # widen to the CURRENT option width
+    old_opt = v3o_sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * EMBED_DIM
+    model = OptionScorerV3(
+        plan_dim=plan_dim, n_state_ids=_n_ids_of(v3o_sd),
+        option_dim=OPTION_M28_DIM,
+        extra_dim=V4_EXTRA_DIM if "enc_ver" in v3o_sd else 0)
+    sd = model.state_dict()
+    for k, v in v3o_sd.items():
+        if k == "option_enc.0.weight":
+            new = torch.zeros_like(sd[k])
+            new[:, :old_opt] = v[:, :old_opt]           # numeric block verbatim
+            new[:, OPTION_M27_DIM:] = v[:, old_opt:]    # id embeddings shift right
+            sd[k] = new
+        else:
+            sd[k] = v
+    model.load_state_dict(sd)
+    return model
+
+
 def migrate_v3_to_v4(v3_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     """M21 warm start: a v3 checkpoint into an encoder-v4 net
     (extra_dim=V4_EXTRA_DIM, N_STATE_IDS_V4 ids). state_enc.0 columns:
@@ -813,13 +848,58 @@ def apply_class_weights(ds, class_weights: dict[int, float]) -> None:
               f"{int(mask.sum())} rows ({mask.mean():.1%})")
 
 
+def apply_card_kind_weights(ds, kind_weights: dict[int, float]) -> None:
+    """M27: per-CardType loss weighting on the teacher's ACTED CARD.
+
+    `--class-weight PLAY:k` is too blunt for the M27 defect: the clone plays
+    supporters at 0.51x and stadiums at 0.06x the teacher's rate while MATCHING
+    items (13.4% vs 13.8%, docs/M27.md Probe 3), and PLAY lumps all three
+    together — lifting the class would push the already-over-played items
+    further over. This keys on the acted card's CardType instead, so supporters
+    and stadiums can be lifted on their own.
+
+    Same weight channel and same policy-CE-only contract as
+    apply_class_weights; evaluate() stays unweighted.
+    """
+    acted = ds.option_ids[ds.starts + ds.labels, 0].astype(int)
+    kinds = np.array([_CARD_KIND.get(int(cid), -1) for cid in acted])
+    for kind, factor in kind_weights.items():
+        mask = kinds == kind
+        ds.weights[mask] *= factor
+        print(f"card-kind-weight {CardType(kind).name} x{factor}: "
+              f"{int(mask.sum())} rows ({mask.mean():.1%})")
+
+
+def apply_phase_weights(ds, factor: float, deck_at: int = 15) -> None:
+    """M28 Track G1: upweight LATE-GAME rows in the policy CE.
+
+    docs/M27.md Probe 2: val_acc runs 0.738 at deck 30+ but 0.601 at deck 7-15
+    and 0.644 at deck <=6 — competence collapses in exactly the region where
+    deck-out is decided, and only 13.2% of the corpus lives there. This gives
+    those rows more gradient. `deck_at` is the remaining-deck threshold below
+    which a row counts as late game.
+
+    Reads deckCount from the state vector's global block (encode_state index 3,
+    normalized /60). Same weight channel and policy-CE-only contract as
+    apply_class_weights; evaluate() stays unweighted.
+    """
+    deck = ds.states[:, 3] * 60.0
+    mask = deck <= deck_at
+    ds.weights[mask] *= factor
+    print(f"phase-weight deck<={deck_at} x{factor}: "
+          f"{int(mask.sum())} rows ({mask.mean():.1%})")
+
+
 def train(data_dirs: list, name: str, init: str | None = None,
           init_v2: str | None = None, init_v3h: str | None = None,
-          init_v3o: str | None = None,
+          init_v3o: str | None = None, init_v3m: str | None = None,
           epochs: int = 8, lr: float = 3e-4,
           batch_size: int = 256, plan_weight: float = 1.0,
           uniform_weights: bool = False,
-          class_weights: dict[int, float] | None = None) -> None:
+          class_weights: dict[int, float] | None = None,
+          card_kind_weights: dict[int, float] | None = None,
+          phase_weight: float | None = None,
+          phase_deck_at: int = 15) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
@@ -835,6 +915,10 @@ def train(data_dirs: list, name: str, init: str | None = None,
         print(f"uniform-weights: neutralized {n_rw} reweighted rows")
     if class_weights:
         apply_class_weights(ds, class_weights)
+    if card_kind_weights:
+        apply_card_kind_weights(ds, card_kind_weights)
+    if phase_weight:
+        apply_phase_weights(ds, phase_weight, phase_deck_at)
 
     rng = np.random.default_rng(0)
     unique_games = np.unique(ds.game_ids)
@@ -867,6 +951,11 @@ def train(data_dirs: list, name: str, init: str | None = None,
         print(f"warm-start from {'v4' if extra else 'v3'} {init} "
               f"(n_state_ids={model.n_state_ids}, "
               f"option_dim={model.option_dim}, extra_dim={extra})")
+    elif init_v3m is not None:
+        model = load_v3o_into_v3m(torch.load(_resolve(init_v3m),
+                                             map_location="cpu"))
+        print(f"warm-start from pre-M27 v3 {init_v3m} "
+              "(play-precondition columns zero-init)")
     elif init_v3o is not None:
         model = load_v3h_into_v3o(torch.load(_resolve(init_v3o),
                                              map_location="cpu"))
@@ -912,7 +1001,8 @@ def train(data_dirs: list, name: str, init: str | None = None,
                     ptotal += int(mask.sum())
         return correct / max(1, total), pcorrect / max(1, ptotal)
 
-    if any(p is not None for p in (init, init_v2, init_v3h, init_v3o)):
+    if any(p is not None for p in (init, init_v2, init_v3h, init_v3o,
+                                   init_v3m)):
         acc0, pacc0 = evaluate()
         print(f"init val_acc {acc0:.3f}  plan_acc {pacc0:.3f}")
 
@@ -1071,6 +1161,10 @@ if __name__ == "__main__":
     t.add_argument("--init-v3h", type=str, default=None,
                    help="warm-start a HAND-AWARE net from a legacy v3 "
                         "checkpoint (M15; hand columns zero-init)")
+    t.add_argument("--init-v3m", type=str, default=None,
+                   help="M27 warm start: an OPTION_V3_DIM checkpoint into an "
+                        "OPTION_M27_DIM net (play-precondition columns "
+                        "zero-init, so init is exactly the old net)")
     t.add_argument("--init-v3o", type=str, default=None,
                    help="warm-start an OPTION-IDENTITY net from a pre-M16 "
                         "v3/v3h checkpoint (option columns zero-init)")
@@ -1086,6 +1180,19 @@ if __name__ == "__main__":
                    help="M26: multiply the policy-CE weight of rows whose "
                         "teacher action is OptionType TYPE by K "
                         "(e.g. ATTACH:3; repeatable)")
+    t.add_argument("--card-kind-weight", action="append", default=[],
+                   metavar="KIND:K",
+                   help="M27: multiply the policy-CE weight of rows whose "
+                        "teacher ACTED CARD is CardType KIND by K "
+                        "(e.g. SUPPORTER:5 STADIUM:5; repeatable). Finer than "
+                        "--class-weight PLAY:k, which also lifts items")
+    t.add_argument("--phase-weight", type=float, default=None,
+                   metavar="K",
+                   help="M28: multiply the policy-CE weight of LATE-GAME rows "
+                        "(remaining deck <= --phase-deck-at) by K — the region "
+                        "where val_acc collapses (docs/M27.md Probe 2)")
+    t.add_argument("--phase-deck-at", type=int, default=15,
+                   help="remaining-deck threshold for --phase-weight")
     r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
                                        "sibling shard dirs (<dir><suffix>)")
     r.add_argument("--data", type=str, nargs="+", required=True)
@@ -1112,9 +1219,17 @@ if __name__ == "__main__":
         for spec in args.class_weight:
             type_name, _, factor = spec.partition(":")
             class_weights[int(OptionType[type_name.upper()])] = float(factor)
+        card_kind_weights = {}
+        for spec in args.card_kind_weight:
+            kind_name, _, factor = spec.partition(":")
+            card_kind_weights[int(CardType[kind_name.upper()])] = float(factor)
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
               init_v3h=args.init_v3h, init_v3o=args.init_v3o,
+              init_v3m=args.init_v3m,
               epochs=args.epochs, lr=args.lr,
               batch_size=args.batch_size, plan_weight=args.plan_weight,
               uniform_weights=args.uniform_weights,
-              class_weights=class_weights or None)
+              class_weights=class_weights or None,
+              card_kind_weights=card_kind_weights or None,
+              phase_weight=args.phase_weight,
+              phase_deck_at=args.phase_deck_at)

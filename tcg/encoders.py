@@ -274,6 +274,93 @@ OPTION_V2_DIM = OPTION_DIM
 # numbers, NUMBER options their count; appended so the v1 slice is unchanged.
 N_OPTION_EXTRA = 4   # [atk dmg/300, atk cost/5, atk eff-dmg vs opp active/300, number/10]
 OPTION_V3_DIM = OPTION_DIM + N_OPTION_EXTRA
+# M27 play-precondition block — twin of rl/encoders.py (see its comment for the
+# Probe 3 / sample-agent rationale). Appended, so [:OPTION_V3_DIM] is unchanged.
+N_OPTION_PLAY_PRE = 3
+OPTION_M27_DIM = OPTION_V3_DIM + N_OPTION_PLAY_PRE
+# M28 phase-interaction block — twin of rl/encoders.py (see its comment).
+N_OPTION_PHASE = 3
+OPTION_M28_DIM = OPTION_M27_DIM + N_OPTION_PHASE
+DECK_LOW_AT = 15.0
+_PLAY_KIND: dict[int, str] = {}
+
+
+def play_kind() -> dict[int, str]:
+    """{card id -> CardType NAME}, built once (twin of rl/encoders._play_kind);
+    keyed on the name so a differently-numbered CardType cannot collide."""
+    if not _PLAY_KIND:
+        from cg.api import CardType, all_card_data
+        # c.cardType is an enum in-repo but a plain int inside the shipped
+        # bundle (caught by the isolation gate) — resolve through the enum so
+        # both work, and key on the NAME so renumbering cannot collide.
+        names = {int(member): member.name for member in CardType}
+        _PLAY_KIND.update({c.cardId: names.get(int(c.cardType), "")
+                           for c in all_card_data()})
+    return _PLAY_KIND
+
+
+def phase_interaction(option, observation) -> np.ndarray:
+    """[ending x late, ability x late, supporter x late] — twin of
+    rl/encoders._phase_interaction."""
+    v = np.zeros(N_OPTION_PHASE, dtype=np.float32)
+    me = observation.current.players[observation.current.yourIndex]
+    late = max(0.0, min(1.0, (DECK_LOW_AT - getattr(me, "deckCount", 60))
+                        / DECK_LOW_AT))
+    if late <= 0.0:
+        return v
+    if option.type in (OptionType.ATTACK, OptionType.END):
+        v[0] = late
+    elif option.type == OptionType.ABILITY:
+        v[1] = late
+    elif option.type == OptionType.PLAY:
+        card_id = option.cardId
+        if card_id is None and option.index is not None:
+            card_id = card_id_at(
+                observation,
+                option.area if option.area is not None else AreaType.HAND,
+                option.index, observation.current.yourIndex)
+        if card_id and play_kind().get(int(card_id)) == "SUPPORTER":
+            v[2] = late
+    return v
+
+
+def target_value(attacker, target) -> float:
+    """Twin of rl/encoders._target_value — the 0.505 sample agent's
+    `pokemon_score` plus its non-lethal damage discount."""
+    prizes = CARDS.get(target.id, UNKNOWN_CARD).prize_count
+    base = (prizes * 1000.0
+            + len(target.energies or ()) * 150.0
+            + len(target.tools or ()) * 100.0
+            + target.hp)
+    dmg = best_damage(attacker, target)
+    return base if dmg >= target.hp else base * (dmg / max(1, target.hp))
+
+
+def play_precondition(card_id, observation) -> np.ndarray:
+    """[supporter-legal, stadium-legal, gust-wanted] — twin of
+    rl/encoders._play_precondition. See it for the per-slot semantics."""
+    v = np.zeros(N_OPTION_PLAY_PRE, dtype=np.float32)
+    if not card_id:
+        return v
+    from rl.plan import GUST_IDS          # single source of truth for the id
+    kind = play_kind().get(int(card_id))
+    state = observation.current
+    if kind == "SUPPORTER":
+        v[0] = float(not getattr(state, "supporterPlayed", False))
+    elif kind == "STADIUM":
+        v[1] = float(not (state.stadium or []))
+    if int(card_id) in GUST_IDS:
+        me = state.players[state.yourIndex]
+        opp = state.players[1 - state.yourIndex]
+        my_active = me.active[0] if me.active else None
+        opp_active = opp.active[0] if opp.active else None
+        bench = [b for b in (opp.bench or []) if b is not None]
+        if my_active is not None and bench:
+            best_bench = max(target_value(my_active, b) for b in bench)
+            active_val = (target_value(my_active, opp_active)
+                          if opp_active is not None else 0.0)
+            v[2] = float(best_bench > active_val)
+    return v
 
 
 def race_features(state) -> np.ndarray:
@@ -450,7 +537,7 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     identity and NUMBER counts; M19 adds ATTACH energy-sufficiency and
     RETREAT utility in the same 3 slots (mutually exclusive types).
     Pre-M16 checkpoints: encode_option_v2_legacy."""
-    numeric = np.zeros(OPTION_V3_DIM, dtype=np.float32)
+    numeric = np.zeros(OPTION_M28_DIM, dtype=np.float32)
     numeric[:OPTION_DIM] = encode_option(option, observation)
     your_index = observation.current.yourIndex
     card_id = option.cardId
@@ -479,6 +566,9 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
         numeric[OPTION_DIM:OPTION_DIM + 3] = retreat_extra(observation)
     elif getattr(option, "number", None) is not None:
         numeric[OPTION_DIM + 3] = min(float(option.number), 10.0) / 10.0
+    if option.type == OptionType.PLAY:
+        numeric[OPTION_V3_DIM:OPTION_M27_DIM] = play_precondition(card_id, observation)
+    numeric[OPTION_M27_DIM:] = phase_interaction(option, observation)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return numeric, ids
 

@@ -110,7 +110,9 @@ class OptionScorerV2(nn.Module):
                 ) -> tuple[torch.Tensor, torch.Tensor]:
         """state_ctx (B, STATE_V2_DIM+N_CONTEXTS); state_ids (B, N_STATE_IDS) long;
         options (B, N, OPTION_V2_DIM); option_ids (B, N, N_OPTION_IDS) long.
-        Returns (logits (B, N), value (B,))."""
+        Returns (logits (B, N), value (B,)). M27 width shim: see OptionScorerV3."""
+        if options.shape[-1] > OPTION_V2_DIM:
+            options = options[..., :OPTION_V2_DIM]
         se = self.embedding(state_ids).flatten(-2)             # (B, IDS*E)
         s = self.state_enc(torch.cat([state_ctx, se], dim=-1))  # (B, H)
         oe = self.embedding(option_ids).flatten(-2)            # (B, N, 2E)
@@ -186,6 +188,11 @@ class OptionScorerV3(nn.Module):
     def forward(self, state_ctx: torch.Tensor, plan: torch.Tensor,
                 state_ids: torch.Tensor, options: torch.Tensor,
                 option_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        # M27 twin: options may be wider than option_dim (encode_option_v2
+        # appends; the leading slice is byte-identical) — truncate to this
+        # checkpoint's width. See rl/policy.py OptionScorerV3.forward.
+        if options.shape[-1] > self.option_dim:
+            options = options[..., :self.option_dim]
         s = self._trunk(state_ctx, plan, state_ids)
         oe = self.embedding(option_ids).flatten(-2)
         o = self.option_enc(torch.cat([options, oe], dim=-1))

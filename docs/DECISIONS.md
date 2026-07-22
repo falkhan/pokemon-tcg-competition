@@ -7,6 +7,51 @@ measurement changes the plan.
 
 ---
 
+### 2026-07-22 · M27: the deck-out thesis was mis-localized — a per-class confusion on a 31-row cell is not a thesis
+**Observation:** M26 and the M27 stub both rest on "the clone spends its turn-ending action while
+free actions sit unplayed," inferred from the confusion `Boss's Orders -> ATTACK x16` in the
+per-class report. Measured directly (`scripts/turn_discipline_report.py`), it does not hold: over
+the 16,086 corpus decisions where a turn-ending option AND a free action are both legal, the
+teacher ends the turn 12.1% of the time and the clone **12.9%** — a +0.8pp gap — and on 92.3% of
+the rows where the teacher took a free action the clone also keeps one. The evidence for the
+thesis was a within-class tail on a **31-row val cell**. What the clone actually does
+(`scripts/trainer_play_report.py`): on identical menus it plays **supporters 3.8% vs the
+teacher's 7.5%** (0.51x) and **stadiums 0.4% vs 6.6%** (1 play in 272 offers), while matching
+items (13.4% vs 13.8%) and over-playing Enhanced Hammer / Rare Candy. When it declines a trainer
+it reaches for EVOLVE (39.8%) or ABILITY (18.0%); ATTACK+END together are only 16.9%. The defect
+is *which* free action, not *whether* to keep acting.
+**Pivot:** M27 stub levers 1–5 dropped (supporter backstop, evolve backstop, temptation-state
+weighting, turn-phase masking, low-deck draw guard) — all aim at the +0.8pp phantom, and M26
+already showed the draw rate is teacher-level (63% vs 61%). O1's live record needs no further
+explanation: it was engineered against a defect that is ~1pp on-distribution. Re-aimed at the
+supporter/stadium gap from the **training** side, and at prize-conversion speed (17.8 turns vs
+teacher 16.6) rather than at draw discipline — `docs/M26.md:45` already said "the teacher survives
+it only because it converts faster."
+**Standing rule adopted:** a per-class or per-card confusion is not a thesis until its aggregate
+rate is measured on a denominator large enough to resolve it. The M26 calibration lesson
+(±5–10pp on 150–400-row classes is run noise) applies to confusions too, and more harshly.
+**Also recorded:** 45% of the 370-game demonstration corpus is games the teacher LOST, cloned at
+uniform weight, with `replay_bc build --winners-only` (`rl/replay_bc.py:330`) existing and never
+used; fidelity is identical on won and lost rows (0.667 / 0.668). And val_acc decays from 0.738
+at deck 30+ to 0.601 at deck 7–15 — into exactly the region where deck-out is decided, where the
+corpus holds only 13.2% of its mass.
+
+### 2026-07-22 · M26: class weighting buys fidelity but not strength; the battery had no stall opponent
+**Observation:** `--class-weight ATTACH:k` moved ATTACH fidelity monotonically (control 0.452 →
+x3 0.497 → x5 0.541) with the headline flat, but the confirm battery was statistically
+indistinguishable from the shipped pin on every axis — the weighting bought fidelity for free and
+did **not** buy strength. Separately, a control retrain of the IDENTICAL recipe swung EVOLVE
+−7.8pp and ATTACK +10.1pp, so the pre-registered "−3pp any-class" kill bar was uncalibrated at
+that n and had killed both arms on deltas the control reproduces with no weighting at all. And
+the offline battery (`rule:lucario` / `rule:dragapult` / `random:kyogre`) contained **no
+stall/mill opponent**, so a defect that accounts for 55% of live losses was structurally
+invisible pre-ship.
+**Pivot:** per-class deltas demoted to directional-only evidence; a no-op control retrain is now
+mandatory before any per-class claim. Shipped O1 (the Telepath-priority rule on the M25
+checkpoint, sub 54903635) as the minimal-delta arm rather than a reweighted checkpoint. Added a
+grim-mill clone opponent — kept **advisory**, since it does not reproduce the live stall punish
+(we win 0.6175 offline while going 1W–4L live vs the real grimmsnarl family).
+
 ### 2026-07-22 · M25 cleanup: dead code retired; the gate's sys.path shadow makes tcg/deck_search load-bearing
 **Observation:** an import-graph sweep against the live M25 pipeline found `rl/hybrid.py` fully
 orphaned, `tcg/search.py` reachable only from its parity test, and the search half of
