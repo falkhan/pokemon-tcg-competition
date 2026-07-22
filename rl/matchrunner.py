@@ -58,6 +58,15 @@ _FIXED_KINDS = {
     "solver2b":  ("solver",  frozenset({"gust"})),
 }
 
+# M26 attach-override arms on the NEURAL pilot (rl/plan.apply_attach_overrides;
+# docs/M26-plan.md Phase 4). Separate kinds — not env vars — so jsonl run keys
+# never alias an override arm with the plain model pilot.
+_MODEL_FIX_KINDS = {
+    "modelt":  frozenset({"telepath"}),               # O1
+    "modela":  frozenset({"backstop"}),               # O2
+    "modelta": frozenset({"telepath", "backstop"}),   # O1+O2 composed
+}
+
 
 def resolve_deck(deck) -> list[int]:
     """A decks/ name, a csv path (absolute or repo-ROOT-relative), or an id
@@ -76,7 +85,8 @@ def resolve_deck(deck) -> list[int]:
 def spec_deck(spec: OpponentSpec):
     """The deck slot of a spec (unresolved)."""
     return spec[2] if spec[0] in ("rule", "model", "solved", "ext", "rank",
-                                  "vsolver", "mcts") else spec[1]
+                                  "vsolver", "mcts", *_MODEL_FIX_KINDS) \
+        else spec[1]
 
 
 def parse_spec(s: str) -> OpponentSpec:
@@ -97,8 +107,8 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("mcts", parts[1], parts[2], int(parts[3]))
     if kind == "rule" and len(parts) in (2, 3):
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
-    if kind == "model" and len(parts) == 3:
-        return ("model", parts[1], parts[2])
+    if kind in ("model", *_MODEL_FIX_KINDS) and len(parts) == 3:
+        return (kind, parts[1], parts[2])
     if kind == "solved" and len(parts) == 3:
         return ("solved", parts[1], parts[2])
     raise ValueError(f"cannot parse opponent spec {s!r} "
@@ -337,13 +347,16 @@ def make_pilot(spec: OpponentSpec, instance: str):
         fn = lambda od: rng.sample(range(len(od["select"]["option"])),  # noqa: E731
                                    od["select"]["maxCount"])
         return fn, resolve_deck(spec[1])
-    if kind == "model":
+    if kind in ("model", *_MODEL_FIX_KINDS):
         import numpy as np
         import torch
         from cg.api import to_observation_class
         from rl.encoders import (COMBAT_SLICE, N_COMBAT, N_CONTEXTS, STATE_DIM,
                                  encode_context, encode_option, encode_state)
+        from rl.plan import apply_attach_overrides
         from rl.policy import OptionScorer
+
+        attach_fixes = _MODEL_FIX_KINDS.get(kind, frozenset())
 
         ckpt = Path(spec[1])
         if not ckpt.is_absolute() and not ckpt.exists():
@@ -398,6 +411,11 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 pairs = [encode_option_v2(o, obs) for o in obs.select.option]
                 opts = np.stack([n for n, _ in pairs]).astype(np.float32)
                 oids = np.stack([i for _, i in pairs])
+                if attach_fixes:      # M26 arms: full order -> override -> k
+                    ranked = m4.act(sc, plan, sids, opts, oids,
+                                    len(obs.select.option), greedy=True)
+                    ranked = apply_attach_overrides(obs, ranked, attach_fixes)
+                    return ranked[:obs.select.maxCount]
                 return m4.act(sc, plan, sids, opts, oids,
                               obs.select.maxCount, greedy=True)
             return fn4, deck_ids
@@ -461,6 +479,11 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 pairs = [enc_opt(o, obs) for o in obs.select.option]
                 opts = np.stack([n for n, _ in pairs]).astype(np.float32)
                 oids = np.stack([i for _, i in pairs])
+                if attach_fixes:      # M26 arms: full order -> override -> k
+                    ranked = m3.act(sc, plan, sids, opts, oids,
+                                    len(obs.select.option), greedy=True)
+                    ranked = apply_attach_overrides(obs, ranked, attach_fixes)
+                    return ranked[:obs.select.maxCount]
                 return m3.act(sc, plan, sids, opts, oids,
                               obs.select.maxCount, greedy=True)
             return fn3, deck_ids

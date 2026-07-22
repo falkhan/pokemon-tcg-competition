@@ -32,13 +32,13 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from cg.api import SelectContext, to_observation_class
+from cg.api import OptionType, SelectContext, to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
 from rl.turn_solver import MIN_OVERRIDE_SCORE
 from rl.bc import load_population
-from rl.encoders import (N_CONTEXTS, N_STATE_IDS_V3, STATE_V2_DIM,
-                         encode_context, encode_option_v2, encode_state_v2,
-                         encode_state_v3)
+from rl.encoders import (N_CONTEXTS, N_OPTION_TYPES, N_STATE_IDS_V3,
+                         STATE_V2_DIM, encode_context, encode_option_v2,
+                         encode_state_v2, encode_state_v3)
 from rl.plan import (PLAN_DIM, derive_plan, encode_plan, enumerate_plans,
                      match_candidate)
 from rl.policy import OptionScorerV3
@@ -799,12 +799,27 @@ def _n_ids_of(sd: dict) -> int:
     return (width - STATE_V2_DIM - N_CONTEXTS - PLAN_DIM) // EMBED_DIM
 
 
+def apply_class_weights(ds, class_weights: dict[int, float]) -> None:
+    """M26: per-OptionType loss weighting on the teacher's chosen action —
+    policy-CE only (the same channel as the M18a weights); evaluate() stays
+    unweighted so val_acc remains comparable across milestones. Dose law
+    (M19/M21): cost tracks the reweighted-row fraction — keep the touched
+    share small (ATTACH is 5.9% of the M25 corpus)."""
+    chosen_type = ds.options[ds.starts + ds.labels, :N_OPTION_TYPES].argmax(1)
+    for opt_type, factor in class_weights.items():
+        mask = chosen_type == opt_type
+        ds.weights[mask] *= factor
+        print(f"class-weight {OptionType(opt_type).name} x{factor}: "
+              f"{int(mask.sum())} rows ({mask.mean():.1%})")
+
+
 def train(data_dirs: list, name: str, init: str | None = None,
           init_v2: str | None = None, init_v3h: str | None = None,
           init_v3o: str | None = None,
           epochs: int = 8, lr: float = 3e-4,
           batch_size: int = 256, plan_weight: float = 1.0,
-          uniform_weights: bool = False) -> None:
+          uniform_weights: bool = False,
+          class_weights: dict[int, float] | None = None) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
@@ -818,6 +833,8 @@ def train(data_dirs: list, name: str, init: str | None = None,
         n_rw = int((ds.weights > 1.0).sum())
         ds.weights = np.ones_like(ds.weights)
         print(f"uniform-weights: neutralized {n_rw} reweighted rows")
+    if class_weights:
+        apply_class_weights(ds, class_weights)
 
     rng = np.random.default_rng(0)
     unique_games = np.unique(ds.game_ids)
@@ -1064,6 +1081,11 @@ if __name__ == "__main__":
     t.add_argument("--uniform-weights", action="store_true",
                    help="M21: neutralize per-row disagreement weights at load "
                         "(the Gate-A kill fix — see docs/M21.md)")
+    t.add_argument("--class-weight", action="append", default=[],
+                   metavar="TYPE:K",
+                   help="M26: multiply the policy-CE weight of rows whose "
+                        "teacher action is OptionType TYPE by K "
+                        "(e.g. ATTACH:3; repeatable)")
     r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
                                        "sibling shard dirs (<dir><suffix>)")
     r.add_argument("--data", type=str, nargs="+", required=True)
@@ -1086,8 +1108,13 @@ if __name__ == "__main__":
         relabel(args.data, args.ckpt, weight=args.weight,
                 suffix=args.suffix, batch_size=args.batch_size)
     else:
+        class_weights = {}
+        for spec in args.class_weight:
+            type_name, _, factor = spec.partition(":")
+            class_weights[int(OptionType[type_name.upper()])] = float(factor)
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
               init_v3h=args.init_v3h, init_v3o=args.init_v3o,
               epochs=args.epochs, lr=args.lr,
               batch_size=args.batch_size, plan_weight=args.plan_weight,
-              uniform_weights=args.uniform_weights)
+              uniform_weights=args.uniform_weights,
+              class_weights=class_weights or None)
