@@ -68,7 +68,8 @@ _IS_V3 = "plan_enc.0.weight" in WEIGHTS          # M11 plan-conditioned export
 _IS_V4 = "enc_ver" in WEIGHTS                    # M21 encoder-v4 export
 if _IS_V3:
     from cg.api import SelectContext
-    from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+    from rl.plan import (PLAN_DIM, apply_attach_overrides, encode_plan,
+                         enumerate_plans)
     # M15: hand-aware exports carry 20 state ids — sniff from the weights
     # and pick the matching encoder. M21: v4 exports declare themselves via
     # the enc_ver buffer (width sniffing is ambiguous with the v4 block in).
@@ -93,6 +94,12 @@ if _IS_V3:
 
 
 _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
+# M26 attach-override arms (rl/plan.apply_attach_overrides): comma-separated
+# fix names ("telepath", "backstop"). Ship default = "telepath" (O1, Piotr's
+# 2026-07-22 sign-off — docs/M26.md candidate matrix); an approved ship
+# changes this default string, never the predicate.
+_ATTACH_FIXES = frozenset(
+    f for f in os.environ.get("PKM_ATTACH_FIXES", "telepath").split(",") if f)
 
 
 def _log_net(rec: dict) -> None:
@@ -198,8 +205,10 @@ def agent(obs_dict: dict) -> list[int]:
         plan = (_PSTATE["vec"] if _PSTATE["key"] == key and _PSTATE["vec"] is not None
                 else np.zeros(PLAN_DIM, dtype=np.float32))
         scores = score_options_v3(state_ctx, plan, state_ids, options, option_ids)
-    order = np.argsort(scores)[::-1]
-    acts = [int(i) for i in order[:obs.select.maxCount]]
+    order = [int(i) for i in np.argsort(scores)[::-1]]
+    if _IS_V3 and _ATTACH_FIXES:
+        order = apply_attach_overrides(obs, order, _ATTACH_FIXES)
+    acts = order[:obs.select.maxCount]
     if _LOG_NET:
         rec = {"s": obs_dict.get("step"), "t": obs.current.turn,
                "c": int(obs.select.context), "a": acts, "sc": _r3(scores)}

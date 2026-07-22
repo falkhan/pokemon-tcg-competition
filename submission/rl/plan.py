@@ -13,7 +13,8 @@ from collections import namedtuple
 
 import numpy as np
 
-from cg.api import CardType, OptionType, all_card_data
+from cg.api import (AreaType, CardType, OptionType, SelectContext,
+                    all_card_data)
 from rl.combat import (_ATK, _CARD, _best_damage, _can_afford,
                        _turns_to_first_ko, UNREACHABLE)
 
@@ -252,3 +253,70 @@ def match_candidate(plan: Plan | None, cands: list) -> int:
                 and c.attack_idx == plan.attack_idx):
             return i
     return -1
+
+
+# --- M26 attach-override arms (docs/M26-plan.md Phase 4) --------------------
+# Override law (M8.1/M12/M13): candidate arms, OFF unless a fix name is passed
+# by an opted-in spec kind / build flag — never an unconditional default.
+TELEPATH_ID = 19                  # Telepath Psychic Energy — card fact, id-pinned
+ATTACH_FIX_TELEPATH = "telepath"  # O1: prefer Telepath on contested attaches
+ATTACH_FIX_BACKSTOP = "backstop"  # O2: no turn ends with a legal attach unplayed
+_TURN_ENDING = frozenset({OptionType.END, OptionType.ATTACK})
+
+
+def _hand_card_id(opt, hand):
+    """Acted card id of a hand-area option (the encoders' resolution order:
+    explicit cardId first, then hand index; None-area options are hand plays)."""
+    if opt.cardId:
+        return opt.cardId
+    if (opt.index is not None and opt.area in (AreaType.HAND, None)
+            and opt.index < len(hand)):
+        card = hand[opt.index]
+        return card.id if card is not None else None
+    return None
+
+
+def apply_attach_overrides(obs, ranked: list, fixes: frozenset) -> list:
+    """Reorder the model's MAIN-select option preference per the M26 arms.
+
+    ranked: option indices, model's best first (full order). At most one
+    energy-ATTACH index is moved to the front; everything else keeps the
+    model's order (target choice inside ATTACH stays model-scored).
+    - O1 `telepath`: a Telepath ATTACH is legal and the bench has space ->
+      attach it now (the teacher's contested-attach preference).
+    - O2 `backstop`: the model is about to end the turn (END, or ATTACK —
+      attacking ends the turn) with the manual attach unused and a legal
+      energy ATTACH on the menu -> attach first; the next MAIN re-offers
+      the turn-ending action.
+    Both fire only when this turn's manual energy attach is still unused.
+    """
+    if not fixes or obs.select is None or obs.current is None:
+        return ranked
+    st = obs.current
+    if (obs.select.context != SelectContext.MAIN
+            or getattr(st, "energyAttached", False)):
+        return ranked
+    me = st.players[st.yourIndex]
+    hand = me.hand or []
+    opts = obs.select.option
+    attach_ranked = [i for i in ranked
+                     if opts[i].type == OptionType.ATTACH
+                     and _hand_card_id(opts[i], hand) in _IS_ENERGY]
+    if not attach_ranked:
+        return ranked
+    pick = None
+    if ATTACH_FIX_TELEPATH in fixes:
+        bench = me.bench or []
+        bench_space = (sum(p is not None for p in bench)
+                       < getattr(me, "benchMax", 5))
+        if bench_space:
+            telepath = [i for i in attach_ranked
+                        if _hand_card_id(opts[i], hand) == TELEPATH_ID]
+            if telepath:
+                pick = telepath[0]
+    if (pick is None and ATTACH_FIX_BACKSTOP in fixes
+            and opts[ranked[0]].type in _TURN_ENDING):
+        pick = attach_ranked[0]
+    if pick is None or pick == ranked[0]:
+        return ranked
+    return [pick] + [i for i in ranked if i != pick]

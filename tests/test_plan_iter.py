@@ -134,6 +134,29 @@ def test_dataset_mixes_old_and_new_shards(tmp_path):
     assert weights.tolist() == [1.0] * 7          # weightless shards -> ones
 
 
+def test_apply_class_weights_targets_chosen_option_type(tmp_path):
+    """M26: --class-weight multiplies the loss weight of exactly the rows
+    whose TEACHER-CHOSEN option carries the given OptionType one-hot, and
+    composes multiplicatively with stored M18a weights."""
+    from cg.api import OptionType
+    rng = np.random.default_rng(11)
+    d = tmp_path / "shards"
+    d.mkdir()
+    _write_new_shard(d / "shard_0000.npz", rng, weights=[2.0, 1.0, 1.0])
+    ds = pi.BCDatasetV3([d])
+    # Stamp the chosen option's type one-hot per row: ATTACH, PLAY, ATTACH.
+    types = [OptionType.ATTACH, OptionType.PLAY, OptionType.ATTACH]
+    for i, t in enumerate(types):
+        flat = ds.starts[i] + ds.labels[i]
+        ds.options[flat, :17] = 0.0
+        ds.options[flat, int(t)] = 1.0
+
+    pi.apply_class_weights(ds, {int(OptionType.ATTACH): 3.0,
+                                int(OptionType.PLAY): 2.0})
+    # row 0: stored 2.0 * ATTACH 3.0; row 1: PLAY 2.0; row 2: ATTACH 3.0
+    assert ds.weights.tolist() == [6.0, 2.0, 3.0]
+
+
 def test_train_fresh_is_width_driven(tmp_path, monkeypatch):
     """M23 audit E1: a fresh (no-init) train on legacy-width shards (12 ids,
     90-wide options — the replay-clone corpus shape) must build the net from
