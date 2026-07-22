@@ -309,6 +309,16 @@ def test_v3o_masked_identity_equals_v3h():
                           v3o.plan_logits(sc, sids, cands), atol=1e-6)
 
 
+def test_v3_into_v3h_preserves_option_identity_width():
+    # M25 bug: load_v3_into_v3h hardcoded legacy OPTION_V2_DIM and silently
+    # broke on option-identity (OPTION_V3_DIM) sources, the default since M16
+    from rl.encoders import OPTION_V3_DIM
+    torch.manual_seed(11)
+    src = OptionScorerV3(option_dim=OPTION_V3_DIM)
+    v3h = pi.load_v3_into_v3h(src.state_dict())
+    assert v3h.option_dim == OPTION_V3_DIM
+
+
 def test_v3o_from_v3h_hand_aware_source():
     # migration must preserve a 20-id source's state width too
     from rl.encoders import N_STATE_IDS_V3, OPTION_V3_DIM

@@ -59,7 +59,7 @@ LOGS_DIR = KAGGLE_DIR / "logs"
 COMPETITION = "pokemon-tcg-ai-battle"
 BASE_URL = "https://www.kaggle.com/api/i/competitions.EpisodeService"
 THROTTLE_S = 1.0     # min seconds between network requests (politeness, §5.1)
-ARCHETYPE_COS = 0.95  # cosine threshold over pooled Pokémon-core FEAT (eyeball-tuned)
+ARCHETYPE_LABELER = "top2_pokemon_v2"  # per-deck card-identity naming (M25 labeler fix)
 
 # Observation keys that carry no game state; an observation with only these is "blank".
 _TRIVIAL_OBS_KEYS = {"remainingOverageTime", "step", "player"}
@@ -623,45 +623,29 @@ def _slug(name: str) -> str:
 
 def _core_vec(ids: list[int]) -> np.ndarray:
     """L2-normalized pooled FEAT of the deck's Pokémon core — the representation the
-    98%-accuracy archetype probe validated (rl/encoders.py note)."""
+    98%-accuracy archetype probe validated (rl/encoders.py note). No longer used for
+    archetype LABELS (see _assign_archetypes); rl/determinize.py matches revealed
+    cards against meta decks with it."""
     v = _feat()[[i for i in ids if _ft[i]["is_pokemon"]]].sum(axis=0)
     n = float(np.linalg.norm(v))
     return v / n if n else v
 
 
-def _archetype_name(ids: list[int], taken: set[str]) -> str:
-    """Slug of the deck's top-2 Pokémon (by copies, then HP), suffixed on collision."""
+def _archetype_name(ids: list[int]) -> str:
+    """Slug of the deck's top-2 Pokémon (by copies, then HP)."""
     mons = [i for i in ids if _ft[i]["is_pokemon"]]
     counts = Counter(_ft[i]["name"] for i in mons)
     hp = {_ft[i]["name"]: _ft[i]["hp"] for i in mons}
     top = sorted(counts, key=lambda n: (-counts[n], -(hp[n] or 0)))[:2]
-    base = "+".join(_slug(n) for n in top) or "no_pokemon"
-    name, k = base, 2
-    while name in taken:
-        name, k = f"{base}_{k}", k + 1
-    return name
+    return "+".join(_slug(n) for n in top) or "no_pokemon"
 
 
 def _assign_archetypes(uniq: list[tuple[str, list[int], int]]) -> dict[str, str]:
-    """(deck_hash, ids, n_games) -> {deck_hash: archetype}. Greedy agglomerative,
-    most-played first: join the first cluster whose centroid cosine >= ARCHETYPE_COS,
-    else found a new one. Deterministic order => stable labels across reruns."""
-    clusters: list[dict] = []  # {"name": str, "sum": vec, "n": int}
-    out: dict[str, str] = {}
-    for dh, ids, _n in sorted(uniq, key=lambda u: (-u[2], u[0])):
-        vec = _core_vec(ids)
-        for c in clusters:
-            centroid = c["sum"] / c["n"]
-            norm = float(np.linalg.norm(centroid))
-            if norm and float(vec @ (centroid / norm)) >= ARCHETYPE_COS:
-                out[dh] = c["name"]
-                c["sum"], c["n"] = c["sum"] + vec, c["n"] + 1
-                break
-        else:
-            name = _archetype_name(ids, {c["name"] for c in clusters})
-            clusters.append({"name": name, "sum": vec.copy(), "n": 1})
-            out[dh] = name
-    return out
+    """(deck_hash, ids, n_games) -> {deck_hash: archetype}. Each deck is named from
+    its OWN top-2 Pokémon; decks sharing that core share the label. Replaces the
+    stat-feature cosine cluster-join (ARCHETYPE_COS=0.95), which collapsed distinct
+    decks into the most-played cluster and produced unstable labels (M24/M25)."""
+    return {dh: _archetype_name(ids) for dh, ids, _n in uniq}
 
 
 def harvest_decks(min_games: int = 3) -> pl.DataFrame:
@@ -760,7 +744,7 @@ def build_meta_field(top_k: int = 8, dedupe_by: str = "archetype") -> list[Oppon
                          "n_games": g["n_games"], "weight": g["weight"], "csv": csv.name})
     (snap / "manifest.json").write_text(json.dumps({
         "version": snap.name, "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "params": {"top_k": top_k, "dedupe_by": dedupe_by, "cos_threshold": ARCHETYPE_COS},
+        "params": {"top_k": top_k, "dedupe_by": dedupe_by, "labeler": ARCHETYPE_LABELER},
         "decks": manifest,
     }, indent=2))
     print(f"{snap.name}: froze {len(specs)} decks", flush=True)

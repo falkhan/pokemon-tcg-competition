@@ -40,7 +40,7 @@ import polars as pl
 from cg.api import to_observation_class
 from rl.deck_search import DECK_SIZE
 from rl.encoders import (N_CONTEXTS, encode_context, encode_option_v2,
-                         encode_state_v2)
+                         encode_state_v2, encode_state_v3)
 from rl.kaggle_ingest import EPISODES_PQ, KAGGLE_DIR, RAW_DIR, deck_hash, parse_episode
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -99,14 +99,21 @@ def iter_replay_decisions(steps: list, seat: int, drops: Counter):
 
 
 def encode_decisions(steps: list, seat: int, deck_ids: list[int],
-                     drops: Counter, contexts: Counter | None = None) -> list[tuple]:
+                     drops: Counter, contexts: Counter | None = None,
+                     hand_aware: bool = False) -> list[tuple]:
     """One seat's decisions -> collect_games_v2-shaped rows (rl/bc.py):
     (state_ctx, state_ids, opts, opt_ids, label). Identical encoder calls to
-    the model pilot's inference path."""
+    the model pilot's inference path.
+
+    hand_aware (M25): use encode_state_v3 (12 board + 8 hand ids) instead of
+    encode_state_v2 (12 board ids) — the replay observation is the deciding
+    seat's own, so its hand is fully visible; M15's hand-aware encoder was
+    never wired up to replay corpora until now."""
+    encode_state = encode_state_v3 if hand_aware else encode_state_v2
     rows = []
     for _i, obs_dict, action in iter_replay_decisions(steps, seat, drops):
         obs = to_observation_class(obs_dict)
-        state_num, state_ids = encode_state_v2(obs.current, deck_ids)
+        state_num, state_ids = encode_state(obs.current, deck_ids)
         state_ctx = np.concatenate([state_num, encode_context(obs.select.context)])
         pairs = [encode_option_v2(o, obs) for o in obs.select.option]
         opts = np.stack([num for num, _ in pairs])
@@ -321,7 +328,8 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
           include_ours: bool = False, winners_only: bool = False,
           min_steps: int = 0, shard_size: int = 5000,
           only_subs: set[int] | None = None,
-          only_deck_hash: str | None = None) -> None:
+          only_deck_hash: str | None = None,
+          hand_aware: bool = False) -> None:
     """Encode qualifying replay seats into BC shards.
 
     Shard schema = collect_games_v2 (rl/bc.py) + additive columns the trainer
@@ -337,7 +345,11 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
     only_deck_hash (M24): restrict to seats whose decklist hash starts with
     this prefix — the strong-pilots-on-OUR-deck corpus (deck_hash is the
     order-invariant sha1 from rl.kaggle_ingest; a short unambiguous prefix
-    like '20dcd313' is enough)."""
+    like '20dcd313' is enough).
+
+    hand_aware (M25): encode state_ids with encode_state_v3 (board + own-hand
+    ids) instead of encode_state_v2 (board only) — pair with `plan_iter train
+    --init-v3h` to warm-start a hand-aware net from a legacy checkpoint."""
     meta = _episode_meta()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -417,7 +429,8 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
                 skips["seat_not_winner"] += 1
                 continue
 
-            rows = encode_decisions(raw["steps"], seat, ep.decks[seat], drops)
+            rows = encode_decisions(raw["steps"], seat, ep.decks[seat], drops,
+                                    hand_aware=hand_aware)
             if not rows:
                 skips["seat_no_decisions"] += 1
                 continue
@@ -452,7 +465,7 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
         "params": {"min_score": min_score, "winners_only": winners_only,
                    "include_ours": include_ours, "min_steps": min_steps,
                    "only_subs": sorted(only_subs) if only_subs else None,
-                   "only_deck_hash": only_deck_hash},
+                   "only_deck_hash": only_deck_hash, "hand_aware": hand_aware},
         "decks": [{"deck_idx": i, "hash": h}
                   for h, i in sorted(registry.items(), key=lambda kv: kv[1])],
     }, indent=2))
@@ -604,6 +617,9 @@ def _main() -> None:
     s.add_argument("--deck-hash", type=str, default=None,
                    help="M24: keep only seats whose deck_hash starts with "
                         "this prefix (e.g. 20dcd313 = our lucario 60)")
+    s.add_argument("--hand-aware", action="store_true",
+                   help="M25: encode state_ids with encode_state_v3 (board + "
+                        "own-hand ids) instead of encode_state_v2 (board only)")
 
     s = sub.add_parser("meta-eval", help="G4: candidate vs the frozen meta snapshot")
     s.add_argument("--a", required=True, help="matchrunner spec, e.g. model:<ckpt>:lucario")
@@ -631,7 +647,7 @@ def _main() -> None:
               include_ours=a.include_ours, min_steps=a.min_steps,
               shard_size=a.shard_size,
               only_subs=set(a.only_subs) if a.only_subs else None,
-              only_deck_hash=a.deck_hash)
+              only_deck_hash=a.deck_hash, hand_aware=a.hand_aware)
     elif a.cmd == "meta-eval":
         meta_eval(a.a, snapshot=a.snapshot, n=a.games, workers=a.workers,
                   seed=a.seed, checkpoint=a.checkpoint,

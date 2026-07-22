@@ -696,9 +696,15 @@ def load_v3_into_v3h(v3_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     """M15 warm start: legacy 12-id v3 weights into a hand-aware (20-id) net.
     All shared weights copy verbatim; the 8 new hand-embedding column blocks
     of state_enc.0 are ZERO-initialized, so hand-aware(zero-hand-ids) ==
-    legacy net exactly (the warm-start invariant, third use)."""
-    from rl.encoders import N_STATE_IDS_V3
-    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=N_STATE_IDS_V3)
+    legacy net exactly (the warm-start invariant, third use). option_dim is
+    INFERRED from the source checkpoint (M25 fix — was hardcoded to legacy
+    OPTION_V2_DIM, which silently broke on the option-identity (OPTION_V3_DIM)
+    checkpoints that have been the default since M16; same inference `_n_ids_of`
+    /`load_v3h_into_v3o` already use for their own dims)."""
+    from rl.encoders import EMBED_DIM, N_OPTION_IDS, N_STATE_IDS_V3
+    option_dim = v3_sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * EMBED_DIM
+    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=N_STATE_IDS_V3,
+                           option_dim=option_dim)
     sd = model.state_dict()
     for k, v in v3_sd.items():
         if k == "state_enc.0.weight":
