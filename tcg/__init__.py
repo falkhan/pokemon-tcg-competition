@@ -20,14 +20,12 @@ Pure Python + the ``cg`` engine only (can ship inside a submission bundle):
     value_training.py supervised value-head training (torch inside functions)
     encoders.py      observation/option -> vector encoders (polars for the
                      card-feature parquet; numpy-only after import)
-    deck_search.py   deck legality + mutation-bandit deck search (polars)
 
 + torch — networks and training loops:
 
     network.py          OptionScorer policy/value net + save_npz export
     behavior_cloning.py BC collection + training from the rule teacher
     ppo.py              self-play PPO (GAE + clipped update + promotion gate)
-    search.py           determinized MCTS + the hybrid rule/value agent
 
 + kaggle_environments — running and shipping:
 
