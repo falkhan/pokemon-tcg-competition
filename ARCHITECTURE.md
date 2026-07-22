@@ -465,7 +465,9 @@ encoder into the same tarball. **The parity tests are the only thing making that
 
 **Twin pairs**: `rl/generic_pilot.py`↔`tcg/pilot.py`, `rl/encoders.py`↔`tcg/encoders.py`,
 `rl/ppo.py`↔`tcg/ppo.py`, `rl/combat.py`↔`tcg/combat.py`, `rl/policy.py`↔`tcg/network.py`,
-`rl/deck_search.py`↔`tcg/deck_search.py`, `rl/bc.py`↔`tcg/behavior_cloning.py`.
+`rl/deck_search.py`↔`tcg/deck_search.py` (legality checker only — the tcg twin was trimmed to
+`validate_deck` in the M25 cleanup; the gate needs it because the bundle shadows `rl` on
+sys.path), `rl/bc.py`↔`tcg/behavior_cloning.py`.
 
 **Enforcement:**
 - `tests/test_parity.py` sweeps an exhaustive scenario grid and asserts equality —
@@ -481,7 +483,7 @@ encoder into the same tarball. **The parity tests are the only thing making that
 
 ### Test tiers
 
-**474 tests**, all offline against a fake engine (`tests/conftest.py` installs `tests/fake_cg.py`
+**612 tests**, all offline against a fake engine (`tests/conftest.py` installs `tests/fake_cg.py`
 into `sys.modules` before any `rl`/`tcg` import, because both build card tables at import time).
 
 `[ENGINE]` and `[NET]` in docstrings are **prose annotations marking what a test deliberately
@@ -524,7 +526,7 @@ must never acquire a heavy dependency.
 ├── data/                    <- plan_m*/ training shards, kaggle/ replays, parquets
 ├── dist/                    <- built tarballs
 ├── docs/                    <- milestone diaries M0–M20, DECISIONS.md, MILESTONES.md
-├── tests/                   <- 474 offline tests + fake engine
+├── tests/                   <- 612 offline tests + fake engine
 └── notebooks/               <- card EDA, model_monitor.ipynb (live score + deck audit)
 ```
 

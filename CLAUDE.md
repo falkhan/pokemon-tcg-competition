@@ -20,7 +20,7 @@ When running a pipeline to ship a new model use hermes integration to send perio
 ## Build / run conventions
 - Use `uv` for Python (`uv run`, not bare `pip install`). pyproject.toml present.
 - Run tests with `uv run pytest tests/<file>.py -v`.
-- Current branch: `feature/m11`.
+- Milestone work happens on `feature/mXX` branches, merged into `main` via PR.
 
 ## Hard rules
 - Each iteration is called a Milestone and marked as MX where X is the next number.

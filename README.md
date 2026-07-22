@@ -72,7 +72,7 @@ The build pipeline syncs `cg/` into the bundle automatically — Kaggle's agent 
 
 ```bash
 uv sync
-uv run pytest tests/ -q     # 474 tests, all offline against a fake engine
+uv run pytest tests/ -q     # 612 tests, all offline against a fake engine
 ```
 
 ## Common commands
@@ -181,7 +181,7 @@ Notebooks in `notebooks/`: `model_monitor.ipynb` (live scores + replay-audited d
 ├── checkpoints/         <- trained nets
 ├── data/                <- training shards, harvested replays, feature parquets
 ├── docs/                <- milestone diaries M0–M20, DECISIONS.md, MILESTONES.md
-├── tests/               <- 474 offline tests + a fake engine
+├── tests/               <- 612 offline tests + a fake engine
 └── reference/           <- official sample notebooks from the competition
 ```
 
