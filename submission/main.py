@@ -97,14 +97,16 @@ if _IS_V3:
 
 
 _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
-# M26/M30 override arms (rl/plan.apply_attach_overrides + apply_play_overrides):
+# M26/M30/M31 override arms (rl/plan.apply_attach_overrides + apply_play_overrides):
 # comma-separated fix names ("telepath", "backstop", "tempo", "deckguard",
-# "ash", "conserve"). Ship default = "telepath,deckguard,ash,conserve"
-# (O1+O4+O5+O6, the M30 gac arm — docs/M30.md P5.1, pending Piotr's QC go);
-# an approved ship changes this default string, never the predicate.
+# "ash", "conserve", "poffinfloor", "drawfloor"). Ship default =
+# "telepath,deckguard,ash,conserve,poffinfloor" (O1+O4+O5+O6+O7, the M31 gacb
+# arm — docs/M31.md P3, gacb clears its bar, pending Piotr's QC go); an approved
+# ship changes this default string, never the predicate.
 _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
-        "PKM_ATTACH_FIXES", "telepath,deckguard,ash,conserve").split(",") if f)
+        "PKM_ATTACH_FIXES",
+        "telepath,deckguard,ash,conserve,poffinfloor").split(",") if f)
 
 
 def _log_net(rec: dict) -> None:

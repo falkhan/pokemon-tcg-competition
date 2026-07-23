@@ -26,14 +26,29 @@ from rl.matchrunner import make_pilot, parse_spec
 from rl.plan import TELEPATH_ID, _IS_ENERGY, _hand_card_id
 
 
-def _item_ids() -> frozenset[int]:
+def _feature_ids():
+    """(item ids, basic-Pokemon ids, supporter ids) from the card table."""
     import csv
+    items, basics, supporters = set(), set(), set()
     with open(ROOT / "data/cards_features.csv") as f:
-        return frozenset(int(r["card_id"]) for r in csv.DictReader(f)
-                         if r["is_item"] == "true")
+        for r in csv.DictReader(f):
+            cid = int(r["card_id"])
+            if r["is_item"] == "true":
+                items.add(cid)
+            if r["is_basic"] == "true":
+                basics.add(cid)
+            if r["is_supporter"] == "true":
+                supporters.add(cid)
+    return frozenset(items), frozenset(basics), frozenset(supporters)
 
 
-_ITEM_IDS = _item_ids()
+_ITEM_IDS, _BASIC_IDS, _SUPPORTER_IDS = _feature_ids()
+POFFIN_ID = 1086
+HILDA_ID = 1225
+
+
+def _bench_alive(me) -> int:
+    return sum(1 for p in (me.bench or []) if p is not None)
 
 
 class BehaviorTap:
@@ -52,9 +67,25 @@ class BehaviorTap:
         self.ash_plays = []              # deckCount at each Sacred Ash play
         self.dud_low_opps = 0            # Dudunsparce ability offered, deck<=6
         self.dud_low_used = 0            # ...and chosen
+        # M31 bench-economy + supporter counters
+        self.main_prompts = 0
+        self.bench_hist = Counter()      # bench-alive size at MAIN prompts
+        self.bench_le1_prompts = 0       # MAIN prompts with bench<=1
+        self.poffin_le1_offered = 0      # ...Poffin playable
+        self.poffin_le1_played = 0       # ...and chosen
+        self.basic_le1_offered = 0       # ...a basic PLAY available
+        self.basic_le1_played = 0        # ...and chosen
+        self.hilda_offered = 0           # MAIN prompts Hilda playable
+        self.hilda_played = 0
+        self.turn_supp_offered: dict[int, bool] = {}
+        self.turn_supp_played: dict[int, bool] = {}
+        self.min_bench_after_t3 = 99     # per-game, paired with outcome in main()
 
     def reset_game(self):
         self.turn_attached = {}
+        self.turn_supp_offered = {}
+        self.turn_supp_played = {}
+        self.min_bench_after_t3 = 99
 
     def __call__(self, od):
         picks = self.fn(od)
@@ -64,6 +95,37 @@ class BehaviorTap:
             return picks
         me = st.players[st.yourIndex]
         hand = me.hand or []
+        # --- M31 bench-economy + supporter counters ---
+        bench = _bench_alive(me)
+        self.main_prompts += 1
+        self.bench_hist[bench] += 1
+        if st.turn > 3:
+            self.min_bench_after_t3 = min(self.min_bench_after_t3, bench)
+        chosen0 = sel.option[picks[0]]
+        play_ids = {j: _hand_card_id(o, hand) for j, o in enumerate(sel.option)
+                    if o.type == OptionType.PLAY}
+        chosen_play = play_ids.get(picks[0])
+        self.turn_supp_offered.setdefault(st.turn, False)
+        self.turn_supp_played.setdefault(st.turn, False)
+        if any(c in _SUPPORTER_IDS for c in play_ids.values()):
+            self.turn_supp_offered[st.turn] = True
+        if chosen0.type == OptionType.PLAY and chosen_play in _SUPPORTER_IDS:
+            self.turn_supp_played[st.turn] = True
+        if HILDA_ID in play_ids.values():
+            self.hilda_offered += 1
+            if chosen_play == HILDA_ID:
+                self.hilda_played += 1
+        if bench <= 1:
+            self.bench_le1_prompts += 1
+            if POFFIN_ID in play_ids.values():
+                self.poffin_le1_offered += 1
+                if chosen_play == POFFIN_ID:
+                    self.poffin_le1_played += 1
+            if any(c in _BASIC_IDS for c in play_ids.values()):
+                self.basic_le1_offered += 1
+                if chosen_play in _BASIC_IDS:
+                    self.basic_le1_played += 1
+        # --- end M31 counters ---
         self.turn_attached.setdefault(st.turn, False)
         attachable = {}
         for j, o in enumerate(sel.option):
@@ -129,6 +191,7 @@ def main() -> None:
 
     games = []
     our_turns = attach_turns = 0
+    supp_turns = supp_played = 0
     for g in range(args.n):
         a_seat = g % 2                        # slot-swap (player-0 advantage)
         fns = (tap, fn_b) if a_seat == 0 else (fn_b, tap)
@@ -145,8 +208,13 @@ def main() -> None:
                 obs_dict = battle_select([int(i) for i in picks])
             players = obs_dict["current"]["players"]
             res = obs_dict["current"]["result"]        # winner seat, 2 = draw
+            # RESULT log (type 23): reason 1=prizes, 2=deck-out, 3=benched,
+            # 4=card effect (scripts/deck_drain.py:149).
+            reason = next((lg.get("reason") for lg in obs_dict.get("logs") or []
+                           if lg.get("type") == 23), None)
             games.append(dict(
-                won=res == a_seat, draw=res == 2,
+                won=res == a_seat, draw=res == 2, reason=reason,
+                min_bench_t3=tap.min_bench_after_t3,
                 deck_end=players[a_seat].get("deckCount"),
                 opp_deck_end=players[1 - a_seat].get("deckCount"),
                 turns=obs_dict["current"].get("turn")))
@@ -154,6 +222,8 @@ def main() -> None:
             battle_finish()
         our_turns += len(tap.turn_attached)
         attach_turns += sum(tap.turn_attached.values())
+        supp_turns += sum(tap.turn_supp_offered.values())
+        supp_played += sum(tap.turn_supp_played.values())
 
     n = len(games)
     wins = sum(g["won"] for g in games)
@@ -185,6 +255,36 @@ def main() -> None:
           f"opportunities ({tap.tele_attached / max(tap.tele_opps, 1):.1%})")
     print("  contested-attach choices:", dict(tap.contested.most_common(8)))
     print(f"  avg turns {sum(g['turns'] for g in games) / n:.1f}")
+
+    # --- M31 bench-economy + supporter axes ---
+    reason_losses = Counter(g["reason"] for g in games
+                            if not g["won"] and not g["draw"])
+    deckout = reason_losses.get(2, 0)
+    benchout = reason_losses.get(3, 0)
+    b0_loss = sum(1 for g in games if not g["won"] and not g["draw"]
+                  and g["min_bench_t3"] == 0)
+    b0_win = sum(1 for g in games if g["won"] and g["min_bench_t3"] == 0)
+    mp = max(tap.main_prompts, 1)
+    print("\n  --- M31 bench economy ---")
+    print(f"  bench-alive at MAIN: "
+          + " ".join(f"{k}:{tap.bench_hist.get(k, 0)}" for k in range(6)))
+    print(f"  bench<=1 prompt share: {tap.bench_le1_prompts}/{tap.main_prompts} "
+          f"({tap.bench_le1_prompts / mp:.1%})")
+    print(f"  Poffin at bench<=1: played {tap.poffin_le1_played}"
+          f"/{tap.poffin_le1_offered} offered "
+          f"({tap.poffin_le1_played / max(tap.poffin_le1_offered, 1):.1%})")
+    print(f"  basic PLAY at bench<=1: played {tap.basic_le1_played}"
+          f"/{tap.basic_le1_offered} offered "
+          f"({tap.basic_le1_played / max(tap.basic_le1_offered, 1):.1%})")
+    print(f"  bench-0-after-t3 games: losses {b0_loss}/{losses}, "
+          f"wins {b0_win}/{wins}")
+    print(f"  loss reasons (RESULT code): {dict(reason_losses)}; "
+          f"deck-out(2) {deckout}/{losses}, bench-out(3) {benchout}/{losses}")
+    print("\n  --- M31 supporter axis ---")
+    print(f"  supporter-turn utilisation: {supp_played}/{supp_turns} "
+          f"({supp_played / max(supp_turns, 1):.1%})")
+    print(f"  Hilda per-offer: {tap.hilda_played}/{tap.hilda_offered} "
+          f"({tap.hilda_played / max(tap.hilda_offered, 1):.1%})")
 
 
 if __name__ == "__main__":

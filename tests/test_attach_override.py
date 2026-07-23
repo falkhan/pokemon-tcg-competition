@@ -13,8 +13,9 @@ pytest.importorskip("numpy")
 
 from cg.api import AreaType, OptionType, SelectContext
 from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_TELEPATH, FEZANDIPITI_ID,
-                     POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_CONSERVE,
-                     PLAY_FIX_DECKGUARD, PLAY_FIX_TEMPO, SACRED_ASH_ID,
+                     HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_CONSERVE,
+                     PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
+                     PLAY_FIX_POFFINFLOOR, PLAY_FIX_TEMPO, SACRED_ASH_ID,
                      TELEPATH_ID, apply_attach_overrides,
                      apply_play_overrides)
 
@@ -218,6 +219,112 @@ def test_o1_composes_with_play_overrides():
     order = apply_attach_overrides(obs, [0, 1, 2], fixes)
     assert order == [1, 0, 2]                    # telepath attach promoted
     assert apply_play_overrides(obs, order, fixes) == [1, 0, 2]
+
+
+# --- M31 bench-economy (O7) / supporter (O8) arms + O9 precedence ----------
+
+
+def test_o7_poffinfloor_digs_at_thin_bench():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),
+            _opt(OptionType.ATTACK)]
+    fixes = frozenset({PLAY_FIX_POFFINFLOOR})
+    # bench-alive 0 (thin) and deck >= 10 -> Poffin (idx 1) promoted to front
+    thin = _obs(opts, hand=[POFFIN_ID], bench=[None] * 5, deck_count=40)
+    assert apply_play_overrides(thin, [0, 1, 2], fixes) == [1, 0, 2]
+    # bench-alive 1 still fires (threshold is <= 1)
+    one = _obs(opts, hand=[POFFIN_ID],
+               bench=[_card(NON_ENERGY), None, None, None, None], deck_count=40)
+    assert apply_play_overrides(one, [0, 1, 2], fixes) == [1, 0, 2]
+
+
+def test_o7_poffinfloor_guards():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0)]
+    fixes = frozenset({PLAY_FIX_POFFINFLOOR})
+    # bench-alive 2 -> board not thin -> untouched
+    full = _obs(opts, hand=[POFFIN_ID],
+                bench=[_card(NON_ENERGY), _card(NON_ENERGY), None, None, None],
+                deck_count=40)
+    assert apply_play_overrides(full, [0, 1], fixes) == [0, 1]
+    # deck below the floor (9) -> untouched (low-deck economy rules own it)
+    low = _obs(opts, hand=[POFFIN_ID], bench=[None] * 5, deck_count=9)
+    assert apply_play_overrides(low, [0, 1], fixes) == [0, 1]
+    # no Poffin on the menu -> untouched
+    other = _obs(opts, hand=[NON_ENERGY], bench=[None] * 5, deck_count=40)
+    assert apply_play_overrides(other, [0, 1], fixes) == [0, 1]
+    # off by default
+    assert apply_play_overrides(low, [0, 1], frozenset()) == [0, 1]
+
+
+def test_o8_drawfloor_forces_hilda_when_hand_starved():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0)]
+    fixes = frozenset({PLAY_FIX_DRAWFLOOR})
+    # hand size 4 (<= 4) and deck >= 10 -> Hilda (idx 1) promoted
+    starved = _obs(opts, hand=[HILDA_ID, BASIC_P, BASIC_P, BASIC_P],
+                   deck_count=40)
+    assert apply_play_overrides(starved, [0, 1], fixes) == [1, 0]
+    # hand size 5 (> 4) -> not starved -> untouched
+    full = _obs(opts, hand=[HILDA_ID, BASIC_P, BASIC_P, BASIC_P, BASIC_P],
+                deck_count=40)
+    assert apply_play_overrides(full, [0, 1], fixes) == [0, 1]
+    # deck below the floor -> untouched (keep clear of conserve's deck-out zone)
+    low = _obs(opts, hand=[HILDA_ID, BASIC_P], deck_count=9)
+    assert apply_play_overrides(low, [0, 1], fixes) == [0, 1]
+    # off by default
+    assert apply_play_overrides(starved, [0, 1], frozenset()) == [0, 1]
+
+
+def test_o7_wins_over_o8_when_both_fire():
+    # thin bench AND starved hand -> dig for board (Poffin) before drawing
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),   # Poffin (hand 0)
+            _opt(OptionType.PLAY, 1)]                          # Hilda  (hand 1)
+    obs = _obs(opts, hand=[POFFIN_ID, HILDA_ID], bench=[None] * 5,
+               deck_count=40)
+    fixes = frozenset({PLAY_FIX_POFFINFLOOR, PLAY_FIX_DRAWFLOOR})
+    assert apply_play_overrides(obs, [0, 1, 2], fixes) == [1, 0, 2]
+
+
+def test_o5_ash_wins_over_o7_at_deck_floor():
+    # deck == 10: ash (<= 10) and poffinfloor (>= 10) both eligible; ash wins
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),   # Poffin
+            _opt(OptionType.PLAY, 1)]                          # Sacred Ash
+    obs = _obs(opts, hand=[POFFIN_ID, SACRED_ASH_ID], bench=[None] * 5,
+               deck_count=10)
+    fixes = frozenset({PLAY_FIX_ASH, PLAY_FIX_POFFINFLOOR})
+    assert apply_play_overrides(obs, [0, 1, 2], fixes) == [2, 0, 1]
+
+
+def test_o7_composes_with_gac():
+    # gacb arm = gac + poffinfloor: at high deck the demote rules are inert,
+    # poffinfloor fires on the thin bench.
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),
+            _opt(OptionType.ATTACK)]
+    obs = _obs(opts, hand=[POFFIN_ID], bench=[None] * 5, deck_count=40)
+    gacb = frozenset({ATTACH_FIX_TELEPATH, PLAY_FIX_DECKGUARD, PLAY_FIX_ASH,
+                      PLAY_FIX_CONSERVE, PLAY_FIX_POFFINFLOOR})
+    assert apply_play_overrides(obs, [0, 1, 2], gacb) == [1, 0, 2]
+
+
+def test_o8_composes_with_gac():
+    # gacd arm = gac + drawfloor
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0)]
+    obs = _obs(opts, hand=[HILDA_ID, BASIC_P], deck_count=40)
+    gacd = frozenset({ATTACH_FIX_TELEPATH, PLAY_FIX_DECKGUARD, PLAY_FIX_ASH,
+                      PLAY_FIX_CONSERVE, PLAY_FIX_DRAWFLOOR})
+    assert apply_play_overrides(obs, [0, 1], gacd) == [1, 0]
+
+
+def test_ash_takes_precedence_over_o1_telepath():
+    # O9 (m31): the docstring once claimed "O1 keeps precedence"; in fact a
+    # PROMOTE (ash) DOES displace an O1-promoted ATTACH in the same prompt.
+    # Benign (the manual attach re-offers next MAIN) but pin the REAL
+    # precedence so a future edit cannot silently change it.
+    opts = [_opt(OptionType.END), _opt(OptionType.ATTACH, 0),   # Telepath
+            _opt(OptionType.PLAY, 1)]                            # Sacred Ash
+    obs = _obs(opts, hand=[TELEPATH_ID, SACRED_ASH_ID], deck_count=10)
+    fixes = frozenset({ATTACH_FIX_TELEPATH, PLAY_FIX_ASH})
+    order = apply_attach_overrides(obs, [0, 1, 2], fixes)
+    assert order == [1, 0, 2]                    # O1 promotes the telepath attach
+    assert apply_play_overrides(obs, order, fixes) == [2, 1, 0]  # ash over it
 
 
 def test_bundle_twins():

@@ -77,6 +77,13 @@ _MODEL_FIX_KINDS = {
     # for attribution and composed as the revised ship candidate:
     "modelt-con": frozenset({"telepath", "conserve"}),
     "modelt-gac": frozenset({"telepath", "deckguard", "ash", "conserve"}),
+    # M31 bench-economy / supporter arms: the live gac ship + one new rule,
+    # screened separately (ship <= 1). gacb = + O7 poffinfloor, gacd = + O8
+    # drawfloor (docs/M31-plan.md).
+    "modelt-gacb": frozenset({"telepath", "deckguard", "ash", "conserve",
+                              "poffinfloor"}),
+    "modelt-gacd": frozenset({"telepath", "deckguard", "ash", "conserve",
+                              "drawfloor"}),
 }
 
 
