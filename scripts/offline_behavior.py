@@ -2,8 +2,11 @@
 
 Plays side A vs side B on the direct engine loop (single process, slot-swapped)
 and reports side A's energy-attach turn rate, Telepath contested-attach share,
-deck-out losses, and game length — the M26 defect axes. Screen jsonls store
-only result codes; this is the offline twin of scripts/attach_probe.py.
+deck-out losses, and game length — the M26 defect axes — plus the M30
+deck-economy axes: END chosen with a playable ITEM in hand (per END turn, with
+the declined items named) and the per-side deck-out split (A decked out vs B
+decked out). Screen jsonls store only result codes; this is the offline twin
+of scripts/attach_probe.py.
 
 Usage:
     uv run python scripts/offline_behavior.py \
@@ -23,6 +26,16 @@ from rl.matchrunner import make_pilot, parse_spec
 from rl.plan import TELEPATH_ID, _IS_ENERGY, _hand_card_id
 
 
+def _item_ids() -> frozenset[int]:
+    import csv
+    with open(ROOT / "data/cards_features.csv") as f:
+        return frozenset(int(r["card_id"]) for r in csv.DictReader(f)
+                         if r["is_item"] == "true")
+
+
+_ITEM_IDS = _item_ids()
+
+
 class BehaviorTap:
     """Wraps a pilot fn; records MAIN-decision behavior for its seat."""
 
@@ -33,6 +46,12 @@ class BehaviorTap:
         self.tele_opps = 0
         self.tele_attached = 0
         self.turns_seen: set[int] = set()
+        self.end_turns = 0
+        self.end_with_item = 0
+        self.declined_items = Counter()  # item id declined on an END pick
+        self.ash_plays = []              # deckCount at each Sacred Ash play
+        self.dud_low_opps = 0            # Dudunsparce ability offered, deck<=6
+        self.dud_low_used = 0            # ...and chosen
 
     def reset_game(self):
         self.turn_attached = {}
@@ -58,6 +77,27 @@ class BehaviorTap:
                       else None)
         if picks[0] in attachable:
             self.turn_attached[st.turn] = True
+        from rl.plan import (DUDUNSPARCE_IDS, SACRED_ASH_ID, _DECKGUARD_AT,
+                             _board_pokemon_id)
+        if chosen.type == OptionType.PLAY and chosen_cid == SACRED_ASH_ID:
+            self.ash_plays.append(me.deckCount)
+        if me.deckCount <= _DECKGUARD_AT:
+            dud_opts = [j for j, o in enumerate(sel.option)
+                        if o.type == OptionType.ABILITY
+                        and _board_pokemon_id(o, me) in DUDUNSPARCE_IDS]
+            if dud_opts:
+                self.dud_low_opps += 1
+                if picks[0] in dud_opts:
+                    self.dud_low_used += 1
+        if chosen.type == OptionType.END:
+            self.end_turns += 1
+            playable = {_hand_card_id(o, hand) for o in sel.option
+                        if o.type == OptionType.PLAY}
+            declined = playable & _ITEM_IDS
+            if declined:
+                self.end_with_item += 1
+                for cid in declined:
+                    self.declined_items[cid] += 1
         if TELEPATH_ID in attachable.values():
             self.tele_opps += 1
             if chosen_cid == TELEPATH_ID and chosen.type == OptionType.ATTACH:
@@ -108,6 +148,7 @@ def main() -> None:
             games.append(dict(
                 won=res == a_seat, draw=res == 2,
                 deck_end=players[a_seat].get("deckCount"),
+                opp_deck_end=players[1 - a_seat].get("deckCount"),
                 turns=obs_dict["current"].get("turn")))
         finally:
             battle_finish()
@@ -120,9 +161,24 @@ def main() -> None:
     deckout_losses = sum(1 for g in games
                          if not g["won"] and not g["draw"]
                          and g["deck_end"] == 0)
+    deckout_wins = sum(1 for g in games if g["won"] and g["opp_deck_end"] == 0)
+    low_deck = sum(1 for g in games if g["deck_end"] <= 3)
+    avg_deck_end = sum(g["deck_end"] for g in games) / max(n, 1)
     print(f"A={args.a}\nB={args.b}\n{n} games, {wins}W-{losses}L "
           f"(wr {wins / n:.3f})")
-    print(f"  deck-out losses: {deckout_losses}/{losses}")
+    print(f"  deck-out losses (A decked): {deckout_losses}/{losses}; "
+          f"deck-out wins (B decked): {deckout_wins}/{wins}")
+    print(f"  A ends with deck<=3: {low_deck}/{n}; "
+          f"avg A deck at end {avg_deck_end:.1f}")
+    print(f"  END with playable ITEM: {tap.end_with_item}/{tap.end_turns} "
+          f"END turns ({tap.end_with_item / max(tap.end_turns, 1):.1%})")
+    if tap.declined_items:
+        print("  items declined at END:",
+              dict(tap.declined_items.most_common(6)))
+    print(f"  Sacred Ash plays: {len(tap.ash_plays)} "
+          f"(deck at play: {sorted(tap.ash_plays)[:12]})")
+    print(f"  Dudunsparce ability at deck<=6: used {tap.dud_low_used}"
+          f"/{tap.dud_low_opps} prompts")
     print(f"  energy attached on {attach_turns}/{our_turns} of A's turns "
           f"({attach_turns / max(our_turns, 1):.1%})")
     print(f"  telepath attached {tap.tele_attached}/{tap.tele_opps} "

@@ -65,6 +65,18 @@ _MODEL_FIX_KINDS = {
     "modelt":  frozenset({"telepath"}),               # O1
     "modela":  frozenset({"backstop"}),               # O2
     "modelta": frozenset({"telepath", "backstop"}),   # O1+O2 composed
+    # M30 deck-economy arms (rl/plan.apply_play_overrides), each on O1:
+    "modelt-tempo": frozenset({"telepath", "tempo"}),         # O1+O3
+    "modelt-guard": frozenset({"telepath", "deckguard"}),     # O1+O4
+    "modelt-ash":   frozenset({"telepath", "ash"}),           # O1+O5
+    "modelt-eco":   frozenset({"telepath", "tempo",           # O1+O3+O4+O5
+                               "deckguard", "ash"}),
+    # P3 survivor composition: tempo dropped (deck-burn harm vs grind decks)
+    "modelt-guardash": frozenset({"telepath", "deckguard", "ash"}),
+    # P5 follow-up (Piotr's QC no-go): Fezandipiti low-deck conserve, solo
+    # for attribution and composed as the revised ship candidate:
+    "modelt-con": frozenset({"telepath", "conserve"}),
+    "modelt-gac": frozenset({"telepath", "deckguard", "ash", "conserve"}),
 }
 
 
@@ -364,7 +376,7 @@ def make_pilot(spec: OpponentSpec, instance: str):
         from cg.api import to_observation_class
         from rl.encoders import (COMBAT_SLICE, N_COMBAT, N_CONTEXTS, STATE_DIM,
                                  encode_context, encode_option, encode_state)
-        from rl.plan import apply_attach_overrides
+        from rl.plan import apply_attach_overrides, apply_play_overrides
         from rl.policy import OptionScorer
 
         attach_fixes = _MODEL_FIX_KINDS.get(kind, frozenset())
@@ -426,6 +438,7 @@ def make_pilot(spec: OpponentSpec, instance: str):
                     ranked = m4.act(sc, plan, sids, opts, oids,
                                     len(obs.select.option), greedy=True)
                     ranked = apply_attach_overrides(obs, ranked, attach_fixes)
+                    ranked = apply_play_overrides(obs, ranked, attach_fixes)
                     return ranked[:obs.select.maxCount]
                 return m4.act(sc, plan, sids, opts, oids,
                               obs.select.maxCount, greedy=True)
@@ -494,6 +507,7 @@ def make_pilot(spec: OpponentSpec, instance: str):
                     ranked = m3.act(sc, plan, sids, opts, oids,
                                     len(obs.select.option), greedy=True)
                     ranked = apply_attach_overrides(obs, ranked, attach_fixes)
+                    ranked = apply_play_overrides(obs, ranked, attach_fixes)
                     return ranked[:obs.select.maxCount]
                 return m3.act(sc, plan, sids, opts, oids,
                               obs.select.maxCount, greedy=True)

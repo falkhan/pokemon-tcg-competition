@@ -320,3 +320,88 @@ def apply_attach_overrides(obs, ranked: list, fixes: frozenset) -> list:
     if pick is None or pick == ranked[0]:
         return ranked
     return [pick] + [i for i in ranked if i != pick]
+
+
+# --- M30 deck-economy override arms (docs/M30-plan.md) ----------------------
+# Same override law as the M26 arms: deterministic card-fact rules, OFF unless
+# a fix name is passed by an opted-in spec kind / build flag.
+POFFIN_ID = 1086       # Buddy-Buddy Poffin — card fact, id-pinned
+POKE_PAD_ID = 1152     # Poké Pad
+SACRED_ASH_ID = 1129   # Sacred Ash: shuffles up to 5 discard Pokémon into deck
+DUDUNSPARCE_IDS = frozenset({66})  # clone deck's only draw-ability body
+FEZANDIPITI_ID = 140   # Fezandipiti ex: draw ability, ~2.8 deck cards/use
+PLAY_FIX_TEMPO = "tempo"          # O3: no END while Poffin/Poké Pad playable
+PLAY_FIX_DECKGUARD = "deckguard"  # O4: no Dudunsparce draw at deck <= 6
+PLAY_FIX_ASH = "ash"              # O5: Sacred Ash when the deck runs low
+PLAY_FIX_CONSERVE = "conserve"    # O6: no Fezandipiti draw at deck <= 6
+_TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
+_DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
+_ASH_AT = 10
+_CONSERVE_AT = 6    # measured 2.8 deck cards/use (m30 deck_drain probe);
+_CONSERVE_ABILITY_IDS = frozenset({FEZANDIPITI_ID})
+
+
+def _board_pokemon_id(opt, me):
+    """Card id of the board Pokémon a board-area option (ABILITY) acts on.
+    ABILITY options carry only area+index, never cardId (M30 P0 probe)."""
+    if opt.area == AreaType.ACTIVE:
+        return me.active[0].id if me.active and me.active[0] else None
+    if (opt.area == AreaType.BENCH and opt.index is not None
+            and me.bench and opt.index < len(me.bench)
+            and me.bench[opt.index] is not None):
+        return me.bench[opt.index].id
+    return None
+
+
+def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
+    """Reorder MAIN-select preference per the M30 deck-economy arms.
+
+    Runs AFTER apply_attach_overrides; the promote rules fire only on
+    conditions an O1-promoted ATTACH cannot meet, so O1 keeps precedence.
+    - O5 `ash`: own deck <= 10 and a Sacred Ash PLAY is legal (engine
+      legality implies Pokémon in the discard) -> play it now.
+    - O3 `tempo`: the model is about to END with a Poffin/Poké Pad PLAY on
+      the menu -> play the highest-ranked such item; END re-offers next MAIN.
+    - O4 `deckguard`: own deck <= 6 and the top pick is a Dudunsparce
+      ABILITY (draw 3, net deck -1) -> demote every such ability below the
+      rest of the model's order.
+    - O6 `conserve`: same demotion for the Fezandipiti ex draw ability
+      (measured ~2.8 deck cards/use; the only optional draw that still
+      fires at low deck once deckguard is on — m30 deck_drain probe).
+    """
+    if (not fixes or obs.select is None or obs.current is None
+            or obs.select.context != SelectContext.MAIN):
+        return ranked
+    st = obs.current
+    me = st.players[st.yourIndex]
+    hand = me.hand or []
+    opts = obs.select.option
+    pick = None
+    if PLAY_FIX_ASH in fixes and me.deckCount <= _ASH_AT:
+        ash = [i for i in ranked
+               if opts[i].type == OptionType.PLAY
+               and _hand_card_id(opts[i], hand) == SACRED_ASH_ID]
+        if ash:
+            pick = ash[0]
+    if (pick is None and PLAY_FIX_TEMPO in fixes
+            and opts[ranked[0]].type == OptionType.END):
+        tempo = [i for i in ranked
+                 if opts[i].type == OptionType.PLAY
+                 and _hand_card_id(opts[i], hand) in _TEMPO_ITEM_IDS]
+        if tempo:
+            pick = tempo[0]
+    if pick is not None and pick != ranked[0]:
+        return [pick] + [i for i in ranked if i != pick]
+    demote_ids = frozenset()
+    if PLAY_FIX_DECKGUARD in fixes and me.deckCount <= _DECKGUARD_AT:
+        demote_ids |= DUDUNSPARCE_IDS
+    if PLAY_FIX_CONSERVE in fixes and me.deckCount <= _CONSERVE_AT:
+        demote_ids |= _CONSERVE_ABILITY_IDS
+    if (demote_ids and opts[ranked[0]].type == OptionType.ABILITY
+            and _board_pokemon_id(opts[ranked[0]], me) in demote_ids):
+        keep = [i for i in ranked
+                if not (opts[i].type == OptionType.ABILITY
+                        and _board_pokemon_id(opts[i], me) in demote_ids)]
+        if keep:
+            return keep + [i for i in ranked if i not in keep]
+    return ranked

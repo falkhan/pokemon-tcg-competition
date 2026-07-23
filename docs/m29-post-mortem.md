@@ -14,7 +14,7 @@ games:
 | sub | score @44 games | W–L @44 | avg opponent score faced |
 |---|---|---|---|
 | 54897966 (M25) | 724.1 | 22–22 | 713.5 |
-| 54903635 (M28-O1) | 734.7 | 22–22 | 732.3 |
+| 54903635 (M26, O1 rule on the M25 weights) | 734.7 | 22–22 | 732.3 |
 | **54914673 (M29)** | **665.3** | 24–20 | **628.1** |
 
 0.50 against a ~730 pool implies ~730 strength; 0.55 against a ~628 pool
@@ -88,7 +88,7 @@ of the bar holds, or the arm goes to Piotr as evidence, not a ship.
 
 ## What M30 should take from this
 
-1. **Rollback decision for Piotr**: 54903635 (m28-era weights + O1) remains
+1. **Rollback decision for Piotr**: 54903635 (M26 ship: m25_bc_alakazam_v3h + O1) remains
    the strongest live evidence. Decide whether M30 re-ships its bundle or
    trains a fresh single-teacher candidate; do not leave 54914673 as the
    flagship on hope — its pool-adjusted strength is resolved-worse, not noisy

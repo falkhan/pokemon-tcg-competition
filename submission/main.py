@@ -71,8 +71,8 @@ _IS_V4 = "enc_ver" in WEIGHTS                    # M21 encoder-v4 export
 _OPTION_DIM = WEIGHTS["option_enc.0.weight"].shape[1] - 2 * _EMBED.shape[1]
 if _IS_V3:
     from cg.api import SelectContext
-    from rl.plan import (PLAN_DIM, apply_attach_overrides, encode_plan,
-                         enumerate_plans)
+    from rl.plan import (PLAN_DIM, apply_attach_overrides,
+                         apply_play_overrides, encode_plan, enumerate_plans)
     # M15: hand-aware exports carry 20 state ids — sniff from the weights
     # and pick the matching encoder. M21: v4 exports declare themselves via
     # the enc_ver buffer (width sniffing is ambiguous with the v4 block in).
@@ -97,12 +97,14 @@ if _IS_V3:
 
 
 _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
-# M26 attach-override arms (rl/plan.apply_attach_overrides): comma-separated
-# fix names ("telepath", "backstop"). Ship default = "telepath" (O1, Piotr's
-# 2026-07-22 sign-off — docs/M26.md candidate matrix); an approved ship
-# changes this default string, never the predicate.
+# M26/M30 override arms (rl/plan.apply_attach_overrides + apply_play_overrides):
+# comma-separated fix names ("telepath", "backstop", "tempo", "deckguard",
+# "ash", "conserve"). Ship default = "telepath,deckguard,ash,conserve"
+# (O1+O4+O5+O6, the M30 gac arm — docs/M30.md P5.1, pending Piotr's QC go);
+# an approved ship changes this default string, never the predicate.
 _ATTACH_FIXES = frozenset(
-    f for f in os.environ.get("PKM_ATTACH_FIXES", "telepath").split(",") if f)
+    f for f in os.environ.get(
+        "PKM_ATTACH_FIXES", "telepath,deckguard,ash,conserve").split(",") if f)
 
 
 def _log_net(rec: dict) -> None:
@@ -218,6 +220,7 @@ def agent(obs_dict: dict) -> list[int]:
     order = [int(i) for i in np.argsort(scores)[::-1]]
     if _IS_V3 and _ATTACH_FIXES:
         order = apply_attach_overrides(obs, order, _ATTACH_FIXES)
+        order = apply_play_overrides(obs, order, _ATTACH_FIXES)
     acts = order[:obs.select.maxCount]
     if _LOG_NET:
         rec = {"s": obs_dict.get("step"), "t": obs.current.turn,
