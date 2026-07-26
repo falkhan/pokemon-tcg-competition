@@ -69,7 +69,8 @@ EI_DISAGREE_WEIGHT = 10.0
 MAX_GAME_DECISIONS = 600
 
 
-def _value_solve_factory(vnet, cell, stats, vs_margin=VS_MARGIN):
+def _value_solve_factory(vnet, cell, stats, vs_margin=VS_MARGIN,
+                         vs_max_turn=VS_MAX_TURN):
     """Per-worker value-guided solver for SETUP-plan commits. Returns
     value_solve(obs, deck) -> (line, trail) when a line beats stand-pat by
     the calibrated margin (else (None, None))."""
@@ -98,7 +99,7 @@ def _value_solve_factory(vnet, cell, stats, vs_margin=VS_MARGIN):
         return leaf_value
 
     def value_solve(obs, deck):
-        if obs.current.turn >= VS_MAX_TURN \
+        if obs.current.turn >= vs_max_turn \
                 or getattr(obs, "search_begin_input", None) is None:
             return None, None
         cell["me"] = obs.current.yourIndex
@@ -181,6 +182,8 @@ def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
             if vline:
                 line, trail, committed = vline, vtrail, True
                 stats["setup_plans"] += 1
+                if obs.current.turn >= 32:      # M33: late (turn>=32) commits
+                    stats["setup_plans_late"] += 1
         plan = derive_plan(line, trail, obs) if committed else None
         cands = enumerate_plans(obs)
         idx = match_candidate(plan, cands)
@@ -228,7 +231,7 @@ def _collect_chunk(args):
     everything it needs is re-imported/rebuilt here."""
     (mode, lo, hi, decks_file, out_dir, checkpoint, tau, dirichlet,
      deadline, label_deadline, shard_size, seed, worker, opponents,
-     value_ckpt, vs_margin) = args
+     value_ckpt, vs_margin, vs_max_turn) = args
     import random
 
     from rl.generic_pilot import make_generic_pilot
@@ -260,7 +263,8 @@ def _collect_chunk(args):
 
     stats = {"games": 0, "decisions": 0, "plan_rows": 0, "plan_missed": 0,
              "plan_null": 0, "plan_gust": 0, "derails": 0, "wins": [0, 0, 0],
-             "kill_plans": 0, "setup_plans": 0, "timeouts": 0, "opp": {},
+             "kill_plans": 0, "setup_plans": 0, "setup_plans_late": 0,
+             "timeouts": 0, "opp": {},
              "vs_calls": 0, "vs_errors": 0, "vs_margins": []}
 
     value_solve = None
@@ -275,7 +279,8 @@ def _collect_chunk(args):
         vnet = OptionScorerV3(**vkw)
         vnet.load_state_dict(vdict)
         vnet.eval()
-        value_solve = _value_solve_factory(vnet, {"me": 0}, stats, vs_margin)
+        value_solve = _value_solve_factory(vnet, {"me": 0}, stats, vs_margin,
+                                           vs_max_turn=vs_max_turn)
 
     opp_pilots = {}          # spec string -> (fn, deck_ids), built lazily
     def _opponent(spec_str, instance):
@@ -491,7 +496,8 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             shard_size: int = 200, seed: int = 0,
             opponents: list | None = None,
             value_ckpt: str | None = None,
-            vs_margin: float = VS_MARGIN) -> dict:
+            vs_margin: float = VS_MARGIN,
+            vs_max_turn: int = VS_MAX_TURN) -> dict:
     assert mode in ("expert", "ei")
     assert mode != "ei" or checkpoint, "--mode ei needs --checkpoint"
     out_dir = Path(out_dir)
@@ -506,7 +512,7 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             break
         jobs.append((mode, lo, hi, str(decks_file), str(out_dir), checkpoint,
                      tau, dirichlet, deadline, label_deadline, shard_size,
-                     seed, w, opponents, value_ckpt, vs_margin))
+                     seed, w, opponents, value_ckpt, vs_margin, vs_max_turn))
         lo = hi
 
     if len(jobs) == 1:                                # tests / smoke path
@@ -518,7 +524,8 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
     agg = {k: sum(r[k] for r in results)
            for k in ("games", "decisions", "plan_rows", "plan_missed",
                      "plan_null", "plan_gust", "derails", "kill_plans",
-                     "setup_plans", "timeouts", "vs_calls", "vs_errors")}
+                     "setup_plans", "setup_plans_late", "timeouts",
+                     "vs_calls", "vs_errors")}
     agg["wins"] = [sum(r["wins"][i] for r in results) for i in range(3)]
     agg["opp"] = {}
     for r in results:
@@ -544,6 +551,7 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
                if len(margins) else "n/a (no solved lines)")
         print(f"value-solve: calls {agg['vs_calls']}  "
               f"errors {agg['vs_errors']}  commits {agg['setup_plans']}  "
+              f"(late turn>=32: {agg['setup_plans_late']})  "
               f"margin {pct}  (threshold {vs_margin:.0f})", flush=True)
         if agg["setup_plans"] == 0:
             print("WARNING: SETUP=0 — a value ckpt was supplied but no setup "
@@ -1151,6 +1159,10 @@ if __name__ == "__main__":
     c.add_argument("--vs-margin", type=float, default=VS_MARGIN,
                    help="SETUP commit margin over stand-pat (M18: "
                         "recalibrate from the printed margin distribution)")
+    c.add_argument("--vs-max-turn", type=int, default=VS_MAX_TURN,
+                   help="M33: turn cap above which value_solve is off (default "
+                        "32; raise once the value ranks late states — Stage 1 "
+                        "found t32+ acc ~0.76-0.84 on a fresh net)")
     t = sub.add_parser("train", help="train OptionScorerV3 on plan shards")
     t.add_argument("--data", type=str, nargs="+", required=True)
     t.add_argument("--name", type=str, required=True)
@@ -1210,7 +1222,7 @@ if __name__ == "__main__":
                 label_deadline=args.label_deadline, workers=args.workers,
                 shard_size=args.shard_size, seed=args.seed,
                 opponents=args.opponents, value_ckpt=args.value_ckpt,
-                vs_margin=args.vs_margin)
+                vs_margin=args.vs_margin, vs_max_turn=args.vs_max_turn)
     elif args.cmd == "relabel":
         relabel(args.data, args.ckpt, weight=args.weight,
                 suffix=args.suffix, batch_size=args.batch_size)

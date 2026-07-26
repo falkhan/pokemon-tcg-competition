@@ -29,7 +29,8 @@ import torch.nn.functional as F
 from cg.api import SelectContext, to_observation_class
 from cg.game import battle_finish, battle_select, battle_start
 from rl.bc import load_population
-from rl.encoders import encode_context, encode_state_v3, OPTION_V2_DIM
+from rl.encoders import (encode_context, encode_state_v3, OPTION_V2_DIM,
+                         STATE_V2_DIM, N_CONTEXTS, DECK_LOW_AT)
 from rl.plan import PLAN_DIM
 from rl.policy import OptionScorerV3, option_dim_of
 
@@ -39,6 +40,32 @@ TURN_BUCKET = 4
 MIN_TURN = 3               # openers are aliased — excluded from pairs
 PAIR_CAP_PER_BUCKET = 400
 GATE_V0 = 0.62
+
+# M33 Stage 1: late-game features for the value trunk (appended via the net's
+# extra_dim slot, so state_ctx = [base_state | context | LATE]). These attack the
+# documented long-game blindness: turn/30 saturates past turn 30, the value net
+# never sees opponent deck count (v4-only), and there is no deck-out clock — so
+# the value is near-chance past turn ~32 (VS_MAX_TURN). Kept small + interpretable
+# and defined here (not encoders.py) so the SHIPPED encoders stay byte-identical.
+LATE_DIM = 5
+BASE_STATE_W = STATE_V2_DIM + N_CONTEXTS   # width of `states` when extra_dim=0
+LATE_BUCKET = 4            # turn//TURN_BUCKET >= this == "late" (turn >= 16)
+
+
+def late_game_feats(me, op, turn) -> np.ndarray:
+    """5 late-game scalars: opponent deck count (absent in the v3 base state),
+    both sides' deck-out-proximity ramps (mirror encoders.DECK_LOW_AT), a
+    de-saturated turn (base turn/30 pegs at 1.0 past turn 30), and a late-phase
+    flag at the turn-16 win-rate cliff (docs/m31-post-mortem.md)."""
+    def low_ramp(dc):
+        return max(0.0, min(1.0, (DECK_LOW_AT - dc) / DECK_LOW_AT))
+    return np.array([
+        getattr(op, "deckCount", 60) / 60.0,
+        low_ramp(getattr(me, "deckCount", 60)),
+        low_ramp(getattr(op, "deckCount", 60)),
+        min(int(turn), 60) / 60.0,
+        1.0 if int(turn) >= 16 else 0.0,
+    ], dtype=np.float32)
 
 
 # ---------------------------------------------------------------- collection
@@ -54,7 +81,7 @@ def _collect_chunk(args):
     rng = random.Random(seed * 31013 + worker)
 
     columns = ("states", "state_ids", "turn", "my_prizes", "opp_prizes",
-               "game_ids", "results", "deck_idx")
+               "game_ids", "results", "deck_idx", "my_deck", "opp_deck")
     shard = {k: [] for k in columns}
     shard_idx = sum(1 for _ in out.glob(f"shard_w{worker:02d}_*.npz"))
     stats = {"games": 0, "rows": 0}
@@ -74,6 +101,8 @@ def _collect_chunk(args):
             game_ids=np.array(shard["game_ids"], dtype=np.int32),
             results=np.array(shard["results"], dtype=np.float32),
             deck_idx=np.array(shard["deck_idx"], dtype=np.int32),
+            my_deck=np.array(shard["my_deck"], dtype=np.int32),
+            opp_deck=np.array(shard["opp_deck"], dtype=np.int32),
         )
         shard_idx += 1
         for v in shard.values():
@@ -117,11 +146,14 @@ def _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
                 me = obs.current.players[player]
                 op = obs.current.players[1 - player]
                 num, sids = encode_state_v3(obs.current, decks[player])
+                late = late_game_feats(me, op, obs.current.turn)
                 sc = np.concatenate(
-                    [num, encode_context(obs.select.context)]
+                    [num, encode_context(obs.select.context), late]
                 ).astype(np.float32)
                 game_rows.append((sc, sids, obs.current.turn, len(me.prize),
-                                  len(op.prize), player))
+                                  len(op.prize), player,
+                                  getattr(me, "deckCount", 60),
+                                  getattr(op, "deckCount", 60)))
                 stats["rows"] += 1
             picks = pilots[player](obs_dict)
             obs_dict = battle_select([int(i) for i in
@@ -130,7 +162,7 @@ def _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
         result = obs_dict["current"]["result"]
         battle_finish()
         stats["games"] += 1
-        for sc, sids, turn, myp, opp, player in game_rows:
+        for sc, sids, turn, myp, opp, player, mydeck, opdeck in game_rows:
             shard["states"].append(sc)
             shard["state_ids"].append(sids)
             shard["turn"].append(turn)
@@ -140,6 +172,8 @@ def _run_games(lo, hi, population, rng, shard, shard_size, out, worker,
             shard["results"].append(
                 0.0 if result == 2 else (1.0 if result == player else -1.0))
             shard["deck_idx"].append(picks_idx[player])
+            shard["my_deck"].append(mydeck)
+            shard["opp_deck"].append(opdeck)
 
         if (game - lo + 1) % shard_size == 0:
             flush()
@@ -180,12 +214,17 @@ def collect(n_games: int, decks_file, out_dir: Path, workers: int = 12,
 # ------------------------------------------------------------------ training
 
 def _load_rows(data_dirs):
-    cols = {k: [] for k in ("states", "state_ids", "turn", "my_prizes",
-                            "opp_prizes", "game_ids", "results", "deck_idx")}
+    base_keys = ("states", "state_ids", "turn", "my_prizes",
+                 "opp_prizes", "game_ids", "results", "deck_idx")
+    opt_keys = ("my_deck", "opp_deck")   # M33: present only in fresh corpora
+    cols = {k: [] for k in base_keys}
     game_base = 0
     for d in data_dirs:
         for path in sorted(Path(d).glob("*.npz")):
             shard = np.load(path)
+            for k in opt_keys:            # add optional cols on first sight
+                if k in shard.files and k not in cols:
+                    cols[k] = []
             cols["game_ids"].append(shard["game_ids"] + game_base)
             # (state_ids widths may mix 12/20 across batches — padded below)
             for k in cols:
@@ -200,30 +239,43 @@ def _load_rows(data_dirs):
     return {k: np.concatenate(v) for k, v in cols.items()}
 
 
-def build_pairs(rows: dict, rng, exclude_games=None, cap=PAIR_CAP_PER_BUCKET):
+def build_pairs(rows: dict, rng, exclude_games=None, cap=PAIR_CAP_PER_BUCKET,
+                coarse_late=False, late_cap=None):
     """Matched pairs (win_row_idx, loss_row_idx) from DIFFERENT games with
     equal (turn bucket, my_prizes, opp_prizes, deck_idx). Returns index pairs
-    plus each pair's turn bucket (for per-bucket reporting)."""
+    plus each pair's turn bucket (for per-bucket reporting).
+
+    M33 Stage 1 (coarse_late): in late buckets (tb >= LATE_BUCKET) DROP deck_idx
+    from the match key and use `late_cap`. Prizes stay matched (no prize-count
+    leak), but merging across decks lifts the ~3.6 pairs/key late-bucket sparsity
+    that leaves the late value near-chance (docs/M33-plan.md)."""
     ok = (rows["turn"] >= MIN_TURN) & (rows["results"] != 0.0)
     if exclude_games is not None:
         ok &= ~np.isin(rows["game_ids"], exclude_games)
     idxs = np.nonzero(ok)[0]
     buckets: dict = {}
     for i in idxs:
-        key = (int(rows["turn"][i]) // TURN_BUCKET, int(rows["my_prizes"][i]),
-               int(rows["opp_prizes"][i]), int(rows["deck_idx"][i]))
+        tb = int(rows["turn"][i]) // TURN_BUCKET
+        if coarse_late and tb >= LATE_BUCKET:
+            key = (tb, int(rows["my_prizes"][i]), int(rows["opp_prizes"][i]))
+        else:
+            key = (tb, int(rows["my_prizes"][i]), int(rows["opp_prizes"][i]),
+                   int(rows["deck_idx"][i]))
         buckets.setdefault(key, ([], []))[0 if rows["results"][i] > 0
                                           else 1].append(int(i))
     pairs, pair_bucket = [], []
     for key, (wins, losses) in buckets.items():
+        tb = key[0]
+        this_cap = (late_cap or cap) if (coarse_late and tb >= LATE_BUCKET) \
+            else cap
         rng.shuffle(wins)
         rng.shuffle(losses)
-        n = min(len(wins), len(losses), cap)
+        n = min(len(wins), len(losses), this_cap)
         for k in range(n):
             if rows["game_ids"][wins[k]] == rows["game_ids"][losses[k]]:
                 continue                      # different games only
             pairs.append((wins[k], losses[k]))
-            pair_bucket.append(key[0])
+            pair_bucket.append(tb)
     return pairs, pair_bucket
 
 
@@ -244,21 +296,41 @@ def _values(model, rows, idx_list, batch=512):
 
 def train(data_dirs: list, name: str, init_v3: str | None = None,
           epochs: int = 6, lr: float = 1e-4, batch_size: int = 256,
-          seed: int = 0) -> float:
+          seed: int = 0, late: bool = False, coarse_pairs: bool = False) -> float:
     rows = _load_rows([Path(d) for d in data_dirs])
     print(f"{len(rows['states'])} states, "
           f"{int((rows['results'] > 0).sum())} from wins")
+    # M33 Stage 1: a fresh corpus stores state_ctx = [base | context | LATE].
+    # `late` feeds the LATE block via the net's extra_dim; baseline slices it off
+    # so the A/B differs only in the added features (+ pair construction).
+    have_w = rows["states"].shape[1]
+    if late:
+        if have_w < BASE_STATE_W + LATE_DIM:
+            raise ValueError(f"--late needs a LATE-feat corpus (state width "
+                             f"{have_w} < {BASE_STATE_W + LATE_DIM})")
+        rows["states"] = rows["states"][:, :BASE_STATE_W + LATE_DIM]
+        extra_dim = LATE_DIM
+    else:
+        rows["states"] = rows["states"][:, :BASE_STATE_W]
+        extra_dim = 0
+    if init_v3 is not None and extra_dim:
+        raise ValueError("warm-start (--init-v3) with --late is unsupported "
+                         "(state_enc width differs); run --late from scratch")
+    print(f"recipe: late={late} coarse_pairs={coarse_pairs} "
+          f"extra_dim={extra_dim} state_w={rows['states'].shape[1]}")
 
     rng = np.random.default_rng(seed)
     unique_games = np.unique(rows["game_ids"])
     val_games = rng.choice(unique_games, max(1, int(0.1 * len(unique_games))),
                            replace=False)
     py_rng = __import__("random").Random(seed)
-    train_pairs, _ = build_pairs(rows, py_rng, exclude_games=val_games)
+    train_pairs, _ = build_pairs(rows, py_rng, exclude_games=val_games,
+                                 coarse_late=coarse_pairs, late_cap=1200)
     # val pairs come ONLY from val games (no leakage through shared games)
     ok_train_games = np.setdiff1d(unique_games, val_games)
     val_pairs, val_buckets = build_pairs(rows, py_rng,
-                                         exclude_games=ok_train_games)
+                                         exclude_games=ok_train_games,
+                                         coarse_late=coarse_pairs, late_cap=1200)
     print(f"train pairs {len(train_pairs)}, val pairs {len(val_pairs)}")
 
     # Setup-value shards carry no `options` column, so the option width must
@@ -275,7 +347,7 @@ def train(data_dirs: list, name: str, init_v3: str | None = None,
         init_sd = None
         option_dim = OPTION_V2_DIM
     model = OptionScorerV3(n_state_ids=rows["state_ids"].shape[1],
-                           option_dim=option_dim)
+                           option_dim=option_dim, extra_dim=extra_dim)
     if init_sd is not None:
         model.load_state_dict(init_sd)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
@@ -343,7 +415,7 @@ if __name__ == "__main__":
     c.add_argument("--games", type=int, default=2000)
     c.add_argument("--decks", type=str, default="data/league/population.json")
     c.add_argument("--out", type=str, required=True)
-    c.add_argument("--workers", type=int, default=12)
+    c.add_argument("--workers", type=int, default=8)   # CLAUDE.md cap (12 deadlocks)
     c.add_argument("--shard-size", type=int, default=500)
     c.add_argument("--seed", type=int, default=0)
     t = sub.add_parser("train")
@@ -353,10 +425,16 @@ if __name__ == "__main__":
     t.add_argument("--epochs", type=int, default=6)
     t.add_argument("--lr", type=float, default=1e-4)
     t.add_argument("--batch-size", type=int, default=256)
+    t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--late", action="store_true",
+                   help="M33: feed the LATE-game feature block (extra_dim)")
+    t.add_argument("--coarse-pairs", action="store_true",
+                   help="M33: coarsen late-bucket pair matching (drop deck_idx)")
     args = p.parse_args()
     if args.cmd == "collect":
         collect(args.games, args.decks, Path(args.out), workers=args.workers,
                 shard_size=args.shard_size, seed=args.seed)
     else:
         train(args.data, args.name, init_v3=args.init_v3, epochs=args.epochs,
-              lr=args.lr, batch_size=args.batch_size)
+              lr=args.lr, batch_size=args.batch_size, seed=args.seed,
+              late=args.late, coarse_pairs=args.coarse_pairs)
