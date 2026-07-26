@@ -13,8 +13,8 @@ pytest.importorskip("numpy")
 
 from cg.api import AreaType, OptionType, SelectContext
 from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_TELEPATH, FEZANDIPITI_ID,
-                     HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_CONSERVE,
-                     PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
+                     HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_BENCHFLOOR,
+                     PLAY_FIX_CONSERVE, PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
                      PLAY_FIX_POFFINFLOOR, PLAY_FIX_TEMPO, SACRED_ASH_ID,
                      TELEPATH_ID, apply_attach_overrides,
                      apply_play_overrides)
@@ -30,6 +30,8 @@ def _energy_ids(monkeypatch):
     real energy ids — pin the card-fact set the predicate reads."""
     import rl.plan as rp
     monkeypatch.setattr(rp, "_IS_ENERGY", {BASIC_P, TELEPATH_ID})
+    # fake_cg lacks the real basic-Pokemon table; pin Abra (NON_ENERGY) as one.
+    monkeypatch.setattr(rp, "_IS_BASIC_POKEMON", {NON_ENERGY})
 
 
 def _card(cid):
@@ -281,6 +283,61 @@ def test_o7_wins_over_o8_when_both_fire():
                deck_count=40)
     fixes = frozenset({PLAY_FIX_POFFINFLOOR, PLAY_FIX_DRAWFLOOR})
     assert apply_play_overrides(obs, [0, 1, 2], fixes) == [1, 0, 2]
+
+
+# --- M35 bench-floor (O10): bench a basic you HOLD when thin --------------
+
+
+def test_o10_benchfloor_plays_held_basic_at_thin_bench():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),   # Abra (basic)
+            _opt(OptionType.ATTACK)]
+    fixes = frozenset({PLAY_FIX_BENCHFLOOR})
+    # bench-alive 0 -> the basic PLAY (idx 1) is promoted to front
+    thin = _obs(opts, hand=[NON_ENERGY], bench=[None] * 5, deck_count=40)
+    assert apply_play_overrides(thin, [0, 1, 2], fixes) == [1, 0, 2]
+    # bench-alive 1 still fires (threshold <= 1)
+    one = _obs(opts, hand=[NON_ENERGY],
+               bench=[_card(NON_ENERGY), None, None, None, None], deck_count=40)
+    assert apply_play_overrides(one, [0, 1, 2], fixes) == [1, 0, 2]
+    # NO deck floor: fires even at low deck (benching costs 0 deck)
+    low = _obs(opts, hand=[NON_ENERGY], bench=[None] * 5, deck_count=3)
+    assert apply_play_overrides(low, [0, 1, 2], fixes) == [1, 0, 2]
+
+
+def test_o10_benchfloor_guards():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0)]
+    fixes = frozenset({PLAY_FIX_BENCHFLOOR})
+    # bench-alive 2 -> board not thin -> untouched
+    full = _obs(opts, hand=[NON_ENERGY],
+                bench=[_card(NON_ENERGY), _card(NON_ENERGY), None, None, None],
+                deck_count=40)
+    assert apply_play_overrides(full, [0, 1], fixes) == [0, 1]
+    # no basic-Pokemon PLAY on the menu (POFFIN is an item) -> untouched
+    other = _obs(opts, hand=[POFFIN_ID], bench=[None] * 5, deck_count=40)
+    assert apply_play_overrides(other, [0, 1], fixes) == [0, 1]
+    # off by default
+    assert apply_play_overrides(full, [0, 1], frozenset()) == [0, 1]
+
+
+def test_o10_benchfloor_wins_over_o7_poffinfloor():
+    # thin bench, holding BOTH a basic and a Poffin -> bench the held basic
+    # (idx 1) before digging with Poffin (idx 2).
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),   # Abra   (hand 0)
+            _opt(OptionType.PLAY, 1)]                          # Poffin (hand 1)
+    obs = _obs(opts, hand=[NON_ENERGY, POFFIN_ID], bench=[None] * 5,
+               deck_count=40)
+    fixes = frozenset({PLAY_FIX_BENCHFLOOR, PLAY_FIX_POFFINFLOOR})
+    assert apply_play_overrides(obs, [0, 1, 2], fixes) == [1, 0, 2]
+
+
+def test_o5_ash_wins_over_o10_benchfloor():
+    # ash outranks benchfloor when both fire (deck low, thin bench)
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),   # Abra
+            _opt(OptionType.PLAY, 1)]                          # Sacred Ash
+    obs = _obs(opts, hand=[NON_ENERGY, SACRED_ASH_ID], bench=[None] * 5,
+               deck_count=8)
+    fixes = frozenset({PLAY_FIX_ASH, PLAY_FIX_BENCHFLOOR})
+    assert apply_play_overrides(obs, [0, 1, 2], fixes) == [2, 0, 1]
 
 
 def test_o5_ash_wins_over_o7_at_deck_floor():

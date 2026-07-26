@@ -84,6 +84,14 @@ _MODEL_FIX_KINDS = {
                               "poffinfloor"}),
     "modelt-gacd": frozenset({"telepath", "deckguard", "ash", "conserve",
                               "drawfloor"}),
+    # M35 bench-floor arms (rl/plan O10 benchfloor). gacf = gac + benchfloor;
+    # gacbf = gacb + benchfloor. The 4-arm matrix {gac, gacb, gacf, gacbf}
+    # tests the new rule AND whether poffinfloor still earns its slot
+    # (docs/M35-plan.md).
+    "modelt-gacf": frozenset({"telepath", "deckguard", "ash", "conserve",
+                              "benchfloor"}),
+    "modelt-gacbf": frozenset({"telepath", "deckguard", "ash", "conserve",
+                               "poffinfloor", "benchfloor"}),
 }
 
 

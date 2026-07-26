@@ -25,6 +25,9 @@ _DMG_NORM = 340.0                    # encoders' damage normalization
 GUST_IDS = frozenset({1182})         # Boss's Orders (U+2019 name) — card fact, id-pinned
 _IS_ENERGY = {c.cardId for c in all_card_data()
               if c.cardType in (CardType.BASIC_ENERGY, CardType.SPECIAL_ENERGY)}
+_IS_BASIC_POKEMON = {c.cardId for c in all_card_data()
+                     if c.cardType == CardType.POKEMON
+                     and getattr(c, "basic", False)}
 
 # attacker_slot/target_slot: 0 = active, 1..5 = bench index + 1.
 # attack_idx: position in _CARD[attacker_id][3] (capped at MAX_ATTACK_IDX-1).
@@ -337,6 +340,7 @@ PLAY_FIX_ASH = "ash"              # O5: Sacred Ash when the deck runs low
 PLAY_FIX_CONSERVE = "conserve"    # O6: no Fezandipiti draw at deck <= 6
 PLAY_FIX_POFFINFLOOR = "poffinfloor"  # O7: dig for board when thin (m31)
 PLAY_FIX_DRAWFLOOR = "drawfloor"      # O8: force Hilda when hand-starved (m31)
+PLAY_FIX_BENCHFLOOR = "benchfloor"    # O10: bench a basic you HOLD when thin (m35)
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10
@@ -348,6 +352,10 @@ _CONSERVE_ABILITY_IDS = frozenset({FEZANDIPITI_ID})
 # bench-outs were at deck 41/44), so the deck floor barely binds real firings.
 _POFFINFLOOR_BENCH_AT = 1   # bench-alive <= 1: board is thin, dig for basics
 _POFFINFLOOR_DECK_AT = 10   # ... and deck >= 10 (Poffin costs ~1.27 cards/use)
+_BENCHFLOOR_BENCH_AT = 1    # O10 (m35): bench-alive <= 1 -> play a basic you HOLD.
+# No deck floor: benching from hand costs 0 deck, so it never fights the low-deck
+# economy rules. Ranked ABOVE poffinfloor ("bench what you have before digging"),
+# which also fixes the M31 bench-0 missed-basic regression (0->12 prompts).
 _DRAWFLOOR_HAND_AT = 4      # hand <= 4: starved, a draw actually helps (not
 _DRAWFLOOR_DECK_AT = 10     # ... the full-hand hoarding cases); deck >= 10
 
@@ -375,10 +383,15 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
     still unused, so the next MAIN re-offers the ATTACH and O1 re-promotes it.
     Only O3 tempo is additionally gated on `ranked[0]` being END, so tempo
     alone cannot override O1. Promote order (first match wins): ash >
-    poffinfloor > drawfloor > tempo. The DEMOTE rules (deckguard, conserve)
-    only reorder when the top pick is the targeted ABILITY.
+    benchfloor > poffinfloor > drawfloor > tempo. The DEMOTE rules (deckguard,
+    conserve) only reorder when the top pick is the targeted ABILITY.
     - O5 `ash`: own deck <= 10 and a Sacred Ash PLAY is legal (engine
       legality implies Pokémon in the discard) -> play it now.
+    - O10 `benchfloor` (m35): bench-alive <= 1 and a basic-Pokemon PLAY is
+      legal -> play the highest-ranked such basic (bench what you HOLD). No
+      deck floor (benching costs 0 deck). Ranked above poffinfloor so we bench
+      a held basic before digging for one — which also fixes the M31 bench-0
+      missed-basic regression. Targets the ~39% basic-play-at-bench<=1 defect.
     - O7 `poffinfloor`: bench-alive <= 1 and own deck >= 10 -> play
       Buddy-Buddy Poffin (benches up to 2 basics from deck, ~1.27 cards/use
       — m31 probe) to dig for board when thin. Deck-gated above the low-deck
@@ -410,6 +423,14 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                and _hand_card_id(opts[i], hand) == SACRED_ASH_ID]
         if ash:
             pick = ash[0]
+    if (pick is None and PLAY_FIX_BENCHFLOOR in fixes
+            and sum(p is not None for p in (me.bench or []))
+            <= _BENCHFLOOR_BENCH_AT):
+        basics = [i for i in ranked
+                  if opts[i].type == OptionType.PLAY
+                  and _hand_card_id(opts[i], hand) in _IS_BASIC_POKEMON]
+        if basics:
+            pick = basics[0]
     if (pick is None and PLAY_FIX_POFFINFLOOR in fixes
             and me.deckCount >= _POFFINFLOOR_DECK_AT
             and sum(p is not None for p in (me.bench or []))
