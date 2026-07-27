@@ -405,6 +405,14 @@ Status PENDING at submit. **Clean live A/B vs 55011605 (settled 789.6) — the
 ONLY change is the deck slot (+1 Enhanced Hammer / −1 Hilda), so the live
 delta isolates the hammer-4 wall tech.**
 
+**Post-ship (2026-07-27, Piotr feedback):** single-opponent QC is NOT proper
+QC — mandate changed to a multi-deck battery (scripts/qc_battery.py: 3 games
+each vs tuned/iono/dragapult + the PREVIOUS ship tarball as the mirror leg;
+CLAUDE.md rule updated, [[qc-multi-deck-battery]] memory saved). First live
+games of 55030954: 1W (mirror, t19) / 1L (crustle/tusk wall DECK-OUT t38 —
+but contested: prizes 4/3 vs M35's 6-left shutouts; n=1, consistent with the
+offline 0.42 claim; transfer verdict at ~n=40).
+
 **Watch next session (live A/B 55030954 vs 789.6):** wall-family W/L (offline
 0.36→0.42, the target claim — does +6pp transfer?); bench-out wins appearing
 (the new win line); mirror share/W-L (h4 mirror seed-split 0.555/0.470 was
