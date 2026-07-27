@@ -15,8 +15,8 @@ from cg.api import AreaType, OptionType, SelectContext
 from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_TELEPATH, FEZANDIPITI_ID,
                      HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_BENCHFLOOR,
                      PLAY_FIX_CONSERVE, PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
-                     PLAY_FIX_POFFINFLOOR, PLAY_FIX_TEMPO, SACRED_ASH_ID,
-                     TELEPATH_ID, apply_attach_overrides,
+                     PLAY_FIX_GUSTVETO, PLAY_FIX_POFFINFLOOR, PLAY_FIX_TEMPO,
+                     SACRED_ASH_ID, TELEPATH_ID, apply_attach_overrides,
                      apply_play_overrides)
 
 BASIC_P = 4          # Basic {P} Energy — any basic energy id works for tests
@@ -43,11 +43,13 @@ def _opt(otype, index=None, area=AreaType.HAND, card_id=None):
 
 
 def _obs(options, hand, bench=(None,) * 5, energy_attached=False,
-         context=SelectContext.MAIN, bench_max=5, deck_count=40, active=()):
+         context=SelectContext.MAIN, bench_max=5, deck_count=40, active=(),
+         opp_prizes=6):
     me = SimpleNamespace(hand=[_card(c) for c in hand],
                          bench=list(bench), benchMax=bench_max,
                          deckCount=deck_count, active=list(active))
-    current = SimpleNamespace(players=[me], yourIndex=0,
+    op = SimpleNamespace(prize=[object()] * opp_prizes)
+    current = SimpleNamespace(players=[me, op], yourIndex=0,
                               energyAttached=energy_attached)
     select = SimpleNamespace(context=context, option=options)
     return SimpleNamespace(current=current, select=select)
@@ -382,6 +384,61 @@ def test_ash_takes_precedence_over_o1_telepath():
     order = apply_attach_overrides(obs, [0, 1, 2], fixes)
     assert order == [1, 0, 2]                    # O1 promotes the telepath attach
     assert apply_play_overrides(obs, order, fixes) == [2, 1, 0]  # ash over it
+
+
+# --- M36 gust veto (O11): no Boss's Orders while opp needs <= 1 prize ------
+
+GUST = 1182   # Boss's Orders — rl.plan.GUST_IDS
+
+
+def test_o11_gustveto_demotes_gust_at_opp_match_point():
+    opts = [_opt(OptionType.PLAY, 0),      # Boss's Orders (hand 0)
+            _opt(OptionType.ATTACK), _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_GUSTVETO})
+    # opponent needs 1 prize and gust is the TOP pick -> demoted below rest
+    hot = _obs(opts, hand=[GUST], opp_prizes=1)
+    assert apply_play_overrides(hot, [0, 1, 2], fixes) == [1, 2, 0]
+    # opp_prizes 0 edge (terminal-adjacent states) still demotes
+    zero = _obs(opts, hand=[GUST], opp_prizes=0)
+    assert apply_play_overrides(zero, [0, 1, 2], fixes) == [1, 2, 0]
+
+
+def test_o11_gustveto_guards():
+    opts = [_opt(OptionType.PLAY, 0), _opt(OptionType.ATTACK)]
+    fixes = frozenset({PLAY_FIX_GUSTVETO})
+    hot = _obs(opts, hand=[GUST], opp_prizes=1)
+    # opponent needs 2 -> not match point -> untouched
+    cold = _obs(opts, hand=[GUST], opp_prizes=2)
+    assert apply_play_overrides(cold, [0, 1], fixes) == [0, 1]
+    # top pick is not the gust PLAY -> untouched (demotes only fire on top)
+    assert apply_play_overrides(hot, [1, 0], fixes) == [1, 0]
+    # a non-gust PLAY on top -> untouched
+    other = _obs([_opt(OptionType.PLAY, 0), _opt(OptionType.END)],
+                 hand=[POFFIN_ID], opp_prizes=1)
+    assert apply_play_overrides(other, [0, 1], fixes) == [0, 1]
+    # off by default
+    assert apply_play_overrides(hot, [0, 1], frozenset()) == [0, 1]
+
+
+def test_o11_composes_with_gacf():
+    gacfv = frozenset({ATTACH_FIX_TELEPATH, PLAY_FIX_DECKGUARD, PLAY_FIX_ASH,
+                       PLAY_FIX_CONSERVE, PLAY_FIX_BENCHFLOOR,
+                       PLAY_FIX_GUSTVETO})
+    # high deck (demotes inert), healthy bench (benchfloor inert): the gust
+    # top pick at opp match point is demoted below the rest of the order.
+    opts = [_opt(OptionType.PLAY, 0),      # Boss's Orders
+            _opt(OptionType.ATTACK), _opt(OptionType.END)]
+    bench2 = [_card(NON_ENERGY), _card(NON_ENERGY), None, None, None]
+    hot = _obs(opts, hand=[GUST], bench=bench2, opp_prizes=1)
+    assert apply_play_overrides(hot, [0, 1, 2], gacfv) == [1, 2, 0]
+    # PROMOTE keeps precedence: thin bench + held basic -> benchfloor fires
+    # first and the veto never sees the gust on top.
+    opts2 = [_opt(OptionType.PLAY, 0),     # Boss's Orders (hand 0)
+             _opt(OptionType.PLAY, 1),     # Abra (hand 1, basic)
+             _opt(OptionType.END)]
+    thin = _obs(opts2, hand=[GUST, NON_ENERGY], bench=[None] * 5,
+                opp_prizes=1)
+    assert apply_play_overrides(thin, [0, 1, 2], gacfv) == [1, 0, 2]
 
 
 def test_bundle_twins():

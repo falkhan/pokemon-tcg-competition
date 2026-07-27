@@ -92,6 +92,11 @@ _MODEL_FIX_KINDS = {
                               "benchfloor"}),
     "modelt-gacbf": frozenset({"telepath", "deckguard", "ash", "conserve",
                                "poffinfloor", "benchfloor"}),
+    # M36 gust-veto arm (rl/plan O11 gustveto): the gacf live ship + no
+    # Boss's Orders PLAY while the opponent needs <= 1 prize
+    # (docs/M36-plan.md W2; the 5/5-in-losses live pattern).
+    "modelt-gacfv": frozenset({"telepath", "deckguard", "ash", "conserve",
+                               "benchfloor", "gustveto"}),
 }
 
 

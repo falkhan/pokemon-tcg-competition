@@ -341,6 +341,7 @@ PLAY_FIX_CONSERVE = "conserve"    # O6: no Fezandipiti draw at deck <= 6
 PLAY_FIX_POFFINFLOOR = "poffinfloor"  # O7: dig for board when thin (m31)
 PLAY_FIX_DRAWFLOOR = "drawfloor"      # O8: force Hilda when hand-starved (m31)
 PLAY_FIX_BENCHFLOOR = "benchfloor"    # O10: bench a basic you HOLD when thin (m35)
+PLAY_FIX_GUSTVETO = "gustveto"        # O11: no gust at opp-prizes <= 1 (m36)
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10
@@ -358,6 +359,11 @@ _BENCHFLOOR_BENCH_AT = 1    # O10 (m35): bench-alive <= 1 -> play a basic you HO
 # which also fixes the M31 bench-0 missed-basic regression (0->12 prompts).
 _DRAWFLOOR_HAND_AT = 4      # hand <= 4: starved, a draw actually helps (not
 _DRAWFLOOR_DECK_AT = 10     # ... the full-hand hoarding cases); deck >= 10
+# O11 (m36): a player's .prize list is the prizes THEY still need (verified
+# empirically vs the diag end-states + a forced kyogre probe, docs/M36-plan.md
+# execution log — NOT what the _make_plan comment below says). Opponent at
+# match point = len(op.prize) <= 1.
+_GUSTVETO_OPP_PRIZES_AT = 1
 
 
 def _board_pokemon_id(opt, me):
@@ -408,6 +414,12 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
     - O6 `conserve`: same demotion for the Fezandipiti ex draw ability
       (measured ~2.8 deck cards/use; the only optional draw that still
       fires at low deck once deckguard is on — m30 deck_drain probe).
+    - O11 `gustveto` (m36): opponent needs <= 1 prize and the top pick is a
+      Boss's Orders PLAY -> demote every such PLAY below the rest. Burning
+      the turn's supporter on a gust that may not convert while the opponent
+      is at match point fired 5/5 in M35 live losses. Blanket demote (no
+      KO-gate): _attack_damage models Powerful Hand as 0, so a KO-gate
+      would be blind to our main attacker (M36 W2 design note).
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -467,6 +479,16 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
         keep = [i for i in ranked
                 if not (opts[i].type == OptionType.ABILITY
                         and _board_pokemon_id(opts[i], me) in demote_ids)]
+        if keep:
+            return keep + [i for i in ranked if i not in keep]
+    if (PLAY_FIX_GUSTVETO in fixes
+            and opts[ranked[0]].type == OptionType.PLAY
+            and _hand_card_id(opts[ranked[0]], hand) in GUST_IDS
+            and len(st.players[1 - st.yourIndex].prize or ())
+            <= _GUSTVETO_OPP_PRIZES_AT):
+        keep = [i for i in ranked
+                if not (opts[i].type == OptionType.PLAY
+                        and _hand_card_id(opts[i], hand) in GUST_IDS)]
         if keep:
             return keep + [i for i in ranked if i not in keep]
     return ranked
