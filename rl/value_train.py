@@ -91,20 +91,39 @@ def collect(checkpoint: str, learn_deck: str = "kyogre", n_games: int = 600,
     from rl.teacher import load_teacher
     import random
 
-    # Dimension-aware load (the matchrunner shim): bc_v1 predates the M3
-    # combat features — slice the combat block out of current encodings.
     sd = torch.load(checkpoint, map_location="cpu")
-    in_dim = sd["state_enc.0.weight"].shape[1]
-    expected = STATE_DIM + N_CONTEXTS
-    if in_dim == expected:
-        cut = None
-    elif in_dim == expected - N_COMBAT:
-        cut = COMBAT_SLICE
-    else:
-        raise ValueError(f"{checkpoint}: state dim {in_dim} matches neither "
-                         f"{expected} nor the pre-M3 {expected - N_COMBAT}")
-    model = OptionScorer(state_ctx_dim=in_dim); model.load_state_dict(sd); model.eval()
+    is_v3 = "plan_enc.0.weight" in sd          # M28 Track E: v3 lineage
     ld = _deck(learn_deck)
+    state_ids: list = []
+    if is_v3:
+        # M28: the shipped lineage is OptionScorerV3. Encoding differs in three
+        # ways from v1 — the state carries id vectors for learnable embeddings,
+        # the option encoder is encode_option_v2, and the trunk takes a plan
+        # (fed as ZEROS: docs/M27.md Probe 4 measured the plan block inert here).
+        from rl.encoders import encode_option_v2, encode_state_v3
+        from rl.plan import PLAN_DIM
+        from rl.plan_iter import _n_ids_of
+        from rl.policy import OptionScorerV3, option_dim_of
+        model = OptionScorerV3(n_state_ids=_n_ids_of(sd),
+                               option_dim=option_dim_of(sd))
+        model.load_state_dict(sd)
+        model.eval()
+        cut = None
+    else:
+        # Dimension-aware load (the matchrunner shim): bc_v1 predates the M3
+        # combat features — slice the combat block out of current encodings.
+        in_dim = sd["state_enc.0.weight"].shape[1]
+        expected = STATE_DIM + N_CONTEXTS
+        if in_dim == expected:
+            cut = None
+        elif in_dim == expected - N_COMBAT:
+            cut = COMBAT_SLICE
+        else:
+            raise ValueError(f"{checkpoint}: state dim {in_dim} matches neither "
+                             f"{expected} nor the pre-M3 {expected - N_COMBAT}")
+        model = OptionScorer(state_ctx_dim=in_dim)
+        model.load_state_dict(sd)
+        model.eval()
     opps = [(None, ld),
             (load_teacher("vpl", agent="lucario", deck="lucario"), _deck("lucario")),
             (load_teacher("vpi", agent="iono", deck="iono"), _deck("iono"))]
@@ -115,16 +134,30 @@ def collect(checkpoint: str, learn_deck: str = "kyogre", n_games: int = 600,
         meta = load_meta(meta_version)
 
     def _sc(obs):
+        """(state_ctx, state_ids) — ids are None on the v1 path."""
+        if is_v3:
+            num, sids = encode_state_v3(obs.current, ld)
+            return (np.concatenate([num, encode_context(obs.select.context)]
+                                   ).astype(np.float32), sids)
         sc = np.concatenate([encode_state(obs.current),
                              encode_context(obs.select.context)]).astype(np.float32)
-        return np.delete(sc, np.s_[cut[0]:cut[1]]) if cut is not None else sc
+        return (np.delete(sc, np.s_[cut[0]:cut[1]]) if cut is not None else sc), None
 
     def pick(obs):
-        sc = _sc(obs)
-        opts = np.stack([encode_option(o, obs) for o in obs.select.option]).astype(np.float32)
-        return sc, [int(i) for i in model.act(sc, opts, k=obs.select.maxCount, greedy=True)]
+        sc, sids = _sc(obs)
+        if is_v3:
+            pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+            opts = np.stack([n for n, _ in pairs]).astype(np.float32)
+            oids = np.stack([i for _, i in pairs])
+            acts = model.act(sc, np.zeros(PLAN_DIM, np.float32), sids, opts, oids,
+                             obs.select.maxCount, greedy=True)
+        else:
+            opts = np.stack([encode_option(o, obs)
+                             for o in obs.select.option]).astype(np.float32)
+            acts = model.act(sc, opts, k=obs.select.maxCount, greedy=True)
+        return (sc, sids), [int(i) for i in acts]
 
-    states, outcomes = [], []
+    states, outcomes, game_ids = [], [], []
     for g in range(n_games):
         oa, od = opps[g % 3]
         learn_seat = g % 2
@@ -135,7 +168,7 @@ def collect(checkpoint: str, learn_deck: str = "kyogre", n_games: int = 600,
             seat = obs_dict["current"]["yourIndex"]
             obs = to_observation_class(obs_dict)
             if seat == learn_seat:
-                sc, picks = pick(obs); pend.append((sc, 1.0))
+                scp, picks = pick(obs); pend.append((scp, 1.0))
                 if search_plies > 0 and getattr(obs, "search_begin_input", None) is not None:
                     pend += _search_visited(obs, ld, meta, rng,
                                             lambda o: pick(o)[1], learn_seat,
@@ -148,13 +181,23 @@ def collect(checkpoint: str, learn_deck: str = "kyogre", n_games: int = 600,
                 obs_dict = battle_select([int(i) for i in p])
         res = obs_dict["current"]["result"]; battle_finish()
         y = 0.0 if res == 2 else (1.0 if res == learn_seat else -1.0)
-        states += [sc for sc, _ in pend]
+        states += [sc for (sc, _), _ in pend]
+        state_ids += [sids for (_, sids), _ in pend]
         outcomes += [y * sign for _, sign in pend]
+        game_ids += [g] * len(pend)
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out, states=np.stack(states).astype(np.float32),
-                        outcomes=np.array(outcomes, dtype=np.float32))
-    print(f"collected {len(states)} states -> {out}")
+    cols = {"states": np.stack(states).astype(np.float32),
+            "outcomes": np.array(outcomes, dtype=np.float32),
+            # M28: every state of a game shares that game's outcome label, so a
+            # per-STATE split leaks the label across the split and inflates
+            # sign-accuracy. train() splits on this instead.
+            "game_ids": np.array(game_ids, dtype=np.int64)}
+    if is_v3:                       # M28: v3 trunks need the embedding ids
+        cols["state_ids"] = np.stack(state_ids).astype(np.int64)
+    np.savez_compressed(out, **cols)
+    print(f"collected {len(states)} states over {len(set(game_ids))} games -> {out}"
+          f"{' (v3, with state_ids)' if is_v3 else ''}")
 
 
 def train(checkpoint: str, out: str = "bc_v1_value.pt", data: Path = DATA,
@@ -167,19 +210,58 @@ def train(checkpoint: str, out: str = "bc_v1_value.pt", data: Path = DATA,
 
     d = np.load(data)
     S = torch.from_numpy(d["states"]); Y = torch.from_numpy(d["outcomes"])
-    n = len(S); perm = np.random.default_rng(0).permutation(n)
-    tr, va = perm[:int(0.85 * n)], perm[int(0.85 * n):]
+    # Split by GAME, not by state (M28): every state of a game carries that
+    # game's outcome as its label, so a per-state split puts near-duplicate
+    # rows with the SAME label on both sides and inflates sign-accuracy.
+    if "game_ids" in d:
+        games = np.unique(d["game_ids"])
+        rng = np.random.default_rng(0)
+        val_games = set(rng.choice(games, max(1, int(0.15 * len(games))),
+                                   replace=False).tolist())
+        is_val = np.isin(d["game_ids"], list(val_games))
+        tr, va = np.nonzero(~is_val)[0], np.nonzero(is_val)[0]
+        split = f"{len(games)} games ({len(val_games)} held out)"
+    else:
+        n = len(S); perm = np.random.default_rng(0).permutation(n)
+        tr, va = perm[:int(0.85 * n)], perm[int(0.85 * n):]
+        split = "per-STATE split (legacy npz, no game_ids — LEAKY)"
+    print(f"value data: {len(S)} states, split by {split}")
 
-    model = OptionScorer(state_ctx_dim=S.shape[1])
-    model.load_state_dict(torch.load(ROOT / "checkpoints" / checkpoint, map_location="cpu"))
+    sd = torch.load(ROOT / "checkpoints" / checkpoint, map_location="cpu")
+    is_v3 = "plan_enc.0.weight" in sd
+    if is_v3:
+        from rl.plan import PLAN_DIM
+        from rl.plan_iter import _n_ids_of
+        from rl.policy import OptionScorerV3, option_dim_of
+        if "state_ids" not in d:
+            raise ValueError(f"{data} has no state_ids — recollect with the v3 "
+                             "checkpoint (M28 Track E)")
+        IDS = torch.from_numpy(d["state_ids"]).long()
+        model = OptionScorerV3(n_state_ids=_n_ids_of(sd),
+                               option_dim=option_dim_of(sd))
+    else:
+        IDS = None
+        model = OptionScorer(state_ctx_dim=S.shape[1])
+    model.load_state_dict(sd)
     for name, p in model.named_parameters():
         p.requires_grad = name.startswith("value_head")
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
 
+    def feats_of(idx):
+        """Frozen trunk features. v3's trunk also consumes the plan (ZEROS —
+        Probe 4 measured the plan block inert here) and the id embeddings."""
+        if is_v3:
+            return model._trunk(S[idx], S.new_zeros(len(idx), PLAN_DIM), IDS[idx])
+        return model.state_enc(S[idx])
+
     def sign_acc(idx):
         with torch.no_grad():
-            v = model.value_head(model.state_enc(S[idx])).squeeze(-1)
-        return ((v > 0).float() == (Y[idx] > 0).float()).float().mean().item()
+            v = model.value_head(feats_of(idx)).squeeze(-1)
+        # drawn games carry outcome 0 and have no sign to predict
+        keep = Y[idx] != 0
+        if not keep.any():
+            return float("nan")
+        return ((v[keep] > 0).float() == (Y[idx][keep] > 0).float()).float().mean().item()
 
     base = sign_acc(va)
     for _ in range(epochs):
@@ -187,12 +269,13 @@ def train(checkpoint: str, out: str = "bc_v1_value.pt", data: Path = DATA,
         for i in range(0, len(tr), 512):
             b = tr[i:i + 512]
             with torch.no_grad():
-                feats = model.state_enc(S[b])
-            loss = F.mse_loss(model.value_head(feats).squeeze(-1), Y[b])
+                f = feats_of(b)
+            loss = F.mse_loss(model.value_head(f).squeeze(-1), Y[b])
             opt.zero_grad(); loss.backward(); opt.step()
     model.eval()
     torch.save(model.state_dict(), ROOT / "checkpoints" / out)
-    print(f"value-head sign-acc {base:.2f} -> {sign_acc(va):.2f}  saved checkpoints/{out}")
+    print(f"value-head sign-acc {base:.3f} -> {sign_acc(va):.3f}  "
+          f"(n_val={len(va)}, {'v3' if is_v3 else 'v1'})  saved checkpoints/{out}")
 
 
 if __name__ == "__main__":

@@ -534,3 +534,74 @@ def test_train_v3h_warm_start_prints_init_val_acc(tmp_path, monkeypatch,
     pi.train([d], name="_v3h_init", epochs=1, batch_size=4,
              init_v3h=str(ckpt))
     assert "init val_acc" in capsys.readouterr().out
+
+
+def test_load_v3o_into_v3m_is_exactly_the_old_net_at_init():
+    """M27 warm-start invariant (sixth use): the play-precondition columns are
+    zero-init, so the widened net reproduces the source checkpoint EXACTLY —
+    even with garbage in the new option columns."""
+    from rl.encoders import OPTION_M28_DIM, OPTION_V3_DIM
+    N_NEW = OPTION_M28_DIM - OPTION_V3_DIM
+    torch.manual_seed(3)
+    src = OptionScorerV3(option_dim=OPTION_V3_DIM)
+    tgt = pi.load_v3o_into_v3m(src.state_dict())
+    assert tgt.option_dim == OPTION_M28_DIM
+
+    rng = np.random.default_rng(7)
+    sc, sids, _, oids = _rand_inputs(rng)
+    opts = torch.from_numpy(rng.standard_normal(
+        (sc.shape[0], oids.shape[1], OPTION_V3_DIM)).astype(np.float32))
+    plan = torch.from_numpy(
+        rng.standard_normal((sc.shape[0], PLAN_DIM)).astype(np.float32))
+    # GARBAGE in the new columns — the invariant says it cannot matter.
+    junk = torch.from_numpy(rng.standard_normal(
+        (*opts.shape[:-1], N_NEW)).astype(np.float32))
+    wide = torch.cat([opts, junk], dim=-1)
+
+    l_old, v_old = src(sc, plan, sids, opts, oids)
+    l_new, v_new = tgt(sc, plan, sids, wide, oids)
+    assert torch.allclose(l_old, l_new, atol=1e-6)
+    assert torch.allclose(v_old, v_new, atol=1e-6)
+
+
+def test_forward_truncates_options_wider_than_option_dim():
+    """The M27 width shim: encode_option_v2 now emits OPTION_M27_DIM, and a
+    pinned OPTION_V3_DIM checkpoint must consume it by truncation."""
+    from rl.encoders import N_OPTION_PLAY_PRE, OPTION_V3_DIM
+    torch.manual_seed(4)
+    net = OptionScorerV3(option_dim=OPTION_V3_DIM)
+    rng = np.random.default_rng(11)
+    sc, sids, _, oids = _rand_inputs(rng)
+    opts = torch.from_numpy(rng.standard_normal(
+        (sc.shape[0], oids.shape[1], OPTION_V3_DIM)).astype(np.float32))
+    plan = torch.zeros(sc.shape[0], PLAN_DIM)
+    junk = torch.from_numpy(rng.standard_normal(
+        (*opts.shape[:-1], N_OPTION_PLAY_PRE)).astype(np.float32))
+    narrow = net(sc, plan, sids, opts, oids)
+    wide = net(sc, plan, sids, torch.cat([opts, junk], dim=-1), oids)
+    for a, b in zip(narrow, wide):
+        assert torch.equal(a, b)
+
+
+def test_apply_card_kind_weights_targets_the_acted_cards_type(monkeypatch):
+    """M27: --card-kind-weight must lift supporters WITHOUT lifting items —
+    --class-weight PLAY:k cannot separate them (docs/M27.md Probe 3)."""
+    from types import SimpleNamespace
+    SUPPORTER, ITEM = 3, 1
+    monkeypatch.setattr(pi, "_CARD_KIND",
+                        {11: SUPPORTER, 22: SUPPORTER, 33: ITEM})
+
+    def fresh():
+        # rows pick option_ids[starts + labels] -> cards 11 (supporter) and
+        # 33 (item): one of each, so the two weightings must not overlap.
+        return SimpleNamespace(
+            starts=np.array([0, 2]), labels=np.array([0, 1]),
+            option_ids=np.array([[11, 0], [22, 0], [22, 0], [33, 0]]),
+            weights=np.ones(2, dtype=np.float32))
+
+    ds = fresh()
+    pi.apply_card_kind_weights(ds, {SUPPORTER: 5.0})
+    assert ds.weights.tolist() == [5.0, 1.0]      # supporter row only
+    ds = fresh()
+    pi.apply_card_kind_weights(ds, {ITEM: 4.0})
+    assert ds.weights.tolist() == [1.0, 4.0]      # item row only

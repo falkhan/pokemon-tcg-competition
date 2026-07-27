@@ -25,6 +25,9 @@ _DMG_NORM = 340.0                    # encoders' damage normalization
 GUST_IDS = frozenset({1182})         # Boss's Orders (U+2019 name) — card fact, id-pinned
 _IS_ENERGY = {c.cardId for c in all_card_data()
               if c.cardType in (CardType.BASIC_ENERGY, CardType.SPECIAL_ENERGY)}
+_IS_BASIC_POKEMON = {c.cardId for c in all_card_data()
+                     if c.cardType == CardType.POKEMON
+                     and getattr(c, "basic", False)}
 
 # attacker_slot/target_slot: 0 = active, 1..5 = bench index + 1.
 # attack_idx: position in _CARD[attacker_id][3] (capped at MAX_ATTACK_IDX-1).
@@ -320,3 +323,150 @@ def apply_attach_overrides(obs, ranked: list, fixes: frozenset) -> list:
     if pick is None or pick == ranked[0]:
         return ranked
     return [pick] + [i for i in ranked if i != pick]
+
+
+# --- M30 deck-economy override arms (docs/M30-plan.md) ----------------------
+# Same override law as the M26 arms: deterministic card-fact rules, OFF unless
+# a fix name is passed by an opted-in spec kind / build flag.
+POFFIN_ID = 1086       # Buddy-Buddy Poffin — card fact, id-pinned
+POKE_PAD_ID = 1152     # Poké Pad
+SACRED_ASH_ID = 1129   # Sacred Ash: shuffles up to 5 discard Pokémon into deck
+DUDUNSPARCE_IDS = frozenset({66})  # clone deck's only draw-ability body
+FEZANDIPITI_ID = 140   # Fezandipiti ex: draw ability, ~2.8 deck cards/use
+HILDA_ID = 1225        # Hilda: draw supporter, ~1.72 cards/use (m31 probe)
+PLAY_FIX_TEMPO = "tempo"          # O3: no END while Poffin/Poké Pad playable
+PLAY_FIX_DECKGUARD = "deckguard"  # O4: no Dudunsparce draw at deck <= 6
+PLAY_FIX_ASH = "ash"              # O5: Sacred Ash when the deck runs low
+PLAY_FIX_CONSERVE = "conserve"    # O6: no Fezandipiti draw at deck <= 6
+PLAY_FIX_POFFINFLOOR = "poffinfloor"  # O7: dig for board when thin (m31)
+PLAY_FIX_DRAWFLOOR = "drawfloor"      # O8: force Hilda when hand-starved (m31)
+PLAY_FIX_BENCHFLOOR = "benchfloor"    # O10: bench a basic you HOLD when thin (m35)
+_TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
+_DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
+_ASH_AT = 10
+_CONSERVE_AT = 6    # measured 2.8 deck cards/use (m30 deck_drain probe);
+_CONSERVE_ABILITY_IDS = frozenset({FEZANDIPITI_ID})
+# O7/O8 (m31): fire only ABOVE the low-deck economy regime (deckguard/conserve
+# <=6, ash <=10) so a board/hand refill never fights those rules or the
+# deck-out endgame. bench<=1 is an early-game state (deck >> 10 — the live
+# bench-outs were at deck 41/44), so the deck floor barely binds real firings.
+_POFFINFLOOR_BENCH_AT = 1   # bench-alive <= 1: board is thin, dig for basics
+_POFFINFLOOR_DECK_AT = 10   # ... and deck >= 10 (Poffin costs ~1.27 cards/use)
+_BENCHFLOOR_BENCH_AT = 1    # O10 (m35): bench-alive <= 1 -> play a basic you HOLD.
+# No deck floor: benching from hand costs 0 deck, so it never fights the low-deck
+# economy rules. Ranked ABOVE poffinfloor ("bench what you have before digging"),
+# which also fixes the M31 bench-0 missed-basic regression (0->12 prompts).
+_DRAWFLOOR_HAND_AT = 4      # hand <= 4: starved, a draw actually helps (not
+_DRAWFLOOR_DECK_AT = 10     # ... the full-hand hoarding cases); deck >= 10
+
+
+def _board_pokemon_id(opt, me):
+    """Card id of the board Pokémon a board-area option (ABILITY) acts on.
+    ABILITY options carry only area+index, never cardId (M30 P0 probe)."""
+    if opt.area == AreaType.ACTIVE:
+        return me.active[0].id if me.active and me.active[0] else None
+    if (opt.area == AreaType.BENCH and opt.index is not None
+            and me.bench and opt.index < len(me.bench)
+            and me.bench[opt.index] is not None):
+        return me.bench[opt.index].id
+    return None
+
+
+def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
+    """Reorder MAIN-select preference per the M30/M31 economy arms.
+
+    Runs AFTER apply_attach_overrides. Precedence note (m31 O9, docstring
+    corrected): a PROMOTE rule moves a PLAY to the front and therefore CAN
+    displace an O1-promoted ATTACH. This is intended and benign — a deck
+    refill (ash), board dig (poffinfloor) or hand refill (drawfloor) outranks
+    the energy attach at its trigger state, and the turn's manual attach is
+    still unused, so the next MAIN re-offers the ATTACH and O1 re-promotes it.
+    Only O3 tempo is additionally gated on `ranked[0]` being END, so tempo
+    alone cannot override O1. Promote order (first match wins): ash >
+    benchfloor > poffinfloor > drawfloor > tempo. The DEMOTE rules (deckguard,
+    conserve) only reorder when the top pick is the targeted ABILITY.
+    - O5 `ash`: own deck <= 10 and a Sacred Ash PLAY is legal (engine
+      legality implies Pokémon in the discard) -> play it now.
+    - O10 `benchfloor` (m35): bench-alive <= 1 and a basic-Pokemon PLAY is
+      legal -> play the highest-ranked such basic (bench what you HOLD). No
+      deck floor (benching costs 0 deck). Ranked above poffinfloor so we bench
+      a held basic before digging for one — which also fixes the M31 bench-0
+      missed-basic regression. Targets the ~39% basic-play-at-bench<=1 defect.
+    - O7 `poffinfloor`: bench-alive <= 1 and own deck >= 10 -> play
+      Buddy-Buddy Poffin (benches up to 2 basics from deck, ~1.27 cards/use
+      — m31 probe) to dig for board when thin. Deck-gated above the low-deck
+      economy regime so it never fights ash/deckguard/conserve.
+    - O8 `drawfloor`: hand-size <= 4 and own deck >= 10 and Hilda is legal
+      -> play it. Targets the supporter under-play only where a draw helps
+      (thin hand, not full-hand hoarding); deck floor keeps it clear of the
+      deck-out zone O6 conserve protects.
+    - O3 `tempo`: the model is about to END with a Poffin/Poké Pad PLAY on
+      the menu -> play the highest-ranked such item; END re-offers next MAIN.
+    - O4 `deckguard`: own deck <= 6 and the top pick is a Dudunsparce
+      ABILITY (draw 3, net deck -1) -> demote every such ability below the
+      rest of the model's order.
+    - O6 `conserve`: same demotion for the Fezandipiti ex draw ability
+      (measured ~2.8 deck cards/use; the only optional draw that still
+      fires at low deck once deckguard is on — m30 deck_drain probe).
+    """
+    if (not fixes or obs.select is None or obs.current is None
+            or obs.select.context != SelectContext.MAIN):
+        return ranked
+    st = obs.current
+    me = st.players[st.yourIndex]
+    hand = me.hand or []
+    opts = obs.select.option
+    pick = None
+    if PLAY_FIX_ASH in fixes and me.deckCount <= _ASH_AT:
+        ash = [i for i in ranked
+               if opts[i].type == OptionType.PLAY
+               and _hand_card_id(opts[i], hand) == SACRED_ASH_ID]
+        if ash:
+            pick = ash[0]
+    if (pick is None and PLAY_FIX_BENCHFLOOR in fixes
+            and sum(p is not None for p in (me.bench or []))
+            <= _BENCHFLOOR_BENCH_AT):
+        basics = [i for i in ranked
+                  if opts[i].type == OptionType.PLAY
+                  and _hand_card_id(opts[i], hand) in _IS_BASIC_POKEMON]
+        if basics:
+            pick = basics[0]
+    if (pick is None and PLAY_FIX_POFFINFLOOR in fixes
+            and me.deckCount >= _POFFINFLOOR_DECK_AT
+            and sum(p is not None for p in (me.bench or []))
+            <= _POFFINFLOOR_BENCH_AT):
+        poffin = [i for i in ranked
+                  if opts[i].type == OptionType.PLAY
+                  and _hand_card_id(opts[i], hand) == POFFIN_ID]
+        if poffin:
+            pick = poffin[0]
+    if (pick is None and PLAY_FIX_DRAWFLOOR in fixes
+            and me.deckCount >= _DRAWFLOOR_DECK_AT
+            and len(hand) <= _DRAWFLOOR_HAND_AT):
+        hilda = [i for i in ranked
+                 if opts[i].type == OptionType.PLAY
+                 and _hand_card_id(opts[i], hand) == HILDA_ID]
+        if hilda:
+            pick = hilda[0]
+    if (pick is None and PLAY_FIX_TEMPO in fixes
+            and opts[ranked[0]].type == OptionType.END):
+        tempo = [i for i in ranked
+                 if opts[i].type == OptionType.PLAY
+                 and _hand_card_id(opts[i], hand) in _TEMPO_ITEM_IDS]
+        if tempo:
+            pick = tempo[0]
+    if pick is not None and pick != ranked[0]:
+        return [pick] + [i for i in ranked if i != pick]
+    demote_ids = frozenset()
+    if PLAY_FIX_DECKGUARD in fixes and me.deckCount <= _DECKGUARD_AT:
+        demote_ids |= DUDUNSPARCE_IDS
+    if PLAY_FIX_CONSERVE in fixes and me.deckCount <= _CONSERVE_AT:
+        demote_ids |= _CONSERVE_ABILITY_IDS
+    if (demote_ids and opts[ranked[0]].type == OptionType.ABILITY
+            and _board_pokemon_id(opts[ranked[0]], me) in demote_ids):
+        keep = [i for i in ranked
+                if not (opts[i].type == OptionType.ABILITY
+                        and _board_pokemon_id(opts[i], me) in demote_ids)]
+        if keep:
+            return keep + [i for i in ranked if i not in keep]
+    return ranked

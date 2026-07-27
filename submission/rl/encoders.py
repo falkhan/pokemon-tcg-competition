@@ -249,7 +249,43 @@ _OT_PLAY = 7         # OptionType.PLAY
 _OT_ATTACH = 8       # OptionType.ATTACH
 _OT_RETREAT = 12     # OptionType.RETREAT
 _OT_ATTACK = 13      # OptionType.ATTACK
+_OT_END = 14         # OptionType.END
+_OT_ABILITY = 10     # OptionType.ABILITY
 _AREA_HAND = 2       # AreaType.HAND
+
+# --- M27 play-precondition block (appended; the [:OPTION_V3_DIM] slice stays
+# byte-identical, so pinned OPTION_V3_DIM checkpoints consume the same numbers
+# after truncation — the M16 append-and-slice pattern, third use).
+#
+# Why: docs/M27.md Probe 3 — on IDENTICAL menus the clone plays supporters at
+# 0.51x and stadiums at 0.06x the teacher's rate while matching items. The
+# 0.505 sample agent (docs/M27-sample-agent-diff.md) expresses these as binary
+# PRECONDITIONS, not preferences: Boss's Orders iff the plan wants a bench
+# target, Gravity Mountain iff no stadium is in play. Our net had to infer them
+# through a late-fusion MLP from 166 supporter / 18 stadium positive rows, with
+# `supporterPlayed` buried as 1 of 1708 state scalars and NO option-level
+# interaction term.
+#
+# These are INPUTS, not overrides — the override law's five kills are all
+# play-time rule consumers (ARCHITECTURE.md). Note the gust term is computed
+# from the observation, NOT from plan.needs_gust: Probe 4 showed the plan block
+# is inert in the replay-BC lineage (the corpus carries no plans, so the plan
+# is identically zero on every training row and no gradient can teach the net
+# to use it).
+N_OPTION_PLAY_PRE = 3
+OPTION_M27_DIM = OPTION_V3_DIM + N_OPTION_PLAY_PRE
+
+# --- M28 phase-interaction block (appended; [:OPTION_M27_DIM] byte-identical).
+# docs/M27.md Probe 2: val_acc is 0.738 at deck 30+ but 0.601 at deck 7-15 —
+# competence collapses exactly where deck-out is decided. The net's only phase
+# signal is `turn/30` and `deckCount/60`, 2 raw scalars among 1708, and the
+# two-tower architecture only combines state and option at the score head — so
+# an option-type x phase INTERACTION is expensive for it to form and cheap for
+# us to hand it. A per-state constant would be useless here (the score head
+# already sees the whole state tower); these vary per option AND per state.
+N_OPTION_PHASE = 3
+OPTION_M28_DIM = OPTION_M27_DIM + N_OPTION_PHASE
+DECK_LOW_AT = 15.0   # remaining-deck count at which "late game" reaches full weight
 
 
 def _race_features(state) -> np.ndarray:
@@ -432,6 +468,110 @@ def _retreat_extra(obs) -> np.ndarray:
     return v
 
 
+_PLAY_KIND: dict[int, str] = {}
+
+
+def _play_kind() -> dict[int, str]:
+    """{card id -> CardType NAME}, built once. Lazy because the card-data
+    import lives further down (the v4 block owns it) and this runs per option.
+    Keyed on the name, not the enum int: the fake engine used by the test suite
+    numbers CardType differently, and a silent int collision here would encode
+    a special energy as a supporter."""
+    if not _PLAY_KIND:
+        from cg.api import CardType, all_card_data
+        # c.cardType is an enum in-repo but a plain int inside the shipped
+        # bundle (caught by the isolation gate) — resolve through the enum so
+        # both work, and key on the NAME so renumbering cannot collide.
+        names = {int(member): member.name for member in CardType}
+        _PLAY_KIND.update({c.cardId: names.get(int(c.cardType), "")
+                           for c in all_card_data()})
+    return _PLAY_KIND
+
+
+def _phase_interaction(opt, obs) -> np.ndarray:
+    """M28 [ending x late, ability x late, supporter x late].
+
+    `late` grades how close WE are to decking out: 0 while the deck is healthy,
+    rising to 1 at empty. The three option classes are the ones on the deck-out
+    causal chain (docs/M27.md): ending the turn, using the draw engine, and
+    playing a supporter.
+    """
+    v = np.zeros(N_OPTION_PHASE, dtype=np.float32)
+    me = obs.current.players[obs.current.yourIndex]
+    late = max(0.0, min(1.0, (DECK_LOW_AT - getattr(me, "deckCount", 60))
+                        / DECK_LOW_AT))
+    if late <= 0.0:
+        return v
+    t = int(opt.type)
+    if t in (_OT_ATTACK, _OT_END):
+        v[0] = late
+    elif t == _OT_ABILITY:
+        v[1] = late
+    elif t == _OT_PLAY:
+        card_id = opt.cardId
+        if card_id is None and opt.index is not None:
+            card_id = _card_id_at(obs, opt.area if opt.area is not None else _AREA_HAND,
+                                  opt.index, obs.current.yourIndex)
+        if card_id and _play_kind().get(int(card_id)) == "SUPPORTER":
+            v[2] = late
+    return v
+
+
+def _target_value(attacker, target) -> float:
+    """How attractive `target` is to attack — a port of the 0.505 sample
+    agent's `pokemon_score` (sample-agent/main.py:97-115) plus its
+    `score *= damage / hp` discount for a non-lethal hit. Used only to compare
+    an opponent's bench against its active, so the absolute scale is arbitrary."""
+    prizes = _CARD.get(target.id, (None, None, 0, [], 1))[4]
+    base = (prizes * 1000.0
+            + len(target.energies or ()) * 150.0
+            + len(target.tools or ()) * 100.0
+            + target.hp)
+    dmg = _best_damage(attacker, target)
+    return base if dmg >= target.hp else base * (dmg / max(1, target.hp))
+
+
+def _play_precondition(card_id, obs) -> np.ndarray:
+    """M27 [supporter-legal, stadium-legal, gust-wanted] for a PLAY option.
+
+    Each slot is the sample agent's own predicate for that card class
+    (docs/M27-sample-agent-diff.md), computed from the observation:
+
+    0. is_supporter AND this turn's supporter is unused — the one-per-turn
+       constraint, made visible at the OPTION instead of buried in the state.
+    1. is_stadium AND no stadium is in play (`Gravity_Mountain: -1 if
+       stadium_id != 0 else 10000`).
+    2. is_gust AND the best benched opponent Pokemon is a MORE VALUABLE target
+       than the active — a port of the sample agent's `pokemon_score` argmax
+       (`plan.target >= 1`). A first cut used the narrow "bench is KO-able and
+       the active is not" and fired on 15 of 232,059 corpus options (0.01%):
+       untrainable. Value-comparison fires ~100x more often and is what the
+       0.505 pilot actually computes.
+    """
+    v = np.zeros(N_OPTION_PLAY_PRE, dtype=np.float32)
+    if not card_id:
+        return v
+    from rl.plan import GUST_IDS          # deferred: plan imports combat, not us
+    kind = _play_kind().get(int(card_id))
+    state = obs.current
+    if kind == "SUPPORTER":
+        v[0] = float(not getattr(state, "supporterPlayed", False))
+    elif kind == "STADIUM":
+        v[1] = float(not (state.stadium or []))
+    if int(card_id) in GUST_IDS:
+        me = state.players[state.yourIndex]
+        opp = state.players[1 - state.yourIndex]
+        my_active = me.active[0] if me.active else None
+        opp_active = opp.active[0] if opp.active else None
+        bench = [b for b in (opp.bench or []) if b is not None]
+        if my_active is not None and bench:
+            best_bench = max(_target_value(my_active, b) for b in bench)
+            active_val = (_target_value(my_active, opp_active)
+                          if opp_active is not None else 0.0)
+            v[2] = float(best_bench > active_val)
+    return v
+
+
 def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
     """(numeric OPTION_V3_DIM f32, [acted_id, target_id] i32, 0 = none).
 
@@ -440,8 +580,13 @@ def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
     identity (ATTACK options) and the count (NUMBER options). M19: the same
     3 extra slots carry energy-sufficiency for ATTACH targets and retreat
     utility for RETREAT (types are mutually exclusive — the type one-hot
-    disambiguates). Pinned pre-M16 checkpoints need encode_option_v2_legacy."""
-    num = np.zeros(OPTION_V3_DIM, dtype=np.float32)
+    disambiguates). Pinned pre-M16 checkpoints need encode_option_v2_legacy.
+
+    M27: appends N_OPTION_PLAY_PRE play-precondition slots. The output is now
+    OPTION_M27_DIM wide and `[:OPTION_V3_DIM]` is byte-identical to the M19
+    encoding, so OPTION_V3_DIM checkpoints stay reproducible by truncation —
+    every consumer slices to its own net.option_dim."""
+    num = np.zeros(OPTION_M28_DIM, dtype=np.float32)
     num[:OPTION_DIM] = encode_option(opt, obs)
     your_index = obs.current.yourIndex
     card_id = opt.cardId
@@ -465,6 +610,9 @@ def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
         num[OPTION_DIM:OPTION_DIM + 3] = _retreat_extra(obs)
     elif getattr(opt, "number", None) is not None:
         num[OPTION_DIM + 3] = min(float(opt.number), 10.0) / 10.0
+    if int(opt.type) == _OT_PLAY:
+        num[OPTION_V3_DIM:OPTION_M27_DIM] = _play_precondition(card_id, obs)
+    num[OPTION_M27_DIM:] = _phase_interaction(opt, obs)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return num, ids
 

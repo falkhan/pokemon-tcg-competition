@@ -83,6 +83,7 @@ class OptionScorerV2(nn.Module):
         # OPTION_V3_DIM (94) when trained on modern encode_option_v2 output
         # (M23 replay-clone path). Loaders sniff it from option_enc.0.weight.
         super().__init__()
+        self.option_dim = option_dim       # M27: width shim in forward()
         self.embedding = nn.Embedding(N_CARD_IDS, embed, padding_idx=0)
         self.state_enc = nn.Sequential(
             nn.Linear(STATE_V2_DIM + N_CONTEXTS + N_STATE_IDS * embed, hidden),
@@ -106,7 +107,9 @@ class OptionScorerV2(nn.Module):
                 ) -> tuple[torch.Tensor, torch.Tensor]:
         """state_ctx (B, STATE_V2_DIM+N_CONTEXTS); state_ids (B, N_STATE_IDS) long;
         options (B, N, OPTION_V2_DIM); option_ids (B, N, N_OPTION_IDS) long.
-        Returns (logits (B, N), value (B,))."""
+        Returns (logits (B, N), value (B,)). M27 width shim: see OptionScorerV3."""
+        if options.shape[-1] > self.option_dim:
+            options = options[..., :self.option_dim]
         se = self.embedding(state_ids).flatten(-2)             # (B, IDS*E)
         s = self.state_enc(torch.cat([state_ctx, se], dim=-1))  # (B, H)
         oe = self.embedding(option_ids).flatten(-2)            # (B, N, 2E)
@@ -194,7 +197,15 @@ class OptionScorerV3(nn.Module):
                 option_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """state_ctx (B, STATE_V2_DIM+N_CONTEXTS); plan (B, PLAN_DIM);
         state_ids (B, N_STATE_IDS) long; options (B, N, OPTION_V2_DIM);
-        option_ids (B, N, N_OPTION_IDS) long. Returns (logits (B,N), value (B,))."""
+        option_ids (B, N, N_OPTION_IDS) long. Returns (logits (B,N), value (B,)).
+
+        M27: `options` may be WIDER than self.option_dim — encode_option_v2
+        appends new blocks and the leading slice stays byte-identical, so a
+        checkpoint trained on the narrower encoding truncates and reproduces
+        exactly. One shim here covers every consumer (matchrunner pilots,
+        collectors, rank) instead of a slice at each call site."""
+        if options.shape[-1] > self.option_dim:
+            options = options[..., :self.option_dim]
         s = self._trunk(state_ctx, plan, state_ids)
         oe = self.embedding(option_ids).flatten(-2)
         o = self.option_enc(torch.cat([options, oe], dim=-1))
