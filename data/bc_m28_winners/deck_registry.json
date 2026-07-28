@@ -1,0 +1,20 @@
+{
+  "base": 1000,
+  "params": {
+    "min_score": 600.0,
+    "winners_only": true,
+    "include_ours": false,
+    "min_steps": 0,
+    "only_subs": [
+      54618168
+    ],
+    "only_deck_hash": null,
+    "hand_aware": true
+  },
+  "decks": [
+    {
+      "deck_idx": 1000,
+      "hash": "9294d9d8360aa2a637665cbd20b5a76b71da5e04"
+    }
+  ]
+}
