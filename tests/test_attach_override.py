@@ -540,6 +540,24 @@ def test_o12c_racemode2_splits_families():
     assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
 
 
+def test_o12d_racemode3_wall_only():
+    from rl.plan import PLAY_FIX_RACEMODE3
+    fixes = frozenset({PLAY_FIX_RACEMODE3})
+    CRUSTLE = 345
+    # wall id on opp board -> blanket demote, no deck gates at all
+    wall = _race_obs(my_deck=40, opp_deck=40, opp_active=(CRUSTLE,))
+    assert apply_play_overrides(wall, [0, 1, 2], fixes) == [1, 2, 0]
+    # pressure families are NOT in the trigger: Trevenant even-race AND
+    # behind-with-margin both stay untouched
+    for my, opp in ((40, 40), (15, 30)):
+        trev = _race_obs(my_deck=my, opp_deck=opp, opp_active=(TREVENANT,))
+        assert apply_play_overrides(trev, [0, 1, 2], fixes) == [0, 1, 2]
+    grim = _race_obs(my_deck=15, opp_deck=30, opp_active=(GRIM_EX,))
+    assert apply_play_overrides(grim, [0, 1, 2], fixes) == [0, 1, 2]
+    mirror = _race_obs(my_deck=15, opp_deck=30, opp_active=(NON_ENERGY,))
+    assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
+
+
 def test_o12_composes_with_gacf():
     gacfr = frozenset({ATTACH_FIX_TELEPATH, PLAY_FIX_DECKGUARD, PLAY_FIX_ASH,
                        PLAY_FIX_CONSERVE, PLAY_FIX_BENCHFLOOR,

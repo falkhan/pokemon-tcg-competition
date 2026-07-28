@@ -31,14 +31,15 @@ BEDS = {
                 "data/kaggle/garchomp_m37_deck.csv",
     "mirror": "model:checkpoints/m28_winners.pt:clone54618168",
 }
-RACE_FIXES = frozenset({rp.PLAY_FIX_RACEMODE, rp.PLAY_FIX_RACEMODER})
+RACE_FIXES = frozenset({rp.PLAY_FIX_RACEMODE, rp.PLAY_FIX_RACEMODER,
+                        rp.PLAY_FIX_RACEMODE2, rp.PLAY_FIX_RACEMODE3})
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bed", default="hop", choices=sorted(BEDS))
     ap.add_argument("--arm", default="gacfr",
-                    choices=["gacfr", "gacfrr"])
+                    choices=["gacfr", "gacfrr", "gacfr2", "gacfr3"])
     ap.add_argument("-n", "--games", type=int, default=12)
     ap.add_argument("--seed", type=int, default=5)
     args = ap.parse_args()

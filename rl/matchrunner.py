@@ -111,6 +111,10 @@ _MODEL_FIX_KINDS = {
     # per-family split the v1 battery demanded (docs/M37-plan.md P3b).
     "modelt-gacfr2": frozenset({"telepath", "deckguard", "ash", "conserve",
                                 "benchfloor", "racemode2"}),
+    # O12d final: wall-family blanket only — the pressure-family margin
+    # branch was killed by the garchomp 5-seed confirm (z -2.13).
+    "modelt-gacfr3": frozenset({"telepath", "deckguard", "ash", "conserve",
+                                "benchfloor", "racemode3"}),
 }
 
 

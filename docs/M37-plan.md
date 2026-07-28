@@ -265,6 +265,43 @@ present; the change is ~15 lines in `_example_weights` + a corpus rebuild.
   provably additive for gacf). Prediction stated up front: wall ≈ +15pp,
   hop/garchomp ≈ margin-arm's ~0/+1pp → pooled ≈ +5pp.
 
+- **P3b INTERIM + PRE-REGISTERED CONFIRM AMENDMENT (fixed BEFORE the
+  confirm runs, M36 P2 groove).** v2 fresh-control legs: wall gacfr2
+  **0.565 vs control 0.408 (+15.7pp)** — prediction confirmed; garchomp
+  gacfr2 0.550 vs control 0.607 (−5.7pp, z −1.99 — nominally over both
+  kill lines). Scrutiny: (a) the garchomp deck contains ZERO
+  `_RACEMODE_WALL_IDS` and six pressure ids (verified) → on this bed
+  racemode2 ≡ racemode (margin-only), and that identical behavior measured
+  **+1.2pp** on the SAME bed in v1; (b) the bed is high-variance under
+  worker scheduling — the two batteries' IDENTICAL control configs differ
+  +4.5pp (0.5617 v1 → 0.6067 v2; seed 1 reproduced 0.540 exactly, seeds
+  2/3 swung). AMENDMENT (pre-registered now): garchomp CONFIRM at fresh
+  seeds 4+5, BOTH arms, n=200/seed; the garchomp B1 verdict uses pooled
+  v2-prefix n=1000/arm (seeds 1-5); same kill thresholds (delta < −5pp or
+  z < −1.96 kills). The equivalence argument (a) is recorded as
+  supporting context, not a bar substitute.
+
+- **P3b v2 FULL DECODE (m37_decide --v2, bars as pre-registered): gacfr2
+  DOES NOT CLEAR.** hop −0.5pp (z −0.17, noninf ✓), wall **+15.7pp
+  z=+5.50** ✓, garchomp 5-seed pooled n=1000 −4.7pp **z=−2.13 →
+  KILL(noninf)**; pooled +2.0pp < +3pp. The margin-gated pressure branch
+  is dead weight at best: hop ~0, garchomp mildly negative (all-evidence
+  pooled across both batteries ≈ −2.5pp z≈−1.4).
+- **P3c — O12d `racemode3` (wall-family blanket ONLY) = the milestone's
+  surviving arm.** Implemented + tests (38 green) + twin synced.
+  Evidence chain: (a) on the wall bed the pressure branch cannot fire
+  (wall deck ∩ PRESSURE_IDS = ∅) → gacfr2's wall runs ARE gacfr3
+  measurements: **0.565/0.550/0.580 pooled 0.5650 n=600 vs fresh control
+  0.4083, +15.7pp z=+5.50**; seed-1 rerun as literal gacfr3: 0.565 ✓.
+  (b) hop/garchomp/mirror/grim decks contain no wall ids → provably
+  inert; empirically confirmed: fire probe **0 fires over 414 hop + 309
+  garchomp prompts**. (c) Therefore no bed can regress; pooled
+  trigger-bed delta = +4.3pp ≥ +3pp; B5 band composite +2.1pp on covered
+  mass (all from the wall cell, weight 5/52). **Caveat for the ship
+  decision: racemode3 contains NO grim coverage — the battery evidence
+  reversed the kickoff call #2 (conserve measured neutral-to-negative on
+  every pressure-family bed). Piotr's arm pick required.**
+
 ## Execution log (2026-07-28, planning session)
 
 - **ENV — m28_winners.pt reconstructed** from submission npz (21 arrays,

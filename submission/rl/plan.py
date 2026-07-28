@@ -345,6 +345,7 @@ PLAY_FIX_GUSTVETO = "gustveto"        # O11: no gust at opp-prizes <= 1 (m36)
 PLAY_FIX_RACEMODE = "racemode"        # O12: conserve vs stall/grim, margin-gated (m37)
 PLAY_FIX_RACEMODER = "racemoder"      # O12b: conserve vs stall/grim, blanket (m37)
 PLAY_FIX_RACEMODE2 = "racemode2"      # O12c: blanket vs walls, margin vs pressure-stall (m37)
+PLAY_FIX_RACEMODE3 = "racemode3"      # O12d: blanket vs walls ONLY (m37 final synthesis)
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10
@@ -485,6 +486,11 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
       z+5.2 measured); the pressure-stall families (hop/garchomp/grim —
       they attack while stalling) get only the MARGIN-gated demote (the
       blanket regressed them −12/−18pp by starving setup).
+    - O12d `racemode3` (m37 final): the wall-family blanket demote ONLY —
+      the margin-gated pressure branch measured neutral-to-negative on
+      hop (−1.6pp) and garchomp (5-seed z −2.13, pre-registered kill), so
+      the rule keeps just the measured win: +15.7pp on the wall bed,
+      provably inert against every deck with no wall-family Pokémon.
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -554,6 +560,10 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                 and me.deckCount < op.deckCount - _RACEMODE_MARGIN
                 and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI):
             demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
+    if (PLAY_FIX_RACEMODE3 in fixes
+            and _opp_board_ids(st.players[1 - st.yourIndex])
+            & _RACEMODE_WALL_IDS):
+        demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
     if (demote_ids and opts[ranked[0]].type == OptionType.ABILITY
             and _board_pokemon_id(opts[ranked[0]], me) in demote_ids):
         keep = [i for i in ranked
