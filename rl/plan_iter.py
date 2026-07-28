@@ -898,6 +898,26 @@ def apply_phase_weights(ds, factor: float, deck_at: int = 15) -> None:
           f"{int(mask.sum())} rows ({mask.mean():.1%})")
 
 
+def apply_outcome_weights(ds, alpha: float) -> None:
+    """M37 AWR pre-work: down-weight rows from games the imitated seat did
+    NOT win (advantage-weighted BC, the soft form of --winners-only).
+
+    M28's winners-only filter — the campaign's one resolved-positive weights
+    change — throws away the loss half of the corpus; this keeps it at
+    weight `alpha` (< 1) so the trainer still sees what losing play looks
+    like without cloning it at full strength. Reads the per-row `results`
+    column (+1 win / -1 loss / 0 draw of the imitated seat,
+    rl/replay_bc.py); rows with results < 1 are scaled by alpha. Same
+    weight channel and policy-CE-only contract as apply_class_weights;
+    evaluate() stays unweighted. The M38 arm sweeps alpha; alpha=0
+    reproduces winners-only exactly (up to the shard split).
+    """
+    mask = ds.results < 1.0
+    ds.weights[mask] *= alpha
+    print(f"outcome-weight non-win x{alpha}: "
+          f"{int(mask.sum())} rows ({mask.mean():.1%})")
+
+
 def train(data_dirs: list, name: str, init: str | None = None,
           init_v2: str | None = None, init_v3h: str | None = None,
           init_v3o: str | None = None, init_v3m: str | None = None,
@@ -907,7 +927,8 @@ def train(data_dirs: list, name: str, init: str | None = None,
           class_weights: dict[int, float] | None = None,
           card_kind_weights: dict[int, float] | None = None,
           phase_weight: float | None = None,
-          phase_deck_at: int = 15) -> None:
+          phase_deck_at: int = 15,
+          outcome_weight: float | None = None) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
@@ -927,6 +948,8 @@ def train(data_dirs: list, name: str, init: str | None = None,
         apply_card_kind_weights(ds, card_kind_weights)
     if phase_weight:
         apply_phase_weights(ds, phase_weight, phase_deck_at)
+    if outcome_weight is not None:
+        apply_outcome_weights(ds, outcome_weight)
 
     rng = np.random.default_rng(0)
     unique_games = np.unique(ds.game_ids)
@@ -1205,6 +1228,12 @@ if __name__ == "__main__":
                         "where val_acc collapses (docs/M27.md Probe 2)")
     t.add_argument("--phase-deck-at", type=int, default=15,
                    help="remaining-deck threshold for --phase-weight")
+    t.add_argument("--outcome-weight", type=float, default=None,
+                   metavar="ALPHA",
+                   help="M37 AWR: multiply the policy-CE weight of rows from "
+                        "games the imitated seat did NOT win by ALPHA — the "
+                        "soft form of replay_bc --winners-only (alpha=0 "
+                        "reproduces it; docs/M37-plan.md W4)")
     r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
                                        "sibling shard dirs (<dir><suffix>)")
     r.add_argument("--data", type=str, nargs="+", required=True)
@@ -1244,4 +1273,5 @@ if __name__ == "__main__":
               class_weights=class_weights or None,
               card_kind_weights=card_kind_weights or None,
               phase_weight=args.phase_weight,
-              phase_deck_at=args.phase_deck_at)
+              phase_deck_at=args.phase_deck_at,
+              outcome_weight=args.outcome_weight)

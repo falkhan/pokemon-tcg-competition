@@ -97,6 +97,15 @@ _MODEL_FIX_KINDS = {
     # (docs/M36-plan.md W2; the 5/5-in-losses live pattern).
     "modelt-gacfv": frozenset({"telepath", "deckguard", "ash", "conserve",
                                "benchfloor", "gustveto"}),
+    # M37 race-mode arms (rl/plan O12): the gacf live ship + archetype-
+    # detected card-economy racing vs stall/grim boards (docs/M37-plan.md W1).
+    # gacfr = margin-gated (the m36 raceconserve gate), gacfrr = blanket;
+    # the m37 battery picks between them (bar B2). No gustveto composition —
+    # gustveto is not in the ship default, composing would be two-variable.
+    "modelt-gacfr": frozenset({"telepath", "deckguard", "ash", "conserve",
+                               "benchfloor", "racemode"}),
+    "modelt-gacfrr": frozenset({"telepath", "deckguard", "ash", "conserve",
+                                "benchfloor", "racemoder"}),
 }
 
 
