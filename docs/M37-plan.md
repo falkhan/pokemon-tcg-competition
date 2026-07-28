@@ -241,6 +241,30 @@ present; the change is ~15 lines in `_example_weights` + a corpus rebuild.
   threat (n=2 live may also overstate it); treat the garchomp cell as
   directional, hop+wall as the primary B1 evidence. Battery leg launched.
 
+- **P3 BATTERY DECODE (m37_decide.py, bars as pre-registered): NEITHER v1
+  ARM CLEARS B1.** Per-bed pooled n=600/arm vs same-battery gacf control:
+  `gacfrr` (blanket) wall **+14.8pp z=+5.20** but hop **−11.9pp z=−4.19**,
+  garchomp **−17.5pp z=−6.17** → KILLED (regressions). `gacfr` (margin)
+  hop −1.6 (z−0.55), wall +4.2 (z+1.46), garchomp +1.2 (z+0.41) — no
+  regression anywhere, pooled **+1.25pp < +3pp bar → FAIL**. B2 pick (moot
+  for ship): gacfr. B4 PASS (probe-authoritative + sanity band).
+  **Mechanism read: the race lever is REAL and large exactly where the
+  opponent applies no prize pressure (crustle/tusk wall: blanket conserve
+  = won deck-out races), and NEGATIVE where the stall line attacks
+  (hop's Trevenant/Snorlax and garchomp DO take prizes — refusing draws
+  all game starves our own setup).** The v1 trigger conflated the two.
+- **P3b — racemode2 (v2 arm) DESIGNED + PRE-REGISTERED BEFORE its battery:**
+  split the trigger: `_RACEMODE_WALL_IDS` {58,344,532,345,533,607}
+  (Great Tusk/Dwebble/Crustle/Terrakion — the no-pressure farm family) →
+  BLANKET demote; `_RACEMODE_PRESSURE_IDS` (hop + garchomp lines +
+  grim) → the m36 MARGIN gate. One fix name `racemode2`, arm
+  `modelt-gacfr2`. v1 arms/constants stay untouched (measured artifacts).
+  Bars: same B1 shape (pooled trigger beds ≥ +3pp, no bed regression
+  > 5pp, per-bed noninf z>−1.96); FRESH gacf controls rerun in the same
+  battery (drift law honored literally even though the code delta is
+  provably additive for gacf). Prediction stated up front: wall ≈ +15pp,
+  hop/garchomp ≈ margin-arm's ~0/+1pp → pooled ≈ +5pp.
+
 ## Execution log (2026-07-28, planning session)
 
 - **ENV — m28_winners.pt reconstructed** from submission npz (21 arrays,

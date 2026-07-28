@@ -106,6 +106,11 @@ _MODEL_FIX_KINDS = {
                                "benchfloor", "racemode"}),
     "modelt-gacfrr": frozenset({"telepath", "deckguard", "ash", "conserve",
                                 "benchfloor", "racemoder"}),
+    # O12c synthesis arm: blanket conserve vs the no-pressure wall family,
+    # margin-gated conserve vs pressure-stall (hop/garchomp/grim) — the
+    # per-family split the v1 battery demanded (docs/M37-plan.md P3b).
+    "modelt-gacfr2": frozenset({"telepath", "deckguard", "ash", "conserve",
+                                "benchfloor", "racemode2"}),
 }
 
 

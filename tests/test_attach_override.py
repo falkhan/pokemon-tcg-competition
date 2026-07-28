@@ -517,6 +517,29 @@ def test_o12_racemoder_blanket_ignores_margin():
     assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
 
 
+def test_o12c_racemode2_splits_families():
+    from rl.plan import PLAY_FIX_RACEMODE2
+    fixes = frozenset({PLAY_FIX_RACEMODE2})
+    CRUSTLE = 345   # rl.plan._RACEMODE_WALL_IDS
+    # wall family on opp board -> BLANKET demote (no margin needed: even race)
+    wall = _race_obs(my_deck=40, opp_deck=40, opp_active=(CRUSTLE,))
+    assert apply_play_overrides(wall, [0, 1, 2], fixes) == [1, 2, 0]
+    # pressure family (Trevenant) -> margin-gated: even race does NOT fire...
+    trev_even = _race_obs(my_deck=40, opp_deck=40, opp_active=(TREVENANT,))
+    assert apply_play_overrides(trev_even, [0, 1, 2], fixes) == [0, 1, 2]
+    # ...but behind-with-margin does
+    trev_behind = _race_obs(my_deck=15, opp_deck=30, opp_active=(TREVENANT,))
+    assert apply_play_overrides(trev_behind, [0, 1, 2], fixes) == [1, 2, 0]
+    # grim is in the PRESSURE set (margin-gated), not the wall set
+    grim_even = _race_obs(my_deck=40, opp_deck=40, opp_active=(GRIM_EX,))
+    assert apply_play_overrides(grim_even, [0, 1, 2], fixes) == [0, 1, 2]
+    grim_behind = _race_obs(my_deck=15, opp_deck=30, opp_active=(GRIM_EX,))
+    assert apply_play_overrides(grim_behind, [0, 1, 2], fixes) == [1, 2, 0]
+    # no trigger id (mirror) -> inert
+    mirror = _race_obs(my_deck=15, opp_deck=30, opp_active=(NON_ENERGY,))
+    assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
+
+
 def test_o12_composes_with_gacf():
     gacfr = frozenset({ATTACH_FIX_TELEPATH, PLAY_FIX_DECKGUARD, PLAY_FIX_ASH,
                        PLAY_FIX_CONSERVE, PLAY_FIX_BENCHFLOOR,

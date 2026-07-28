@@ -62,8 +62,11 @@ def decode(paths):
     return (w + 0.5 * dr) / len(res), len(res)
 
 
+PREFIX = "m37"   # v2 battery (racemode2 + FRESH controls) uses m37v2
+
+
 def pooled(arm, bed):
-    fs = sorted(glob.glob(f"runs/m37_{arm}_{bed}_s*.jsonl"))
+    fs = sorted(glob.glob(f"runs/{PREFIX}_{arm}_{bed}_s*.jsonl"))
     per_seed = [(f, decode([f])) for f in fs]
     tot = decode(fs)
     return tot, per_seed
@@ -165,8 +168,21 @@ def b4():
 
 
 if __name__ == "__main__":
-    b2()
-    print()
-    b3()
-    print()
-    b4()
+    import sys
+    if "--v2" in sys.argv:
+        # P3b pre-registered (2026-07-28, BEFORE the v2 battery decode):
+        # racemode2 (blanket vs walls / margin vs pressure-stall) vs FRESH
+        # same-battery gacf controls, prefix m37v2. Same B1 shape: pooled
+        # trigger beds >= +3pp, no bed regression > 5pp, per-bed z > -1.96.
+        # Prediction on record: wall ~ +15pp, hop/garchomp ~ 0..+1pp.
+        PREFIX = "m37v2"
+        globals()["PREFIX"] = PREFIX
+        b1("gacfr2")
+        print()
+        b3(winner="gacfr2")
+    else:
+        b2()
+        print()
+        b3()
+        print()
+        b4()

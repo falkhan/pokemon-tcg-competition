@@ -26,7 +26,7 @@ CKPT="checkpoints/m28_winners.pt"; DECK="decks/alakazam_v2_h4.csv"
 
 arm_kind() { case "$1" in
   gacf) echo modelt-gacf ;; gacfr) echo modelt-gacfr ;;
-  gacfrr) echo modelt-gacfrr ;;
+  gacfrr) echo modelt-gacfrr ;; gacfr2) echo modelt-gacfr2 ;;
   *) echo "unknown arm $1" >&2; exit 1 ;; esac; }
 bed_spec() { case "$1" in
   hop)      echo "solver:decks/hops_stall.csv" ;;
@@ -55,14 +55,16 @@ fi
 
 seeds=("${@:-1 2 3}"); seeds=(${seeds[@]})
 beds=(${M37_BEDS:-hop wall grim garchomp})   # env override for parallel invocations
+arms=(${M37_ARMS:-gacf gacfr gacfrr})        # v2 battery: "gacf gacfr2"
+prefix="${M37_PREFIX:-m37}"                  # v2 battery: m37v2 (fresh controls)
 for bed in "${beds[@]}"; do
   if ! bed_ready "$bed"; then
     echo "=== bed $bed NOT READY (checkpoint missing) — skipped ==="
     continue
   fi
-  for a in gacf gacfr gacfrr; do
+  for a in "${arms[@]}"; do
     for s in "${seeds[@]}"; do
-      out="runs/m37_${a}_${bed}_s${s}.jsonl"
+      out="runs/${prefix}_${a}_${bed}_s${s}.jsonl"
       echo ">>> arm=$a bed=$bed seed=$s -> $out"
       uv run python -m rl.matchrunner play --a "$(arm_kind "$a"):${CKPT}:${DECK}" \
         --b "$(bed_spec "$bed")" -n 200 --workers 8 --seed "$s" --checkpoint "$out"

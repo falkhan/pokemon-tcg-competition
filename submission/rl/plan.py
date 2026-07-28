@@ -344,6 +344,7 @@ PLAY_FIX_BENCHFLOOR = "benchfloor"    # O10: bench a basic you HOLD when thin (m
 PLAY_FIX_GUSTVETO = "gustveto"        # O11: no gust at opp-prizes <= 1 (m36)
 PLAY_FIX_RACEMODE = "racemode"        # O12: conserve vs stall/grim, margin-gated (m37)
 PLAY_FIX_RACEMODER = "racemoder"      # O12b: conserve vs stall/grim, blanket (m37)
+PLAY_FIX_RACEMODE2 = "racemode2"      # O12c: blanket vs walls, margin vs pressure-stall (m37)
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10
@@ -386,6 +387,14 @@ _RACEMODE_STALL_IDS = frozenset({
 })
 _RACEMODE_GRIM_IDS = frozenset({646, 647, 648})  # Marnie's Impidimp/Morgrem/Grimmsnarl ex
 _RACEMODE_OPP_IDS = _RACEMODE_STALL_IDS | _RACEMODE_GRIM_IDS
+# O12c (m37 battery finding): the v1 trigger conflated two archetypes that
+# need OPPOSITE gates. The crustle/tusk wall family applies no prize pressure
+# — blanket conserve there won the deck-out race outright (+14.8pp z+5.2);
+# hop/garchomp/grim DO attack — blanket starves our setup (-12/-18pp), only
+# the margin-gated conserve is safe. racemode2 splits the sets.
+_RACEMODE_WALL_IDS = frozenset({58, 344, 532, 345, 533, 607})
+_RACEMODE_PRESSURE_IDS = (_RACEMODE_STALL_IDS - _RACEMODE_WALL_IDS) \
+    | _RACEMODE_GRIM_IDS
 # racemode margin gate = the m36 parked raceconserve design (mirror_race_probe:
 # behind by >5 on the deck race, below 25 so t3-t6 setup digs stay untouched,
 # above 6 where deckguard/conserve already own the endgame).
@@ -471,6 +480,11 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
       deck race, 6 < deck <= 25) so early setup digs stay untouched;
       `racemoder` is the blanket variant (trigger only) — the m37 battery
       picks between them (bar B2).
+    - O12c `racemode2` (m37, the battery synthesis): the wall family
+      (crustle/tusk — no prize pressure) gets the BLANKET demote (+14.8pp
+      z+5.2 measured); the pressure-stall families (hop/garchomp/grim —
+      they attack while stalling) get only the MARGIN-gated demote (the
+      blanket regressed them −12/−18pp by starving setup).
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -531,6 +545,14 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                 PLAY_FIX_RACEMODER in fixes
                 or (me.deckCount < op.deckCount - _RACEMODE_MARGIN
                     and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI)):
+            demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
+    if PLAY_FIX_RACEMODE2 in fixes:
+        op = st.players[1 - st.yourIndex]
+        opp_ids = _opp_board_ids(op)
+        if opp_ids & _RACEMODE_WALL_IDS or (
+                opp_ids & _RACEMODE_PRESSURE_IDS
+                and me.deckCount < op.deckCount - _RACEMODE_MARGIN
+                and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI):
             demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
     if (demote_ids and opts[ranked[0]].type == OptionType.ABILITY
             and _board_pokemon_id(opts[ranked[0]], me) in demote_ids):
