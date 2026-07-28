@@ -317,8 +317,19 @@ present; the change is ~15 lines in `_example_weights` + a corpus rebuild.
   (5.4 MB). Verified FROM the tarball: deck md5 ad014c58 == alakazam_v2_h4
   (60 cards, hammer ×4 / Hilda ×3), fixes string = gacfr3, rl/plan.py
   carries PLAY_FIX_RACEMODE3, all required files present. NOT submitted.
-- **QC BATTERY LAUNCHED** (m37_qc_gacfr3): 3 games × {tuned, iono,
-  dragapult, prev-ship M36 mirror leg} → replays/ for Piotr's review.
+- **QC BATTERY DONE (m37_qc_gacfr3): 3-0 tuned, 3-0 iono, 3-0 dragapult,
+  0-3 prevship → sweep INVESTIGATED and closed as mirror variance.**
+  Evidence chain: (1) the two bundles' policy_weights.npz are
+  BIT-IDENTICAL (21/21 arrays) and card_features match — the npz→pt→npz
+  checkpoint reconstruction is exact; (2) the only code delta is
+  racemode3, which cannot fire in mirror (no wall ids in either list; 0
+  fires/1313 probed prompts); (3) play_games is slot-fair (verified,
+  swap_slots default); (4) loss replays are full-length games (169-176
+  actions, no crash/timeout signature); (5) two 12-game extensions: 4-8
+  then **6-6** — pooled bundle-vs-bundle 10W-17L over 27 = 0.370,
+  P(≤10|27, p=0.5) ≈ 12% — an unlucky draw against a provably-identical
+  agent. QC replays in replays/m37_qc_gacfr3_*.html + index.html.
+  **STOPPED for Piotr's replay review + explicit go. NOT submitted.**
 
 ## Execution log (2026-07-28, planning session)
 
