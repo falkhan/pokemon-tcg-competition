@@ -197,6 +197,50 @@ present; the change is ~15 lines in `_example_weights` + a corpus rebuild.
   W-L at n=12 is noise; the point is fires >> 0 for both variants, so a
   battery null would be a real verdict, not a trigger bug.
 
+- **B4 AMENDED (pre-decode, 2026-07-28 — the M8/M9 fix-before-decode
+  groove): workers-8 matchrunner is NOT run-reproducible**, so B4's
+  "identical W/L" criterion was the wrong instrument. Evidence: gacfr
+  mirror seed 1 n=100 gave 55-45 then 51-49 on rerun (identical config);
+  mirror deck ∩ trigger ids = ∅; fire probe on mirror (single-process,
+  n=30): **trigger_true 0 / o12_fires 0 over 1313 MAIN prompts** — O12 is
+  inert where it must be; the divergence is engine-RNG × mp.Pool
+  scheduling noise under load. B4 now = probe-authoritative (0/0) + a
+  ±0.14 sanity band on the workers-8 smoke. Corollary recorded: NO
+  seed-matched per-game A/B claims at workers 8, statistical n only (the
+  campaign's standing practice anyway).
+- **B4 PASS:** probe 0/0 (authoritative); sanity band gacfr 0.550 vs gacf
+  0.520, |Δ| 0.030 ≤ 0.14 ✓.
+- **P1 (garchomp clone) data landed:** refresh +158 eps (episodes.parquet
+  5381 rows) + harvest. The byte-identical live garchomp list = 160
+  seat-rows across 3 subs (54964845×111 @683, 55042761×48 @655,
+  54974938×1) — BELOW the 197-689 working-clone band; the wider cynthia
+  family adds variant lists (dominant gabite+roselia 323 rows, possibly a
+  different build). Proceeding with the 2-sub 159-row corpus first (M24
+  single-teacher law; 54964845 alone = 111 games ≈ the wall clone's 304-game
+  scale in decisions), fidelity screen decides if it's enough.
+
+- **P1 garchomp clone TRAINED:** `data/bc_m37_garchomp` (157 eps → 159
+  teacher seats, 10,910 decisions, 3 shards) → `m37_bc_garchomp.pt`
+  (fresh V3-as-BC, 10 epochs, val_acc **0.626** — above the working rocket
+  clone's 0.587; the failed grim clone was 0.565). Deck CSV =
+  `data/kaggle/garchomp_m37_deck.csv` (the byte-identical live list — all
+  159 teacher seats play it). Fidelity screen + strawman running.
+- **B7 AWR done-bar PASS:** 1-epoch smoke on the garchomp corpus with
+  `--outcome-weight 0.25` → "non-win x0.25: 4939 rows (45.3%)" (inside the
+  30-50% band; teachers won ~52%), training completes. The full corpus
+  rebuild stays blocked on the laptop sync (deck_registry.json params +
+  raw eps or re-fetch); code path is validated.
+
+- **P1 garchomp clone bed ACCEPTED (with caveat).** Screen vs rule:lucario
+  0.470 (bar ≥0.45 ✓). Strawman vs ship config: 0.600 n=100 / 0.500 diag
+  seed — NOT the outright live 0-2, but the diag (n=30) reproduces BOTH
+  live mechanisms: 4/15 losses true deck-outs (incl. a prizes-1/2 deck-out
+  agonizer — the live ep88562454 signature) + 9/15 heal-tank prize grinds;
+  2 bench-out bricks. Far better fidelity than solver 0.665 (which showed
+  ~no deck-out losses). Caveat recorded: the bed UNDERSTATES the live
+  threat (n=2 live may also overstate it); treat the garchomp cell as
+  directional, hop+wall as the primary B1 evidence. Battery leg launched.
+
 ## Execution log (2026-07-28, planning session)
 
 - **ENV — m28_winners.pt reconstructed** from submission npz (21 arrays,

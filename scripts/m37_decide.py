@@ -19,9 +19,16 @@ B3 GRIM rule: if the grim-clone bed shows wr(winner) < wr(control) - 0.05,
     grim + hop confirm at n=400. If the grim bed is unavailable at decide
     time, ship WITH grim ids (Piotr's call) and flag the grim cell as the
     first M38 watch item.
-B4 INERTNESS: mirror smoke (gacfr vs control, same seed) must produce an
-    IDENTICAL W/L multiset (compare outcomes, not bytes — worker scheduling
-    reorders chunks). Any divergence = trigger bug, hard fail.
+B4 INERTNESS (AMENDED 2026-07-28 BEFORE any battery decode, evidence in
+    docs/M37-plan.md): matchrunner at workers=8 is NOT run-reproducible even
+    for an identical config (engine RNG is per worker process; mp.Pool
+    assigns chunks by timing — gacfr mirror gave 55-45 then 51-49 at the
+    same seed; a gacf rerun happened to reproduce), so "identical W/L" is
+    the wrong instrument. AUTHORITATIVE check = scripts/racemode_fire_probe
+    --bed mirror (single-process): trigger_true == 0 AND o12_fires == 0.
+    Measured: 0/0 over 1313 MAIN prompts, 30 games. The workers-8 smoke
+    stays as a sanity band only: |wr(gacfr) - wr(gacf)| <= 0.14 (~2 SE at
+    n=100).
 B5 BAND gate: band_decode composite(arm) >= composite(same-battery control)
     - 1 SE over the SAME bed set (paired; never compare composites across
     different bed sets).
@@ -142,16 +149,19 @@ def b3(winner="gacfr", control="gacf"):
 
 
 def b4():
-    print("=== B4 inertness (mirror smoke) ===")
+    print("=== B4 inertness (amended: probe is authoritative) ===")
+    print("  authoritative: racemode_fire_probe --bed mirror -> "
+          "trigger_true 0 / o12_fires 0 over 1313 prompts (PASS, "
+          "2026-07-28)")
     a = decode(sorted(glob.glob("runs/m37_inert_gacfr_mirror_s*.jsonl")))
     c = decode(sorted(glob.glob("runs/m37_inert_gacf_mirror_s*.jsonl")))
     if a is None or c is None:
-        print("  pending")
+        print("  sanity band: pending")
         return
-    same = a[0] == c[0] and a[1] == c[1]
-    print(f"  gacfr {a[0]:.4f} n={a[1]} vs gacf {c[0]:.4f} n={c[1]} -> "
-          f"{'PASS (identical)' if same else 'HARD FAIL — O12 fired on a '
-             'non-trigger board (trigger bug)'}")
+    ok = abs(a[0] - c[0]) <= 0.14
+    print(f"  sanity band: gacfr {a[0]:.4f} n={a[1]} vs gacf {c[0]:.4f} "
+          f"n={c[1]} |delta| {abs(a[0] - c[0]):.4f} <= 0.14 -> "
+          f"{'PASS' if ok else 'FAIL — investigate before decode'}")
 
 
 if __name__ == "__main__":

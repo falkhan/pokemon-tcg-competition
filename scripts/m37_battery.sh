@@ -54,7 +54,8 @@ if [[ "$phase" == "inert" ]]; then
 fi
 
 seeds=("${@:-1 2 3}"); seeds=(${seeds[@]})
-for bed in hop wall grim garchomp; do
+beds=(${M37_BEDS:-hop wall grim garchomp})   # env override for parallel invocations
+for bed in "${beds[@]}"; do
   if ! bed_ready "$bed"; then
     echo "=== bed $bed NOT READY (checkpoint missing) — skipped ==="
     continue
