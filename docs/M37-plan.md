@@ -302,6 +302,24 @@ present; the change is ~15 lines in `_example_weights` + a corpus rebuild.
   reversed the kickoff call #2 (conserve measured neutral-to-negative on
   every pressure-family bed). Piotr's arm pick required.**
 
+- **SYNC LANDED + VERIFIED (Piotr, 2026-07-28):** m25 grim + m30 rocket
+  clone checkpoints + deck CSVs + M36 tarball (md5 1dcb568d ✓) +
+  deck_registry.json. Pin smokes on this box: grim bed 0.650 n=100 (M36
+  pin 0.6425 ✓), rocket 0.610 (pin 0.6375 ✓). racemode3 provably inert vs
+  both (no wall ids in either list).
+- **EXPORT + FROM-TARBALL VERIFY DONE (gacfr3 ship state):**
+  submission/main.py default flipped to
+  `telepath,deckguard,ash,conserve,benchfloor,racemode3` (the invariant:
+  ship changes the default string, never the predicate). build pipeline
+  run manually (the .ps1 wrapper trips PowerShell 5.1 NativeCommandError
+  on a benign engine warning): export + gate ("gate game OK: rewards
+  [1,-1]") + tar → **dist/submission_neural_20260728_223734.tar.gz**
+  (5.4 MB). Verified FROM the tarball: deck md5 ad014c58 == alakazam_v2_h4
+  (60 cards, hammer ×4 / Hilda ×3), fixes string = gacfr3, rl/plan.py
+  carries PLAY_FIX_RACEMODE3, all required files present. NOT submitted.
+- **QC BATTERY LAUNCHED** (m37_qc_gacfr3): 3 games × {tuned, iono,
+  dragapult, prev-ship M36 mirror leg} → replays/ for Piotr's review.
+
 ## Execution log (2026-07-28, planning session)
 
 - **ENV — m28_winners.pt reconstructed** from submission npz (21 arrays,
