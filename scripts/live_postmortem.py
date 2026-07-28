@@ -15,13 +15,13 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-sys.path.insert(0, "/home/falkhan/Documents/python_projects/pokemon-tcg-competition")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import polars as pl
 from cg.api import AreaType, OptionType, SelectContext, to_observation_class
 from rl.replay_bc import iter_replay_decisions
 
-ROOT = Path("/home/falkhan/Documents/python_projects/pokemon-tcg-competition")
+ROOT = Path(__file__).resolve().parent.parent
 SUB = int(sys.argv[1]) if len(sys.argv) > 1 else 54929991
 TELEPATH = 19
 DUDUNSPARCE_IDS = {1516, 1517}   # verify against plan.py
