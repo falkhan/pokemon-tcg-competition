@@ -160,6 +160,25 @@ present; the change is ~15 lines in `_example_weights` + a corpus rebuild.
 
 ---
 
+## SHIPPED — sub 55065484 (2026-07-28)
+
+**SHIPPED: sub 55065484 = m28_winners + gacfr3
+(telepath,deckguard,ash,conserve,benchfloor,racemode3) + alakazam_v2_h4**,
+Piotr's explicit go after replay review. Bundle
+`dist/submission_neural_20260728_223734.tar.gz`. Single variable vs 55030954
+= the O12d racemode3 rule (wall-family blanket conserve). Status PENDING at
+submit; M35 public 758.7 / M36 609.3 at submit time. model_monitor.ipynb
+updated with M36 + M37 rows + alakazam_v2_h4 deck meta (NEW STANDING RULE:
+update the monitor on every submit — CLAUDE.md + memory).
+
+**Watch next session (live A/B vs 55030954):** wall-family W/L (offline
+0.408→0.565, the transfer claim — the M36 h4 claim transferred at this same
+shape); band escape (does a config that beats the wall cell climb out of the
+600 band?); hop/garchomp cells should be UNCHANGED (rule provably inert —
+any movement there is noise or environment drift, not racemode3); grim cell
+= the M38 deck-tech target; gustveto stays parked measured+ship-ready; AWR
+corpus rebuild = M38 pre-work (deck_registry.json now synced).
+
 ## Execution log — milestone phases (2026-07-28, feature/m37)
 
 - **KICKOFF — Piotr's five calls (in-session):** (1) racemode arm, (2) grim
