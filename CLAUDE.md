@@ -62,4 +62,8 @@ When running a pipeline to ship a new model use hermes integration to send perio
     then STOP and wait for the user's manual replay review and explicit go.
     No submit without it, even when every offline gate passes.
   - Always save down pipelines or shell commands for reusability locally or as skills. Reuse existing scripts or ask the user whether they can be modified.
+  - ON EVERY KAGGLE SUBMIT (Piotr's standing rule, 2026-07-28): immediately add
+    the new submission id + label to the `MODELS` dict in
+    `notebooks/model_monitor.ipynb` (and a `DECK_META` entry if the deck is
+    new) as part of the ship commit — the monitor is the live tracking surface.
   - ALWAYS before an important review, change or shipping, review `verify-before-consequential-actions.md`.

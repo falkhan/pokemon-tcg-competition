@@ -97,17 +97,19 @@ if _IS_V3:
 
 
 _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
-# M26/M30/M31/M35 override arms (rl/plan.apply_attach_overrides + apply_play_overrides):
+# M26/M30/M31/M35/M37 override arms (rl/plan.apply_attach_overrides + apply_play_overrides):
 # comma-separated fix names ("telepath", "backstop", "tempo", "deckguard",
-# "ash", "conserve", "poffinfloor", "drawfloor", "benchfloor"). Ship default =
-# "telepath,deckguard,ash,conserve,benchfloor" (O1+O4+O5+O6+O10, the M35 gacf
-# arm — docs/M35-plan.md: drops poffinfloor [M31 neutral-to-negative live],
-# adds benchfloor [bench-0 sweep-losses 27->15% offline, holds all beds];
+# "ash", "conserve", "poffinfloor", "drawfloor", "benchfloor", "racemode3").
+# Ship default = "telepath,deckguard,ash,conserve,benchfloor,racemode3"
+# (gacfr3 = the M35 gacf arm + O12d racemode3, docs/M37-plan.md P3c: the
+# wall-family blanket conserve — wall bed +15.7pp z+5.50, provably inert vs
+# every deck with no wall-family Pokémon on board [0 fires / 723 probe
+# prompts on hop+garchomp; no wall ids in mirror/grim/rocket lists]);
 # an approved ship changes this default string, never the predicate.
 _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
         "PKM_ATTACH_FIXES",
-        "telepath,deckguard,ash,conserve,benchfloor").split(",") if f)
+        "telepath,deckguard,ash,conserve,benchfloor,racemode3").split(",") if f)
 
 
 def _log_net(rec: dict) -> None:

@@ -157,6 +157,23 @@ def test_apply_class_weights_targets_chosen_option_type(tmp_path):
     assert ds.weights.tolist() == [6.0, 2.0, 3.0]
 
 
+def test_apply_outcome_weights_scales_non_win_rows(tmp_path):
+    """M37 AWR pre-work: --outcome-weight multiplies exactly the rows whose
+    game the imitated seat did not WIN (results < 1: losses AND draws),
+    composing multiplicatively with stored weights; alpha=0 reproduces the
+    winners-only filter."""
+    rng = np.random.default_rng(12)
+    d = tmp_path / "shards"
+    d.mkdir()
+    _write_new_shard(d / "shard_0000.npz", rng, weights=[2.0, 1.0, 1.0])
+    ds = pi.BCDatasetV3([d])
+    ds.results = np.array([1.0, -1.0, 0.0], dtype=np.float32)  # W / L / draw
+    pi.apply_outcome_weights(ds, 0.5)
+    assert ds.weights.tolist() == [2.0, 0.5, 0.5]
+    pi.apply_outcome_weights(ds, 0.0)   # alpha=0 == winners-only
+    assert ds.weights.tolist() == [2.0, 0.0, 0.0]
+
+
 def test_train_fresh_is_width_driven(tmp_path, monkeypatch):
     """M23 audit E1: a fresh (no-init) train on legacy-width shards (12 ids,
     90-wide options — the replay-clone corpus shape) must build the net from

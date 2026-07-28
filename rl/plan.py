@@ -342,6 +342,10 @@ PLAY_FIX_POFFINFLOOR = "poffinfloor"  # O7: dig for board when thin (m31)
 PLAY_FIX_DRAWFLOOR = "drawfloor"      # O8: force Hilda when hand-starved (m31)
 PLAY_FIX_BENCHFLOOR = "benchfloor"    # O10: bench a basic you HOLD when thin (m35)
 PLAY_FIX_GUSTVETO = "gustveto"        # O11: no gust at opp-prizes <= 1 (m36)
+PLAY_FIX_RACEMODE = "racemode"        # O12: conserve vs stall/grim, margin-gated (m37)
+PLAY_FIX_RACEMODER = "racemoder"      # O12b: conserve vs stall/grim, blanket (m37)
+PLAY_FIX_RACEMODE2 = "racemode2"      # O12c: blanket vs walls, margin vs pressure-stall (m37)
+PLAY_FIX_RACEMODE3 = "racemode3"      # O12d: blanket vs walls ONLY (m37 final synthesis)
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10
@@ -364,6 +368,40 @@ _DRAWFLOOR_DECK_AT = 10     # ... the full-hand hoarding cases); deck >= 10
 # execution log — NOT what the _make_plan comment below says). Opponent at
 # match point = len(op.prize) <= 1.
 _GUSTVETO_OPP_PRIZES_AT = 1
+# O12 (m37): archetype-detected race mode. The 600-band stall/heal-tank lines
+# farm us by deck-out (m36 post-mortem: 9/26 losses; hop/garchomp 0-4 live).
+# Trigger = a stall-family Pokémon visible on the OPPONENT'S BOARD (public obs
+# fact, same class as benchfloor's card facts). Grim ids are a SEPARATE set so
+# the m37 pre-registered bar B3 can drop them with a one-line edit. Deliberately
+# EXCLUDED: Munkidori 112/139 and Froslass 104 — splashable techs that would
+# misfire on non-stall decks.
+_RACEMODE_STALL_IDS = frozenset({
+    58,              # Great Tusk
+    344, 532,        # Dwebble (both printings)
+    345, 533,        # Crustle (both printings)
+    607,             # Terrakion
+    878, 879,        # Hop's Phantump / Trevenant
+    304,             # Hop's Snorlax
+    379, 380, 381,   # Cynthia's Gible / Gabite / Garchomp ex
+    341, 342,        # Cynthia's Roselia / Roserade
+    387,             # Cynthia's Spiritomb
+})
+_RACEMODE_GRIM_IDS = frozenset({646, 647, 648})  # Marnie's Impidimp/Morgrem/Grimmsnarl ex
+_RACEMODE_OPP_IDS = _RACEMODE_STALL_IDS | _RACEMODE_GRIM_IDS
+# O12c (m37 battery finding): the v1 trigger conflated two archetypes that
+# need OPPOSITE gates. The crustle/tusk wall family applies no prize pressure
+# — blanket conserve there won the deck-out race outright (+14.8pp z+5.2);
+# hop/garchomp/grim DO attack — blanket starves our setup (-12/-18pp), only
+# the margin-gated conserve is safe. racemode2 splits the sets.
+_RACEMODE_WALL_IDS = frozenset({58, 344, 532, 345, 533, 607})
+_RACEMODE_PRESSURE_IDS = (_RACEMODE_STALL_IDS - _RACEMODE_WALL_IDS) \
+    | _RACEMODE_GRIM_IDS
+# racemode margin gate = the m36 parked raceconserve design (mirror_race_probe:
+# behind by >5 on the deck race, below 25 so t3-t6 setup digs stay untouched,
+# above 6 where deckguard/conserve already own the endgame).
+_RACEMODE_MARGIN = 5
+_RACEMODE_DECK_HI = 25
+_RACEMODE_DECK_LO = 6
 
 
 def _board_pokemon_id(opt, me):
@@ -376,6 +414,19 @@ def _board_pokemon_id(opt, me):
             and me.bench[opt.index] is not None):
         return me.bench[opt.index].id
     return None
+
+
+def _opp_board_ids(op) -> frozenset:
+    """Card ids of every Pokémon visible on a player's board (active + bench).
+    Public obs facts — the O12 archetype trigger reads the OPPONENT'S board."""
+    ids = set()
+    for p in (op.active or []):
+        if p is not None:
+            ids.add(p.id)
+    for p in (op.bench or []):
+        if p is not None:
+            ids.add(p.id)
+    return frozenset(ids)
 
 
 def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
@@ -420,6 +471,26 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
       is at match point fired 5/5 in M35 live losses. Blanket demote (no
       KO-gate): _attack_damage models Powerful Hand as 0, so a KO-gate
       would be blind to our main attacker (M36 W2 design note).
+    - O12 `racemode` / `racemoder` (m37): a stall/grim-family Pokémon is
+      visible on the OPPONENT'S board -> extend the deckguard/conserve
+      demotes (Dudunsparce + Fezandipiti draws) beyond the deck <= 6 floor:
+      the 600-band stall lines win by deck-out, so the objective flips from
+      tempo to card-economy racing (we win deck-out races when the economy
+      rules engage — 4 live M36 wins by opp-deck-0). `racemode` adds the
+      m36 raceconserve margin gate (behind by > _RACEMODE_MARGIN on the
+      deck race, 6 < deck <= 25) so early setup digs stay untouched;
+      `racemoder` is the blanket variant (trigger only) — the m37 battery
+      picks between them (bar B2).
+    - O12c `racemode2` (m37, the battery synthesis): the wall family
+      (crustle/tusk — no prize pressure) gets the BLANKET demote (+14.8pp
+      z+5.2 measured); the pressure-stall families (hop/garchomp/grim —
+      they attack while stalling) get only the MARGIN-gated demote (the
+      blanket regressed them −12/−18pp by starving setup).
+    - O12d `racemode3` (m37 final): the wall-family blanket demote ONLY —
+      the margin-gated pressure branch measured neutral-to-negative on
+      hop (−1.6pp) and garchomp (5-seed z −2.13, pre-registered kill), so
+      the rule keeps just the measured win: +15.7pp on the wall bed,
+      provably inert against every deck with no wall-family Pokémon.
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -474,6 +545,25 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
         demote_ids |= DUDUNSPARCE_IDS
     if PLAY_FIX_CONSERVE in fixes and me.deckCount <= _CONSERVE_AT:
         demote_ids |= _CONSERVE_ABILITY_IDS
+    if PLAY_FIX_RACEMODE in fixes or PLAY_FIX_RACEMODER in fixes:
+        op = st.players[1 - st.yourIndex]
+        if _opp_board_ids(op) & _RACEMODE_OPP_IDS and (
+                PLAY_FIX_RACEMODER in fixes
+                or (me.deckCount < op.deckCount - _RACEMODE_MARGIN
+                    and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI)):
+            demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
+    if PLAY_FIX_RACEMODE2 in fixes:
+        op = st.players[1 - st.yourIndex]
+        opp_ids = _opp_board_ids(op)
+        if opp_ids & _RACEMODE_WALL_IDS or (
+                opp_ids & _RACEMODE_PRESSURE_IDS
+                and me.deckCount < op.deckCount - _RACEMODE_MARGIN
+                and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI):
+            demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
+    if (PLAY_FIX_RACEMODE3 in fixes
+            and _opp_board_ids(st.players[1 - st.yourIndex])
+            & _RACEMODE_WALL_IDS):
+        demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
     if (demote_ids and opts[ranked[0]].type == OptionType.ABILITY
             and _board_pokemon_id(opts[ranked[0]], me) in demote_ids):
         keep = [i for i in ranked

@@ -15,9 +15,9 @@ from cg.api import AreaType, OptionType, SelectContext
 from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_TELEPATH, FEZANDIPITI_ID,
                      HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_BENCHFLOOR,
                      PLAY_FIX_CONSERVE, PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
-                     PLAY_FIX_GUSTVETO, PLAY_FIX_POFFINFLOOR, PLAY_FIX_TEMPO,
-                     SACRED_ASH_ID, TELEPATH_ID, apply_attach_overrides,
-                     apply_play_overrides)
+                     PLAY_FIX_GUSTVETO, PLAY_FIX_POFFINFLOOR, PLAY_FIX_RACEMODE,
+                     PLAY_FIX_RACEMODER, PLAY_FIX_TEMPO, SACRED_ASH_ID,
+                     TELEPATH_ID, apply_attach_overrides, apply_play_overrides)
 
 BASIC_P = 4          # Basic {P} Energy — any basic energy id works for tests
 NON_ENERGY = 741     # Abra
@@ -44,11 +44,15 @@ def _opt(otype, index=None, area=AreaType.HAND, card_id=None):
 
 def _obs(options, hand, bench=(None,) * 5, energy_attached=False,
          context=SelectContext.MAIN, bench_max=5, deck_count=40, active=(),
-         opp_prizes=6):
+         opp_prizes=6, opp_active=(), opp_bench=(), opp_deck_count=40):
     me = SimpleNamespace(hand=[_card(c) for c in hand],
                          bench=list(bench), benchMax=bench_max,
                          deckCount=deck_count, active=list(active))
-    op = SimpleNamespace(prize=[object()] * opp_prizes)
+    op = SimpleNamespace(prize=[object()] * opp_prizes,
+                         active=[_card(c) for c in opp_active],
+                         bench=[_card(c) if c is not None else None
+                                for c in opp_bench],
+                         deckCount=opp_deck_count)
     current = SimpleNamespace(players=[me, op], yourIndex=0,
                               energyAttached=energy_attached)
     select = SimpleNamespace(context=context, option=options)
@@ -439,6 +443,143 @@ def test_o11_composes_with_gacf():
     thin = _obs(opts2, hand=[GUST, NON_ENERGY], bench=[None] * 5,
                 opp_prizes=1)
     assert apply_play_overrides(thin, [0, 1, 2], gacfv) == [1, 0, 2]
+
+
+# --- M37 race mode (O12): conserve draws vs stall/grim boards --------------
+
+TREVENANT = 879    # Hop's Trevenant — rl.plan._RACEMODE_STALL_IDS
+GRIM_EX = 648      # Marnie's Grimmsnarl ex — rl.plan._RACEMODE_GRIM_IDS
+
+# top pick = the Dudunsparce draw ABILITY on our ACTIVE; demote targets it.
+_DUD_OPTS = [_opt(OptionType.ABILITY, area=AreaType.ACTIVE),
+             _opt(OptionType.ATTACK), _opt(OptionType.END)]
+
+
+def _race_obs(opts=None, my_deck=15, opp_deck=30, opp_active=(TREVENANT,),
+              opp_bench=(), me_active_id=DUDUNSPARCE, hand=()):
+    return _obs(opts or _DUD_OPTS, hand=list(hand),
+                active=[_card(me_active_id)], deck_count=my_deck,
+                opp_active=opp_active, opp_bench=opp_bench,
+                opp_deck_count=opp_deck)
+
+
+def test_o12_racemode_fires_on_stall_and_grim_boards():
+    fixes = frozenset({PLAY_FIX_RACEMODE})
+    # stall id on opp ACTIVE, behind by 15 on the race, deck inside (6, 25]
+    stall = _race_obs(my_deck=15, opp_deck=30, opp_active=(TREVENANT,))
+    assert apply_play_overrides(stall, [0, 1, 2], fixes) == [1, 2, 0]
+    # grim id on opp BENCH triggers too (grim is a separate, droppable set)
+    grim = _race_obs(my_deck=15, opp_deck=30, opp_active=(),
+                     opp_bench=(GRIM_EX,))
+    assert apply_play_overrides(grim, [0, 1, 2], fixes) == [1, 2, 0]
+    # Fezandipiti body is demoted the same way (shares the O4/O6 target set)
+    fez = _race_obs(me_active_id=FEZANDIPITI_ID)
+    assert apply_play_overrides(fez, [0, 1, 2], fixes) == [1, 2, 0]
+
+
+def test_o12_racemode_margin_guards():
+    fixes = frozenset({PLAY_FIX_RACEMODE})
+    # deck above the high floor (26 > 25): early setup digs stay untouched
+    high = _race_obs(my_deck=26, opp_deck=40)
+    assert apply_play_overrides(high, [0, 1, 2], fixes) == [0, 1, 2]
+    # margin exactly 5 does NOT fire (strict <: 20 < 25 - 5 is false)
+    edge = _race_obs(my_deck=20, opp_deck=25)
+    assert apply_play_overrides(edge, [0, 1, 2], fixes) == [0, 1, 2]
+    # deck at the low floor (6): deckguard/conserve territory, racemode out
+    low = _race_obs(my_deck=6, opp_deck=30)
+    assert apply_play_overrides(low, [0, 1, 2], fixes) == [0, 1, 2]
+    # ahead on the race -> untouched
+    ahead = _race_obs(my_deck=30, opp_deck=20)
+    assert apply_play_overrides(ahead, [0, 1, 2], fixes) == [0, 1, 2]
+    # no trigger id on the opponent board (mirror: Abra) -> inert
+    mirror = _race_obs(opp_active=(NON_ENERGY,))
+    assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
+    # top pick is not a targeted ABILITY -> untouched (demote-on-top law)
+    not_top = _race_obs()
+    assert apply_play_overrides(not_top, [1, 0, 2], fixes) == [1, 0, 2]
+    # off by default
+    assert apply_play_overrides(_race_obs(), [0, 1, 2], frozenset()) \
+        == [0, 1, 2]
+    # non-MAIN untouched
+    non_main = _obs(_DUD_OPTS, hand=[], active=[_card(DUDUNSPARCE)],
+                    opp_active=(TREVENANT,), opp_deck_count=30,
+                    deck_count=15, context=SelectContext.DISCARD)
+    assert apply_play_overrides(non_main, [0, 1, 2], fixes) == [0, 1, 2]
+
+
+def test_o12_racemoder_blanket_ignores_margin():
+    fixes = frozenset({PLAY_FIX_RACEMODER})
+    # even race, deck far above the margin gates -> blanket still demotes
+    even = _race_obs(my_deck=40, opp_deck=40)
+    assert apply_play_overrides(even, [0, 1, 2], fixes) == [1, 2, 0]
+    # but never without a trigger id on the opponent board
+    mirror = _race_obs(my_deck=40, opp_deck=40, opp_active=(NON_ENERGY,))
+    assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
+
+
+def test_o12c_racemode2_splits_families():
+    from rl.plan import PLAY_FIX_RACEMODE2
+    fixes = frozenset({PLAY_FIX_RACEMODE2})
+    CRUSTLE = 345   # rl.plan._RACEMODE_WALL_IDS
+    # wall family on opp board -> BLANKET demote (no margin needed: even race)
+    wall = _race_obs(my_deck=40, opp_deck=40, opp_active=(CRUSTLE,))
+    assert apply_play_overrides(wall, [0, 1, 2], fixes) == [1, 2, 0]
+    # pressure family (Trevenant) -> margin-gated: even race does NOT fire...
+    trev_even = _race_obs(my_deck=40, opp_deck=40, opp_active=(TREVENANT,))
+    assert apply_play_overrides(trev_even, [0, 1, 2], fixes) == [0, 1, 2]
+    # ...but behind-with-margin does
+    trev_behind = _race_obs(my_deck=15, opp_deck=30, opp_active=(TREVENANT,))
+    assert apply_play_overrides(trev_behind, [0, 1, 2], fixes) == [1, 2, 0]
+    # grim is in the PRESSURE set (margin-gated), not the wall set
+    grim_even = _race_obs(my_deck=40, opp_deck=40, opp_active=(GRIM_EX,))
+    assert apply_play_overrides(grim_even, [0, 1, 2], fixes) == [0, 1, 2]
+    grim_behind = _race_obs(my_deck=15, opp_deck=30, opp_active=(GRIM_EX,))
+    assert apply_play_overrides(grim_behind, [0, 1, 2], fixes) == [1, 2, 0]
+    # no trigger id (mirror) -> inert
+    mirror = _race_obs(my_deck=15, opp_deck=30, opp_active=(NON_ENERGY,))
+    assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
+
+
+def test_o12d_racemode3_wall_only():
+    from rl.plan import PLAY_FIX_RACEMODE3
+    fixes = frozenset({PLAY_FIX_RACEMODE3})
+    CRUSTLE = 345
+    # wall id on opp board -> blanket demote, no deck gates at all
+    wall = _race_obs(my_deck=40, opp_deck=40, opp_active=(CRUSTLE,))
+    assert apply_play_overrides(wall, [0, 1, 2], fixes) == [1, 2, 0]
+    # pressure families are NOT in the trigger: Trevenant even-race AND
+    # behind-with-margin both stay untouched
+    for my, opp in ((40, 40), (15, 30)):
+        trev = _race_obs(my_deck=my, opp_deck=opp, opp_active=(TREVENANT,))
+        assert apply_play_overrides(trev, [0, 1, 2], fixes) == [0, 1, 2]
+    grim = _race_obs(my_deck=15, opp_deck=30, opp_active=(GRIM_EX,))
+    assert apply_play_overrides(grim, [0, 1, 2], fixes) == [0, 1, 2]
+    mirror = _race_obs(my_deck=15, opp_deck=30, opp_active=(NON_ENERGY,))
+    assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
+
+
+def test_o12_composes_with_gacf():
+    gacfr = frozenset({ATTACH_FIX_TELEPATH, PLAY_FIX_DECKGUARD, PLAY_FIX_ASH,
+                       PLAY_FIX_CONSERVE, PLAY_FIX_BENCHFLOOR,
+                       PLAY_FIX_RACEMODE})
+    # healthy bench (benchfloor inert), deck 15 (ash/deckguard/conserve
+    # inert), trigger + margin hold -> racemode demotes the dud ability.
+    bench2 = [_card(NON_ENERGY), _card(NON_ENERGY), None, None, None]
+    hot = _obs(_DUD_OPTS, hand=[], bench=bench2, active=[_card(DUDUNSPARCE)],
+               deck_count=15, opp_active=(TREVENANT,), opp_deck_count=30)
+    assert apply_play_overrides(hot, [0, 1, 2], gacfr) == [1, 2, 0]
+    # PROMOTE keeps precedence: ash at deck <= 10 fires before the demote
+    ash_opts = [_opt(OptionType.ABILITY, area=AreaType.ACTIVE),
+                _opt(OptionType.PLAY, 0),          # Sacred Ash (hand 0)
+                _opt(OptionType.END)]
+    ash = _obs(ash_opts, hand=[SACRED_ASH_ID], bench=bench2,
+               active=[_card(DUDUNSPARCE)], deck_count=10,
+               opp_active=(TREVENANT,), opp_deck_count=30)
+    assert apply_play_overrides(ash, [0, 1, 2], gacfr) == [1, 0, 2]
+    # racemode composes with deckguard at deck <= 6: both want the demote
+    low = _obs(_DUD_OPTS, hand=[], bench=bench2, active=[_card(DUDUNSPARCE)],
+               deck_count=6, opp_active=(TREVENANT,), opp_deck_count=30)
+    assert apply_play_overrides(low, [0, 1, 2], gacfr) == [1, 2, 0]
 
 
 def test_bundle_twins():
