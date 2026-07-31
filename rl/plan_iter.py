@@ -1010,11 +1010,17 @@ def train(data_dirs: list, name: str, init: str | None = None,
     else:
         # M23 audit E1: width-driven from the data, like the bc.py v2 path —
         # replay-clone shards carry legacy 12-wide state_ids, and a net built
-        # at the hand-aware width (20) cannot consume them.
+        # at the hand-aware width (20) cannot consume them. M38: expert
+        # shards carry the encoder-v4 block (since M21) — extra_dim must be
+        # inferred from the state width too, or a fresh net is built 341
+        # columns too narrow (found by the first-ever scratch train on v4
+        # expert shards; every prior v4 net was warm-started).
+        extra_dim = max(0, ds.states.shape[1] - STATE_V2_DIM - N_CONTEXTS)
         model = OptionScorerV3(n_state_ids=ds.state_ids.shape[1],
-                               option_dim=ds.options.shape[1])
+                               option_dim=ds.options.shape[1],
+                               extra_dim=extra_dim)
         print(f"fresh V3 (n_state_ids={model.n_state_ids}, "
-              f"option_dim={model.option_dim})")
+              f"option_dim={model.option_dim}, extra_dim={extra_dim})")
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_acc = 0.0
 

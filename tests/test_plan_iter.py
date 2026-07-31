@@ -206,6 +206,38 @@ def test_train_fresh_is_width_driven(tmp_path, monkeypatch):
     assert option_dim_of(sd) == OPTION_DIM        # 90, from the data
 
 
+def test_train_fresh_infers_v4_extra_dim(tmp_path, monkeypatch):
+    """M38: the first-ever fresh (no-init) train on encoder-v4 expert shards
+    found the fresh path building the net 341 columns too narrow (mat1/mat2
+    crash) — extra_dim must be inferred from the data's state width like the
+    id/option widths are. Every prior v4 net was warm-started, which sniffs
+    the width from the checkpoint instead, so this path was never exercised."""
+    from rl.encoders import N_STATE_IDS_V4, V4_EXTRA_DIM
+    rng = np.random.default_rng(11)
+    d = tmp_path / "shards"
+    d.mkdir()
+    n = 4
+    np.savez_compressed(                          # 1-option menus: val_acc 1.0
+        d / "shard_0000.npz",                     # guarantees a checkpoint save
+        states=rng.standard_normal(
+            (n, STATE_V2_DIM + N_CONTEXTS + V4_EXTRA_DIM)).astype(np.float32),
+        state_ids=rng.integers(0, 1268, (n, N_STATE_IDS_V4)).astype(np.int32),
+        options=rng.standard_normal((n, OPTION_DIM)).astype(np.float32),
+        option_ids=rng.integers(0, 1268, (n, 2)).astype(np.int32),
+        n_options=np.ones(n, dtype=np.int32),
+        labels=np.zeros(n, dtype=np.int32),
+        game_ids=np.arange(n, dtype=np.int32) // 2,
+        results=np.ones(n, dtype=np.float32),
+        deck_idx=np.zeros(n, dtype=np.int32),
+    )
+    monkeypatch.setattr(pi, "ROOT", tmp_path)     # redirect checkpoints/
+    pi.train([d], name="_fresh_v4", epochs=1, batch_size=4)   # crashed pre-fix
+    sd = torch.load(tmp_path / "checkpoints" / "_fresh_v4.pt",
+                    map_location="cpu")
+    assert "enc_ver" in sd                        # the net declares itself v4
+    assert pi._n_ids_of(sd) == N_STATE_IDS_V4
+
+
 def test_dataset_weights_default_and_passthrough(tmp_path):
     rng = np.random.default_rng(9)
     old_dir, new_dir = tmp_path / "old", tmp_path / "new"
