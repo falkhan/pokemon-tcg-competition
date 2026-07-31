@@ -123,24 +123,28 @@ def run_e0b(arm: str, deck: str, bed: str, games: int) -> None:
     bed_fn, bed_deck = make_pilot(parse_spec(_bed_spec(bed, deck)), "e0b_b")
     tally: Counter = Counter()
 
-    def record_turn_end(obs_dict, a_seat, prizes_at_start):
+    def try_exposure(obs_dict, a_seat, took):
+        """Exposure at the first post-turn-end prompt where BOTH actives
+        exist. On KO turn-ends the opponent's active slot is None until they
+        promote — the original version returned early there, which excluded
+        every prize-taking turn-end by construction (the E0b v1 bug)."""
         obs = to_observation_class(obs_dict)
         me = obs.current.players[a_seat]
         op = obs.current.players[1 - a_seat]
         my_active = me.active[0] if me.active and me.active[0] is not None else None
         op_active = op.active[0] if op.active and op.active[0] is not None else None
         if my_active is None or op_active is None or op_active.id not in _CARD:
-            return
-        tally["turn_ends"] += 1
+            return False                       # keep pending (e.g. mid-promote)
         now = _best_damage(op_active, my_active) >= my_active.hp
         nxt = _best_damage(op_active, my_active, extra_energy=1) >= my_active.hp
-        took = prizes_at_start - len(me.prize) > 0
+        tally["exposure_measured"] += 1
         tally["exposed_now"] += now
         tally["exposed_attach"] += nxt
         if took:
-            tally["prize_turns"] += 1
+            tally["prize_exposure_measured"] += 1
             tally["prize_exposed_now"] += now
             tally["prize_exposed_attach"] += nxt
+        return True
 
     for g in range(games):
         a_seat = g % 2
@@ -151,16 +155,26 @@ def run_e0b(arm: str, deck: str, bed: str, games: int) -> None:
             raise SystemExit(f"battle_start rejected a deck "
                              f"(errorType={start.errorType})")
         prev_actor, prizes_at_start, steps = None, 6, 0
+        pending = None            # (took,) awaiting an exposure-measurable obs
         try:
             while obs_dict["current"]["result"] < 0 and steps < 6000:
                 if obs_dict.get("select") is None:
                     break
                 actor = obs_dict["current"]["yourIndex"]
                 if prev_actor == a_seat and actor != a_seat:
-                    record_turn_end(obs_dict, a_seat, prizes_at_start)
+                    me_prize = len(
+                        obs_dict["current"]["players"][a_seat]["prize"])
+                    took = prizes_at_start - me_prize > 0
+                    tally["turn_ends"] += 1
+                    tally["prize_turns"] += took
+                    pending = (took,)
+                if pending is not None and try_exposure(obs_dict, a_seat,
+                                                        pending[0]):
+                    pending = None
                 if actor == a_seat and prev_actor != a_seat:
                     prizes_at_start = len(
                         obs_dict["current"]["players"][a_seat]["prize"])
+                    pending = None    # my turn again: stale exposure dropped
                 obs_dict = battle_select(list(pilots[actor](obs_dict)))
                 prev_actor = actor
                 steps += 1
@@ -175,11 +189,12 @@ def run_e0b(arm: str, deck: str, bed: str, games: int) -> None:
 
     out = {
         "arm": arm, "bed": bed, "deck": deck, **tally,
-        "walk_in_rate": rate("exposed_now", "turn_ends"),
-        "walk_in_attach_rate": rate("exposed_attach", "turn_ends"),
-        "prize_walk_in_rate": rate("prize_exposed_now", "prize_turns"),
+        "walk_in_rate": rate("exposed_now", "exposure_measured"),
+        "walk_in_attach_rate": rate("exposed_attach", "exposure_measured"),
+        "prize_walk_in_rate": rate("prize_exposed_now",
+                                   "prize_exposure_measured"),
         "prize_walk_in_attach_rate": rate("prize_exposed_attach",
-                                          "prize_turns"),
+                                          "prize_exposure_measured"),
     }
     RUNS.mkdir(exist_ok=True)
     path = RUNS / f"m38_e0b_{arm}_{bed}.json"
@@ -188,7 +203,8 @@ def run_e0b(arm: str, deck: str, bed: str, games: int) -> None:
           f"walk-in now/attach {out['walk_in_rate']:.3f}/"
           f"{out['walk_in_attach_rate']:.3f}  prize-turns "
           f"{tally['prize_turns']} walk-in {out['prize_walk_in_rate']:.3f}/"
-          f"{out['prize_walk_in_attach_rate']:.3f}  "
+          f"{out['prize_walk_in_attach_rate']:.3f} "
+          f"(measured {tally['prize_exposure_measured']}) "
           f"(wr {rate('wins', 'games'):.3f} n={tally['games']}) -> {path.name}",
           flush=True)
 
