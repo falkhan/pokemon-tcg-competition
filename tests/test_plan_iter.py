@@ -273,7 +273,7 @@ def _stub_engine(monkeypatch, selected, n_prompts=2, solve_score=2e5):
     # teacher solve: the line says option 1 then option 0
     monkeypatch.setattr(pi, "_solve",
                         lambda obs_, deck, dl: (solve_score, [[1], [0]],
-                                                [obs, obs]))
+                                                [obs, obs], False))
     monkeypatch.setattr(pi, "derive_plan", lambda line, trail, root: None)
     monkeypatch.setattr(pi, "enumerate_plans", lambda o: [None])
     # the greedy fallback: stub at its source (imported inside _collect_chunk)
@@ -402,7 +402,7 @@ def _vs_harness(monkeypatch, score=1e6):
     def fake_solve(obs_, deck_, deadline_s=0.0, dev=False, leaf_value=None,
                    **kw):
         leaf_value(obs_)
-        return score, [[0]], []
+        return score, [[0]], [], False
 
     monkeypatch.setattr(ts, "solve_turn_line", fake_solve)
     monkeypatch.setattr(

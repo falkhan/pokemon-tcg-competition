@@ -85,6 +85,18 @@ W_COUNTER = -1_000       # opp can return-KO one of my Pokemon, x its prize valu
 # disk and would pick up a half-edited module (the mistake that voided the first
 # C1 battery), but they DO inherit the environment.
 WHOLE_BOARD_THREAT = os.environ.get("M22_WHOLE_BOARD", "0") == "1"
+
+# M38 Phase 0 battery arms (docs/M38-plan.md), same env idiom as above.
+# M38_OLD_LEAF=1 is the A0 control: restore ONLY the pre-audit inverted prize
+# terms in score_leaf. Deliberately NOT a git-pinned old ref — the old ref
+# differs in more than the leaf (T4 trigger, docstrings) and would confound
+# the A/B. Remove after the Phase 0 battery decides.
+M38_OLD_LEAF = os.environ.get("M38_OLD_LEAF", "0") == "1"
+# M38_BAR selects the G1 lethal-tier override bar (see override_cleared):
+#   "current"  — MIN_OVERRIDE_SCORE (W_PRIZE - 1), the shipping bar (A1)
+#   "const"    — MIN_OVERRIDE_SCORE_LOW, a lowered constant (A2)
+#   "semantic" — the prize-or-win boolean threaded through _dfs (A3)
+M38_BAR = os.environ.get("M38_BAR", "current")
 W_BENCHLESS_KO = -5e8    # ... and my bench is EMPTY: that return-KO ends the GAME,
                          # not a prize — dominates any prize haul (< -W_PRIZE * 6)
 W_DECK_LOW = -5_000      # per card drawn while my deckCount <= 6 (anti-mill)
@@ -92,6 +104,13 @@ W_DAMAGE = 1.0           # per hp of chip on the opp active (tiebreak)
 W_RACE = -10             # per turn of my best turns-to-first-KO (tiebreak)
 DECK_LOW_AT = 6          # deckCount at or below which draws start costing
 MIN_OVERRIDE_SCORE = W_PRIZE - 1  # override greedy only for >=1 prize or a win
+# A2 (M38 G1 control arm): W_COUNTER / W_RACE / W_DECK_LOW ride the same
+# total, so a real 1-prize line can sit tens of thousands under W_PRIZE and
+# be declined by the bar above (the audit's "still mostly gagged" finding).
+# Half a prize clears any 1-prize line under worst-case riders while staying
+# far above the largest no-prize total (W_THREAT*3 + chip ~ 7k), and still
+# declines net-losing prize trades (take 1, concede 1 = -50k).
+MIN_OVERRIDE_SCORE_LOW = W_PRIZE // 2
 
 # Opponent hidden-zone fillers (rl/mcts.py recipe): the opponent never acts
 # within my turn, so placeholders are exact, not an approximation.
@@ -302,11 +321,18 @@ def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
             return W_DRAW
         return W_WIN if cur.result == snap.me else W_LOSS
     me_p, op_p = cur.players[snap.me], cur.players[1 - snap.me]
-    # Prize semantics (M38 audit, re-verified on the live engine): a player's
-    # .prize is the prizes THAT player still has to take, and it drains for
-    # whoever scores the KO — so MY array shrinking means I took prizes.
-    score = W_PRIZE * max(0, snap.my_prizes - len(me_p.prize))      # prizes I took
-    score += W_MY_PRIZE * max(0, snap.op_prizes - len(op_p.prize))  # prizes I conceded
+    if M38_OLD_LEAF:
+        # M38 A0 control arm: the pre-audit inverted terms, verbatim (every
+        # KO I take scores W_MY_PRIZE — the ~30-milestone teacher defect).
+        score = W_PRIZE * max(0, snap.op_prizes - len(op_p.prize))
+        score += W_MY_PRIZE * max(0, snap.my_prizes - len(me_p.prize))
+    else:
+        # Prize semantics (M38 audit, re-verified on the live engine): a
+        # player's .prize is the prizes THAT player still has to take, and it
+        # drains for whoever scores the KO — MY array shrinking means I took
+        # prizes.
+        score = W_PRIZE * max(0, snap.my_prizes - len(me_p.prize))      # prizes I took
+        score += W_MY_PRIZE * max(0, snap.op_prizes - len(op_p.prize))  # prizes I conceded
     my_active = me_p.active[0] if me_p.active and me_p.active[0] is not None else None
     op_active = op_p.active[0] if op_p.active and op_p.active[0] is not None else None
     board = _my_board(me_p)
@@ -345,49 +371,74 @@ def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
     return score
 
 
+def leaf_prize_or_win(snap: _Snap, obs) -> bool:
+    """A3 semantic fact (M38 G1): does this leaf take >= 1 prize since the
+    root, or win outright? Computed from the game STATE, never the W-vector —
+    any constant bar silently re-breaks every time a W-term is retuned."""
+    cur = obs.current
+    if cur.result >= 0:
+        return cur.result == snap.me
+    return snap.my_prizes - len(cur.players[snap.me].prize) > 0
+
+
+def override_cleared(score: float, prize_or_win: bool) -> bool:
+    """The lethal-tier override bar under the M38_BAR arm (G1). The same
+    predicate gates live overrides (solve_turn) AND corpus kill-plan labels
+    (plan_iter._cleared) — the two must never diverge."""
+    if M38_BAR == "semantic":
+        return prize_or_win
+    bar = MIN_OVERRIDE_SCORE_LOW if M38_BAR == "const" else MIN_OVERRIDE_SCORE
+    return score >= bar
+
+
 def _dfs(state, snap: _Snap, depth: int, deadline: float, budget: dict,
          dev: bool = False, fixes: frozenset = frozenset(), leaf_value=None):
-    """Depth-first search over MY remaining turn. Returns (score, line, trail)
-    where line is the action list-of-lists from `state` to the best leaf and
-    trail[i] is the search observation at which line[i] was taken (M11: plan
-    derivation only — these carry determinized hidden zones). Leaves: game
-    over, turn passed to the opponent, or depth cap. The stand-pat floor
-    means prizes already taken along the way are never given back by a worse
-    continuation. Depth/node caps read from `budget` (defaults = module
-    constants) so widened data-gen never mutates globals shared across seats."""
+    """Depth-first search over MY remaining turn. Returns (score, line,
+    trail, prize_or_win) where line is the action list-of-lists from `state`
+    to the best leaf, trail[i] is the search observation at which line[i] was
+    taken (M11: plan derivation only — these carry determinized hidden
+    zones), and prize_or_win is the best leaf's semantic fact for the A3 bar
+    (M38 G1). Leaves: game over, turn passed to the opponent, or depth cap.
+    The stand-pat floor means prizes already taken along the way are never
+    given back by a worse continuation. Depth/node caps read from `budget`
+    (defaults = module constants) so widened data-gen never mutates globals
+    shared across seats."""
     obs = state.observation
     max_depth = budget.get("max_depth", MAX_DEPTH)
     max_nodes = budget.get("max_nodes", MAX_NODES)
     if obs.current.result >= 0 or obs.current.yourIndex != snap.me \
             or depth >= max_depth:
-        return score_leaf(snap, obs, dev, leaf_value), [], []
+        return (score_leaf(snap, obs, dev, leaf_value), [], [],
+                leaf_prize_or_win(snap, obs))
     best_score, best_line, best_trail = \
         score_leaf(snap, obs, dev, leaf_value), [], []
+    best_pw = leaf_prize_or_win(snap, obs)
     for action in _candidate_actions(obs, fixes):
         if budget["nodes"] >= max_nodes or perf_counter() >= deadline:
             break
         budget["nodes"] += 1
         child = search_step(state.searchId, action)
-        score, line, trail = _dfs(child, snap, depth + 1, deadline, budget,
-                                  dev, fixes, leaf_value)
+        score, line, trail, pw = _dfs(child, snap, depth + 1, deadline,
+                                      budget, dev, fixes, leaf_value)
         if score > best_score:
-            best_score, best_line, best_trail = \
-                score, [action] + line, [obs] + trail
+            best_score, best_line, best_trail, best_pw = \
+                score, [action] + line, [obs] + trail, pw
         if best_score >= W_WIN:                          # win short-circuit
             break
-    return best_score, best_line, best_trail
+    return best_score, best_line, best_trail, best_pw
 
 
 def solve_turn_line(obs, deck: list[int], deadline_s: float | None = None,
                     dev: bool = False, fixes: frozenset = frozenset(),
                     max_depth: int | None = None, max_nodes: int | None = None,
                     leaf_value=None,
-                    ) -> tuple[float, list[list[int]], list]:
+                    ) -> tuple[float, list[list[int]], list, bool]:
     """Full-line variant for offline data generation (M11 expert iteration):
-    returns (best_score, line, per_step_obs) with NO first-action truncation
-    and NO override gate. per_step_obs[i] is the search observation at which
-    line[i] was chosen — a determinized snapshot: use it for plan derivation
-    ONLY, never as a training state."""
+    returns (best_score, line, per_step_obs, prize_or_win) with NO
+    first-action truncation and NO override gate. per_step_obs[i] is the
+    search observation at which line[i] was chosen — a determinized snapshot:
+    use it for plan derivation ONLY, never as a training state. prize_or_win
+    is the best leaf's semantic fact (M38 G1) for override_cleared."""
     if deadline_s is None:
         deadline_s = DEV_DEADLINE_S if dev else SOLVE_DEADLINE_S
     snap = _root_snapshot(obs)
@@ -428,7 +479,7 @@ def score_siblings(obs, deck: list[int], deadline_s: float | None = None,
                 break
             budget["nodes"] += 1
             child = search_step(root.searchId, action)
-            score, _, _ = _dfs(child, snap, 1, deadline, budget, dev)
+            score, _, _, _ = _dfs(child, snap, 1, deadline, budget, dev)
             out.append(([int(i) for i in action], float(score)))
     finally:
         search_end()
@@ -445,14 +496,15 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
     caller re-invokes on the next prompt — recompute-per-prompt absorbs own
     draw reveals, so no plan is cached.
 
-    Tiers (M8.1): lethal (default) overrides only for >=1 prize or a win
-    (MIN_OVERRIDE_SCORE); dev overrides only when the best line beats the
-    stand-pat leaf by DEV_OVERRIDE_MARGIN — a real development gain, not
-    line-vs-line noise — under the shorter DEV_DEADLINE_S."""
-    best_score, best_line, _ = solve_turn_line(obs, deck, deadline_s, dev,
-                                               fixes, max_depth=max_depth,
-                                               max_nodes=max_nodes,
-                                               leaf_value=leaf_value)
+    Tiers (M8.1): lethal (default) overrides only for >=1 prize or a win —
+    the bar itself is arm-selectable via M38_BAR (override_cleared); dev
+    overrides only when the best line beats the stand-pat leaf by
+    DEV_OVERRIDE_MARGIN — a real development gain, not line-vs-line noise —
+    under the shorter DEV_DEADLINE_S."""
+    best_score, best_line, _, prize_or_win = \
+        solve_turn_line(obs, deck, deadline_s, dev, fixes,
+                        max_depth=max_depth, max_nodes=max_nodes,
+                        leaf_value=leaf_value)
     if not best_line:
         return None
     if dev:
@@ -462,7 +514,7 @@ def solve_turn(obs, deck: list[int], deadline_s: float | None = None,
                                     leaf_value=leaf_value) + margin:
             return [int(i) for i in best_line[0]]
         return None
-    if best_score >= MIN_OVERRIDE_SCORE:
+    if override_cleared(best_score, prize_or_win):
         return [int(i) for i in best_line[0]]
     return None
 

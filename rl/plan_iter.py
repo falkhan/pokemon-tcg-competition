@@ -35,7 +35,7 @@ from torch.utils.data import DataLoader
 from cg.api import (CardType, OptionType, SelectContext, all_card_data,
                     to_observation_class)
 from cg.game import battle_finish, battle_select, battle_start
-from rl.turn_solver import MIN_OVERRIDE_SCORE
+from rl.turn_solver import override_cleared
 from rl.bc import load_population
 from rl.encoders import (N_CONTEXTS, N_OPTION_TYPES, N_STATE_IDS_V3,
                          STATE_V2_DIM, encode_context, encode_option_v2,
@@ -106,7 +106,7 @@ def _value_solve_factory(vnet, cell, stats, vs_margin=VS_MARGIN,
         lv = leaf_value_for(deck)
         stats["vs_calls"] += 1
         try:
-            score, line, trail = solve_turn_line(
+            score, line, trail, _pw = solve_turn_line(
                 obs, deck, deadline_s=0.5, dev=True, leaf_value=lv)
             snap = _root_snapshot(obs)
             if line:
@@ -135,12 +135,12 @@ def _solve(obs, deck, deadline_s):
     any exception -> no line (fallback pilot takes over)."""
     from rl.turn_solver import solve_turn_line
     if getattr(obs, "search_begin_input", None) is None:
-        return None, [], []
+        return None, [], [], False
     try:
         return solve_turn_line(obs, deck, deadline_s=deadline_s,
                                max_depth=WIDE_DEPTH, max_nodes=WIDE_NODES)
     except Exception:
-        return None, [], []
+        return None, [], [], False
 
 
 def _action_valid(action, obs) -> bool:
@@ -156,11 +156,13 @@ def _fresh_seat_state():
             "line": None, "step": 0, "on": False}
 
 
-def _cleared(score) -> bool:
-    """Rung 0'' (2026-07-17): honor the shipping solver's override bar. Lines
-    below MIN_OVERRIDE_SCORE are the M8.1 dev-tier trap — trusting them was
-    measured at 0.314 < 0.362, and cloning them produced Rung 0's 0.33 wall."""
-    return score is not None and score >= MIN_OVERRIDE_SCORE
+def _cleared(score, prize_or_win: bool = False) -> bool:
+    """Rung 0'' (2026-07-17): honor the shipping solver's override bar —
+    arm-selectable since M38 (turn_solver.override_cleared): the corpus
+    label gate MUST follow the live bar or labels and pilot diverge. Lines
+    below the bar are the M8.1 dev-tier trap — trusting them was measured
+    at 0.314 < 0.362, and cloning them produced Rung 0's 0.33 wall."""
+    return score is not None and override_cleared(score, prize_or_win)
 
 
 def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
@@ -173,8 +175,8 @@ def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
     very line (anti-aliasing)."""
     plan_row = None
     if is_main and st["key"] != key:
-        score, line, trail = _solve(obs, deck, deadline)
-        committed = bool(line) and _cleared(score)
+        score, line, trail, pw = _solve(obs, deck, deadline)
+        committed = bool(line) and _cleared(score, pw)
         if committed:
             stats["kill_plans"] += 1
         elif value_solve is not None:
@@ -209,8 +211,8 @@ def _teacher_step(st, obs, obs_dict, deck, fallback, key, is_main,
             st["on"] = False
             stats["derails"] += 1
     if action is None and len(obs.select.option) >= 2:
-        score2, line2, trail2 = _solve(obs, deck, label_deadline)
-        if line2 and _cleared(score2) \
+        score2, line2, trail2, pw2 = _solve(obs, deck, label_deadline)
+        if line2 and _cleared(score2, pw2) \
                 and _action_valid([int(i) for i in line2[0]], obs):
             action = [int(i) for i in line2[0]]
             plan2 = derive_plan(line2, trail2, obs)
