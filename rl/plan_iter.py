@@ -288,7 +288,11 @@ def _collect_chunk(args):
     def _opponent(spec_str, instance):
         if spec_str not in opp_pilots:
             from rl.matchrunner import make_pilot, parse_spec
-            opp_pilots[spec_str] = make_pilot(parse_spec(spec_str), instance)
+            # M38: suffix per distinct spec — rule teachers require a unique
+            # instance per live pilot (module-level state, rl/teacher.py),
+            # and an M38-style mixed rotation can hold several rule specs.
+            opp_pilots[spec_str] = make_pilot(
+                parse_spec(spec_str), f"{instance}_{len(opp_pilots)}")
         return opp_pilots[spec_str]
 
     columns = ("states", "plans", "state_ids", "options", "option_ids",
