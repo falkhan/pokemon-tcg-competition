@@ -150,7 +150,7 @@ def solve_trigger(obs) -> str | None:
             _hits_to_ko(p, op_active) == 1 and _turns_to_ready(p, op_active) <= 1
             for p in board):
         return "T3_multiprize"
-    if len(op.prize) <= 2 and best_plus > 0:                       # T4: game-closing range
+    if len(me.prize) <= 2 and best_plus > 0:                       # T4: game-closing range
         return "T4_closing"
     return None
 
@@ -230,9 +230,14 @@ def _open_search(obs, deck):
 
 
 def _root_snapshot(obs) -> _Snap:
-    """Pre-search facts the leaf scorer diffs against. Prize semantics: the
-    engine drains the OPPONENT's prize list as I take prizes (a KO wins when
-    len(op.prize) <= its prize value — sample-agent/main.py)."""
+    """Pre-search facts the leaf scorer diffs against.
+
+    Prize semantics (M36 finding, re-verified live in the M38 audit): a
+    player's `.prize` is the prizes THAT player still has to take, and the
+    engine drains MY list as I take prizes (a KO wins when len(me.prize) <=
+    its prize value). NOTE: sample-agent/main.py:283 assumes the opposite and
+    is wrong — this docstring used to cite it, and score_leaf inherited the
+    inversion. Do not "restore" it from the sample agent."""
     st = obs.current
     me, op = st.players[st.yourIndex], st.players[1 - st.yourIndex]
     op_active = op.active[0] if op.active and op.active[0] is not None else None
@@ -297,8 +302,11 @@ def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
             return W_DRAW
         return W_WIN if cur.result == snap.me else W_LOSS
     me_p, op_p = cur.players[snap.me], cur.players[1 - snap.me]
-    score = W_PRIZE * max(0, snap.op_prizes - len(op_p.prize))      # prizes I took
-    score += W_MY_PRIZE * max(0, snap.my_prizes - len(me_p.prize))  # prizes I conceded
+    # Prize semantics (M38 audit, re-verified on the live engine): a player's
+    # .prize is the prizes THAT player still has to take, and it drains for
+    # whoever scores the KO — so MY array shrinking means I took prizes.
+    score = W_PRIZE * max(0, snap.my_prizes - len(me_p.prize))      # prizes I took
+    score += W_MY_PRIZE * max(0, snap.op_prizes - len(op_p.prize))  # prizes I conceded
     my_active = me_p.active[0] if me_p.active and me_p.active[0] is not None else None
     op_active = op_p.active[0] if op_p.active and op_p.active[0] is not None else None
     board = _my_board(me_p)

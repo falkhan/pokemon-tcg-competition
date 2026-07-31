@@ -3,7 +3,7 @@
 bundled deck. No neural net, no torch, no numpy needed — just the bundled `cg` engine and
 the pure-Python pilot + combat core (rl/combat.py).
 
-Built by `python -m rl.export --agent rules`, which bundles cg/, a minimal rl/ package
+Built by `python -m tcg.shipping export --agent rules`, which bundles cg/, a minimal rl/ package
 (combat.py + generic_pilot.py + turn_solver.py), and deck.csv alongside this file. Because
 we ship the ACTUAL pilot modules (not hand-copied forks), the submission runs exactly the
 code we test.

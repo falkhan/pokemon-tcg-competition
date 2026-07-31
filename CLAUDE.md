@@ -9,10 +9,15 @@ When running a pipeline to ship a new model use hermes integration to send perio
 ## Project shape
 - `rl/` — reinforcement learning core: `plan.py`, `plan_iter.py`, `policy.py`,
   `rank.py`, `matchrunner.py`, `turn_solver.py`, `setup_value.py`, `bc.py`,
-  `combat.py`, `network.py`, `kaggle_ingest.py`, `replay_bc.py`.
-- `tcg/` — game engine: `combat.py`, `pilot.py`, `network.py`, `shipping.py`.
-- `submission/` — the shippable agent (`main.py`, `rl/encoders.py`, `combat.py`,
-  `plan.py`) — what's actually submitted to the competition.
+  `combat.py`, `encoders.py`, `kaggle_ingest.py`, `replay_bc.py`.
+  (There is no `rl/network.py` — the net lives in `rl/policy.py` and
+  `tcg/network.py`.)
+- `tcg/` — the readable refactor + shipping: `combat.py`, `pilot.py`,
+  `network.py`, `shipping.py` (`tcg.shipping` is the live export/gate path).
+- `submission/` — the shippable agent (`main.py` plus the bundled `rl/`
+  package: `rl/encoders.py`, `rl/combat.py`, `rl/plan.py`, `rl/memory.py`) —
+  what's actually submitted to the competition. `submission/rl/*` must stay
+  byte-identical to `rl/*`; the export regenerates it.
 - `tests/` — pytest suite (`test_*.py`).
 - `docs/` — milestone records M0–M14, plans, decisions (`DECISIONS.md`,
   `MILESTONES.md`).

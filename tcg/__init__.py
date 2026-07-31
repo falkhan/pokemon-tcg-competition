@@ -36,8 +36,17 @@ This package intentionally does not import its submodules here: building the
 card tables requires the ``cg`` engine, and ``import tcg`` alone should stay
 side-effect free.
 
-The ``rl/`` package still exists unchanged and remains the live path for the
-submission pipeline (``rl.export`` / ``rl.gate`` / ``submission_rules``);
-switching consumers over to ``tcg`` is gated on real-engine gate games and is
-the remaining follow-up (docs/M6.md).
+Shipping switched over long ago: ``build_submission.sh`` and
+``build_submission.ps1`` both drive ``tcg.shipping export`` / ``tcg.shipping
+gate``, and ``rl/export.py`` / ``rl/gate.py`` are superseded (their CLIs now
+refuse to run — ``rl.export`` never synced ``submission/rl/``). They survive
+only as the parity twins pinned by ``tests/test_evaluation_shipping.py``.
+
+The rest of ``rl/`` is still the live training path, and several ``rl``/``tcg``
+pairs (bc/behavior_cloning, ppo, deck_search, eval/evaluation,
+value_train/value_training, combat, encoders) remain duplicated, each held
+together by an old-vs-new parity test. Note the shipped bundle imports
+``rl/encoders.py`` while ``tcg/shipping.py``'s gate compares against
+``tcg/encoders.py`` — that cross-check is deliberate and is what keeps the
+pair honest. Finishing the switchover is still the follow-up (docs/M6.md).
 """

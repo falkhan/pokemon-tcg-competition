@@ -84,6 +84,21 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
 
 
 if __name__ == "__main__":
+    # SUPERSEDED by tcg/shipping.py (M6), which is what build_submission.sh
+    # and build_submission.ps1 actually run. This module survives only as the
+    # parity twin pinned by tests/test_evaluation_shipping.py — its importable
+    # API stays live for those tests, but the CLI must not be used to build a
+    # real bundle: export() below copies weights, card features, deck and cg/,
+    # but NOT the rl/ package into submission/ (tcg/shipping.py does). Running
+    # it would ship a bundle whose rl/plan.py and rl/encoders.py are whatever
+    # was last left in submission/rl/ — silently, with no error. Given the
+    # M18.1/M22c fossil-deck history, fail loudly instead.
+    raise SystemExit(
+        "rl.export is superseded and does NOT sync submission/rl/ — a bundle "
+        "built with it ships stale encoders/plan modules. Use:\n"
+        "  ./build_submission.sh --checkpoint <ckpt> --deck <deck>\n"
+        "  (or: python -m tcg.shipping export ...)")
+
     p = argparse.ArgumentParser()
     p.add_argument("--agent", choices=["neural", "rules"], default="neural")
     p.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
