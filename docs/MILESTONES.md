@@ -1,5 +1,13 @@
 # Milestones at a glance — what was tried, what it measured, where it led
 
+> **EPOCH MARKER (2026-07-31, M38 / R3):** the M37 audit fixed a prize-term
+> inversion in `rl/turn_solver.score_leaf` and M38 changed the override bar
+> to a semantic prize-or-win gate. **Every solver-backed bed number recorded
+> before 2026-07-31 is pre-fix era and NOT comparable to post-fix numbers**
+> — including the 0.55 `solver:lucario` campaign bar below, which is being
+> re-pinned in M38 (G2). Never quote pre-fix solver-bed numbers next to
+> post-fix ones.
+
 High-level map of every milestone (M0–M21) for orientation; each section links to the
 full diary. **Campaign bar (M8→now):** any agent ≥ **0.55 vs `solver:lucario`** at n ≥ 800,
 zero G1 crashes, sane latency — plus, since M10, the **meta_v2 co-gate** on promotion

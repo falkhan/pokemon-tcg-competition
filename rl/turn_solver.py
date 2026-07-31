@@ -93,10 +93,14 @@ WHOLE_BOARD_THREAT = os.environ.get("M22_WHOLE_BOARD", "0") == "1"
 # the A/B. Remove after the Phase 0 battery decides.
 M38_OLD_LEAF = os.environ.get("M38_OLD_LEAF", "0") == "1"
 # M38_BAR selects the G1 lethal-tier override bar (see override_cleared):
-#   "current"  — MIN_OVERRIDE_SCORE (W_PRIZE - 1), the shipping bar (A1)
+#   "semantic" — the prize-or-win boolean threaded through _dfs (A3) —
+#                THE G1 WINNER (Phase 0 battery, Piotr's call 2026-07-31):
+#                E0a-strongest, label density equal, and the gate's
+#                semantics survive every future W-vector retune (the exact
+#                mechanism by which the P0b mis-calibration arose)
+#   "current"  — MIN_OVERRIDE_SCORE (W_PRIZE - 1), the pre-M38 bar (A1)
 #   "const"    — MIN_OVERRIDE_SCORE_LOW, a lowered constant (A2)
-#   "semantic" — the prize-or-win boolean threaded through _dfs (A3)
-M38_BAR = os.environ.get("M38_BAR", "current")
+M38_BAR = os.environ.get("M38_BAR", "semantic")
 W_BENCHLESS_KO = -5e8    # ... and my bench is EMPTY: that return-KO ends the GAME,
                          # not a prize — dominates any prize haul (< -W_PRIZE * 6)
 W_DECK_LOW = -5_000      # per card drawn while my deckCount <= 6 (anti-mill)

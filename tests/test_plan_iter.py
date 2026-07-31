@@ -9,6 +9,7 @@ np = pytest.importorskip("numpy")
 torch = pytest.importorskip("torch")
 
 import rl.plan_iter as pi
+import rl.turn_solver as ts
 from rl.encoders import (N_CONTEXTS, N_OPTION_IDS, N_STATE_IDS,
                          N_STATE_IDS_V3, OPTION_DIM, STATE_V2_DIM)
 from rl.plan import PLAN_DIM
@@ -271,9 +272,12 @@ def _stub_engine(monkeypatch, selected, n_prompts=2, solve_score=2e5):
                         lambda o, ob: (np.zeros(5, np.float32),
                                        np.zeros(2, np.int32)))
     # teacher solve: the line says option 1 then option 0
+    # pw mirrors the score: a bar-clearing fake line IS a prize line, so the
+    # tests stay coherent under every M38_BAR arm (semantic default incl.).
     monkeypatch.setattr(pi, "_solve",
                         lambda obs_, deck, dl: (solve_score, [[1], [0]],
-                                                [obs, obs], False))
+                                                [obs, obs],
+                                                solve_score >= ts.MIN_OVERRIDE_SCORE))
     monkeypatch.setattr(pi, "derive_plan", lambda line, trail, root: None)
     monkeypatch.setattr(pi, "enumerate_plans", lambda o: [None])
     # the greedy fallback: stub at its source (imported inside _collect_chunk)

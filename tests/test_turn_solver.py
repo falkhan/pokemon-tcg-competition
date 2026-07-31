@@ -359,9 +359,17 @@ def test_m38_old_leaf_flag_restores_the_inversion(monkeypatch):
 def test_override_cleared_bar_arms(monkeypatch):
     """G1 bar arms behind M38_BAR (docs/M38-plan.md). The riders-under-bar
     1-prize score (99_980, the calibration-gap pin above) is the exact case
-    the arms disagree on."""
+    the arms disagree on. DEFAULT = semantic since the Phase 0 battery
+    decided G1 (Piotr, 2026-07-31)."""
     one_prize_with_riders = ts.W_PRIZE - 20.0
-    # A1 current bar: declines it (the audit's "still mostly gagged").
+    # A3 semantic gate — the shipping default: the state fact decides, the
+    # W-vector is irrelevant.
+    assert ts.M38_BAR == "semantic"
+    assert ts.override_cleared(one_prize_with_riders, True)
+    assert not ts.override_cleared(one_prize_with_riders, False)
+    # A1 pre-M38 bar: declines the riders case (the audit's "still mostly
+    # gagged") — kept selectable for reproducing pre-G1 baselines.
+    monkeypatch.setattr(ts, "M38_BAR", "current")
     assert not ts.override_cleared(one_prize_with_riders, True)
     assert ts.override_cleared(2 * ts.W_PRIZE - 20.0, True)
     # A2 lowered constant: clears it, still declines a net-losing prize
@@ -370,10 +378,6 @@ def test_override_cleared_bar_arms(monkeypatch):
     assert ts.override_cleared(one_prize_with_riders, True)
     assert not ts.override_cleared(float(ts.W_PRIZE + ts.W_MY_PRIZE), True)
     assert not ts.override_cleared(3 * ts.W_THREAT + 130.0, False)
-    # A3 semantic gate: the state fact decides, the W-vector is irrelevant.
-    monkeypatch.setattr(ts, "M38_BAR", "semantic")
-    assert ts.override_cleared(one_prize_with_riders, True)
-    assert not ts.override_cleared(one_prize_with_riders, False)
 
 
 def test_solve_turn_semantic_arm_fires_on_the_gagged_one_prize_line(monkeypatch):
@@ -391,11 +395,11 @@ def test_solve_turn_semantic_arm_fires_on_the_gagged_one_prize_line(monkeypatch)
     score, line, _, pw = ts.solve_turn_line(root, DECK)
     assert line == [[0]] and pw is True
     assert 0 < score < ts.MIN_OVERRIDE_SCORE             # the calibration gap, live
-    assert ts.solve_turn(root, DECK) is None             # A1 current bar: gagged
+    assert ts.solve_turn(root, DECK) == [0]              # A3 default: fires
+    monkeypatch.setattr(ts, "M38_BAR", "current")
+    assert ts.solve_turn(root, DECK) is None             # pre-M38 bar: gagged
     monkeypatch.setattr(ts, "M38_BAR", "const")
     assert ts.solve_turn(root, DECK) == [0]              # A2: fires
-    monkeypatch.setattr(ts, "M38_BAR", "semantic")
-    assert ts.solve_turn(root, DECK) == [0]              # A3: fires
 
 
 def test_score_leaf_benchless_return_ko_dominates_prizes():
