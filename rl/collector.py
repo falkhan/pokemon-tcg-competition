@@ -453,7 +453,11 @@ def _play_worker(args: tuple) -> tuple:
                 (picks, action, logprob, value, sc, sids, opts, oids, plan,
                  plan_rec) = run_learner(obs, learn_deck)
                 me = obs.current.players[seat]; op = obs.current.players[1 - seat]
-                delta = (6 - len(op.prize)) - (6 - len(me.prize))     # prizes I took - they took
+                # .prize = the prizes THAT player still has to take (M36
+                # finding, re-verified live in the M38 audit), so prizes I
+                # took = 6 - len(me.prize). The operands used to be swapped,
+                # which flipped the sign of the whole shaping term.
+                delta = (6 - len(me.prize)) - (6 - len(op.prize))     # prizes I took - they took
                 reward = PRIZE_SHAPING * (delta - prev_delta)
                 prev_delta = delta
                 if defect_penalty and _is_over_attach(obs, obs.select.option[action]):

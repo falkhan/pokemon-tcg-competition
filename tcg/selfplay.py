@@ -225,8 +225,11 @@ def play_worker(args: tuple) -> str:
                  option_vectors, option_ids) = run_learner(observation, learn_deck)
                 me = observation.current.players[seat]
                 opponent = observation.current.players[1 - seat]
-                # prizes I took minus prizes they took; reward the per-step change
-                delta = (6 - len(opponent.prize)) - (6 - len(me.prize))
+                # prizes I took minus prizes they took; reward the per-step change.
+                # .prize = the prizes THAT player still has to take (M36 finding,
+                # re-verified live in the M38 audit) — the operands used to be
+                # swapped, which flipped the sign of the whole shaping term.
+                delta = (6 - len(me.prize)) - (6 - len(opponent.prize))
                 reward = PRIZE_SHAPING * (delta - prev_delta)
                 prev_delta = delta
                 if race_shaping:

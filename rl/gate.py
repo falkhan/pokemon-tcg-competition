@@ -161,6 +161,15 @@ def main_rules() -> None:
 
 
 if __name__ == "__main__":
+    # SUPERSEDED by tcg/shipping.py (M6) — see the note in rl/export.py. The
+    # importable checks stay live for tests/test_evaluation_shipping.py, but
+    # gating a real ship must go through the path build_submission.sh runs,
+    # which also carries the v4 memory-drift and plan-head parity gates.
+    raise SystemExit(
+        "rl.gate is superseded. Use:\n"
+        "  ./build_submission.sh --checkpoint <ckpt> --deck <deck>\n"
+        "  (or: python -m tcg.shipping gate --agent <neural|rules>)")
+
     p = argparse.ArgumentParser()
     p.add_argument("--agent", choices=["neural", "rules"], default="neural")
     args = p.parse_args()

@@ -62,7 +62,9 @@ def combo_tree():
 
     chip = flipped(my_p, player(active=pokemon(2, hp=40), prizes_remaining=4))
     ended = flipped(my_p, op_p)
-    ko2 = flipped(my_p, player(active=pokemon(5, hp=60), prizes_remaining=2))
+    # Taking 2 prizes drains MY array, not the opponent's (M38 audit).
+    ko2 = flipped(me_board(prizes=2),
+                  player(active=pokemon(5, hp=60), prizes_remaining=4))
 
     def main2(sid):  # a my-turn ATTACK/END menu deeper in the line
         return search_state(
@@ -156,7 +158,9 @@ def test_multi_select_prompt_capped_and_lethal_pair_found(monkeypatch):
     my_p, op_p = me_board(), op_board()
     root = main_menu(my_p, op_p, [PLAY_HAND0, END])
     ended = flipped(my_p, op_p)
-    ko2 = flipped(my_p, player(active=pokemon(5, hp=60), prizes_remaining=2))
+    # Taking 2 prizes drains MY array, not the opponent's (M38 audit).
+    ko2 = flipped(me_board(prizes=2),
+                  player(active=pokemon(5, hp=60), prizes_remaining=4))
     picks = observation(my_p, op_p, context=SelectContext.DISCARD, max_count=2,
                         options=[option(OptionType.CARD, area=AreaType.HAND, index=0)] * 4)
 
@@ -244,8 +248,8 @@ def _trigger_obs(my_p, op_p, n_options=2, with_input=True):
     # attached WATER can't pay [F,F] so best_damage(+1) stays 0 (no T1)
     ("T3", player(active=pokemon(3, hp=200, energies=(W,)), prizes_remaining=4),
      op_board(hp=130), True),
-    # T4: 2 prizes from winning, any damage in reach
-    ("T4", me_board(energies=(), hand=()), op_board(hp=200, prizes=2), True),
+    # T4: *I* am 2 prizes from winning (my own array), any damage in reach
+    ("T4", me_board(energies=(), hand=(), prizes=2), op_board(hp=200), True),
     # negatives
     ("far", me_board(energies=(), hand=()), op_board(hp=200), False),
     ("no-trainer", me_board(hand=()), op_board(hp=130), False),
@@ -273,16 +277,59 @@ def test_score_leaf_ordering():
         obs.current.result = result
         return ts.score_leaf(snap, obs)
 
+    # Prize direction (M38 audit): .prize is what THAT player still has to
+    # take, so MY array shrinking below the snapshot is ME taking prizes.
+    # These cases used to be written the other way round, which is how the
+    # score_leaf inversion survived a green suite for 30 milestones.
     win = leaf(result=0)
-    two_prizes = leaf(op_prizes=2, op_hp=60)
-    one_prize_threat = leaf(op_prizes=3, op_hp=60)       # 90 dmg >= 60: lethal next
-    one_prize = leaf(op_prizes=3)
+    two_prizes = leaf(my_prizes=2, op_hp=60)
+    one_prize_threat = leaf(my_prizes=3, op_hp=60)       # 90 dmg >= 60: lethal next
+    one_prize = leaf(my_prizes=3)
     threat_only = leaf(op_hp=60)
     dev = leaf()
     assert win > two_prizes > one_prize_threat > one_prize > threat_only > dev
-    assert leaf(op_prizes=3, my_prizes=3) < one_prize    # conceding a prize costs
+    assert leaf(my_prizes=3, op_prizes=3) < one_prize    # conceding a prize costs
     assert leaf(my_deck=4) < dev                         # deck-out draws penalized
     assert leaf(result=1) < leaf(result=2) < dev         # loss < draw < any live line
+
+
+def test_score_leaf_prize_direction_is_not_inverted():
+    """Regression pin for the M38 audit finding.
+
+    A player's `.prize` is the prizes THAT player still has to take, and it
+    drains for whoever scores the KO (verified live: over 41,570 real search
+    leaves the opponent's array never moved during our own turn, while 1,291
+    of our own KOs each scored -150,000). The swapped version of score_leaf
+    made every prize the solver could take strictly worse than standing pat,
+    so `_dfs` could never choose a prize line and MIN_OVERRIDE_SCORE became
+    unreachable. Both directions are pinned so a future swap fails here.
+    """
+    snap = ts._Snap(me=0, my_prizes=4, op_prizes=4, op_active_hp=130,
+                    my_deck_count=30)
+
+    def leaf(my_prizes=4, op_prizes=4):
+        mine = player(active=pokemon(1, hp=120, energies=(F, F)),
+                      prizes_remaining=my_prizes, deck_count=30)
+        opp = player(active=pokemon(2, hp=130), prizes_remaining=op_prizes)
+        return ts.score_leaf(snap, flipped(mine, opp))
+
+    stand_pat = leaf()
+    # I took a prize -> MY array shrank -> strictly better than standing pat.
+    assert leaf(my_prizes=3) > stand_pat
+    assert leaf(my_prizes=1) > leaf(my_prizes=3)         # 3 prizes beat 1
+    # I conceded a prize -> the OPPONENT's array shrank -> strictly worse.
+    assert leaf(op_prizes=3) < stand_pat
+
+    # KNOWN CALIBRATION GAP (M38 audit follow-up, deliberately NOT retuned
+    # here — the bar is a tuned constant and moving it needs its own A/B).
+    # MIN_OVERRIDE_SCORE = W_PRIZE - 1 assumes the prize term is the only
+    # contributor, but W_COUNTER (-1000 x prize value, per exposed Pokemon),
+    # W_RACE and W_DECK_LOW (-5000/card) ride on the same total. So a real
+    # 1-prize line can still fall under the bar and be declined -- here by
+    # W_RACE alone. Pinned so that retuning the bar fails this assertion and
+    # forces a deliberate update.
+    assert leaf(my_prizes=3) < ts.MIN_OVERRIDE_SCORE     # 99_980 < 99_999
+    assert leaf(my_prizes=2) > ts.MIN_OVERRIDE_SCORE     # 2 prizes clear it
 
 
 def test_score_leaf_benchless_return_ko_dominates_prizes():
@@ -292,15 +339,15 @@ def test_score_leaf_benchless_return_ko_dominates_prizes():
     snap = ts._Snap(me=0, my_prizes=4, op_prizes=4, op_active_hp=130,
                     my_deck_count=30)
 
-    def leaf(bench=(), my_hp=20, op_prizes=4):
+    def leaf(bench=(), my_hp=20, my_prizes=4):
         mine = player(active=pokemon(1, hp=my_hp, energies=(F, F)),
-                      bench=list(bench), prizes_remaining=4, deck_count=30)
+                      bench=list(bench), prizes_remaining=my_prizes, deck_count=30)
         opp = player(active=pokemon(2, hp=130, energies=(W,)),  # 20dmg affordable
-                     prizes_remaining=op_prizes)
+                     prizes_remaining=4)
         return ts.score_leaf(snap, flipped(mine, opp))
 
-    exposed_benchless = leaf(op_prizes=2)                # 2 prizes taken, no bench
-    exposed_benched = leaf(bench=[pokemon(5)], op_prizes=2)
+    exposed_benchless = leaf(my_prizes=2)                # 2 prizes taken, no bench
+    exposed_benched = leaf(bench=[pokemon(5)], my_prizes=2)
     assert exposed_benchless < exposed_benched           # only the benchless case sinks
     assert exposed_benchless < -3 * ts.W_PRIZE           # ... below ANY prize haul
     assert leaf(my_hp=120) > ts.W_COUNTER * 3            # 20 dmg can't KO 120hp: no penalty
