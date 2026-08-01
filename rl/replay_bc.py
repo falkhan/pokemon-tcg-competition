@@ -331,6 +331,7 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
           min_steps: int = 0, shard_size: int = 5000,
           only_subs: set[int] | None = None,
           only_deck_hash: str | None = None,
+          opp_deck_hash: tuple[str, ...] | None = None,
           hand_aware: bool = False) -> None:
     """Encode qualifying replay seats into BC shards.
 
@@ -348,6 +349,26 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
     this prefix — the strong-pilots-on-OUR-deck corpus (deck_hash is the
     order-invariant sha1 from rl.kaggle_ingest; a short unambiguous prefix
     like '20dcd313' is enough).
+
+    opp_deck_hash (M39): restrict to seats whose OPPONENT's decklist hash
+    starts with one of these prefixes — the matchup-specific corpus. Two
+    consumers, which is why it is one flag and not two:
+
+      * BEDS (M39 D1). A bed cloned from a family's seats learns how they
+        play the field. Filtered to the games where they faced OUR deck, it
+        learns how they play US. Whether that closes the bed-vs-live gap is
+        the open question this flag exists to answer.
+      * OUR CORPUS (M39 P3 corpus A). Paired with --deck-hash it selects
+        same-deck seats filtered to the matchups that beat us — strong
+        alakazam pilots beating grim/wall/archaludon, in our own action
+        space. (Do NOT pair that build with --winners-only: the whole point
+        of keeping loser rows is that --outcome-weight has something to act
+        on; alpha=0 reproduces winners-only exactly.)
+
+    Multi-valued because archetypes are lists, not hashes: grim's alakazam
+    opponents span 5 hashes to reach 99% coverage. Seats whose opponent deck
+    could not be extracted are DROPPED, not kept — an unverifiable opponent
+    is exactly what this filter exists to exclude.
 
     hand_aware (M25): encode state_ids with encode_state_v3 (board + own-hand
     ids) instead of encode_state_v2 (board only) — pair with `plan_iter train
@@ -423,6 +444,14 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
                     ep.decks[seat]).startswith(only_deck_hash):
                 skips["seat_other_deck"] += 1
                 continue
+            if opp_deck_hash is not None:
+                opp_deck = ep.decks[1 - seat]
+                if opp_deck is None:
+                    skips["seat_opp_no_deck"] += 1
+                    continue
+                if not deck_hash(opp_deck).startswith(tuple(opp_deck_hash)):
+                    skips["seat_opp_other_deck"] += 1
+                    continue
             if None in (reward, opp_reward):
                 skips["seat_no_reward"] += 1
                 continue
@@ -619,6 +648,11 @@ def _main() -> None:
     s.add_argument("--deck-hash", type=str, default=None,
                    help="M24: keep only seats whose deck_hash starts with "
                         "this prefix (e.g. 20dcd313 = our lucario 60)")
+    s.add_argument("--opp-deck-hash", type=str, nargs="+", default=None,
+                   help="M39: keep only seats whose OPPONENT's deck_hash "
+                        "starts with one of these prefixes (matchup-specific "
+                        "corpus; multi-valued because an archetype spans "
+                        "several lists)")
     s.add_argument("--hand-aware", action="store_true",
                    help="M25: encode state_ids with encode_state_v3 (board + "
                         "own-hand ids) instead of encode_state_v2 (board only)")
@@ -647,6 +681,7 @@ def _main() -> None:
     elif a.cmd == "build":
         build(out_dir=a.out, min_score=a.min_score, winners_only=a.winners_only,
               include_ours=a.include_ours, min_steps=a.min_steps,
+              opp_deck_hash=tuple(a.opp_deck_hash) if a.opp_deck_hash else None,
               shard_size=a.shard_size,
               only_subs=set(a.only_subs) if a.only_subs else None,
               only_deck_hash=a.deck_hash, hand_aware=a.hand_aware)

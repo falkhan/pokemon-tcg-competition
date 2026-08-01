@@ -100,16 +100,35 @@ _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
 # M26/M30/M31/M35/M37 override arms (rl/plan.apply_attach_overrides + apply_play_overrides):
 # comma-separated fix names ("telepath", "backstop", "tempo", "deckguard",
 # "ash", "conserve", "poffinfloor", "drawfloor", "benchfloor", "racemode3").
-# Ship default = "telepath,deckguard,ash,conserve,benchfloor,racemode3"
-# (gacfr3 = the M35 gacf arm + O12d racemode3, docs/M37-plan.md P3c: the
-# wall-family blanket conserve — wall bed +15.7pp z+5.50, provably inert vs
-# every deck with no wall-family Pokémon on board [0 fires / 723 probe
-# prompts on hop+garchomp; no wall ids in mirror/grim/rocket lists]);
-# an approved ship changes this default string, never the predicate.
+#
+# M39 SHIP A: default narrowed from gacfr3 to "conserve" alone.
+#   Previous default: "telepath,deckguard,ash,conserve,benchfloor,racemode3"
+#   (gacfr3 = the M35 gacf arm + O12d racemode3).
+#
+# Why (docs/M39.md, P0.7 + P1-inv). The M38 G5 matrix already showed the full
+# stack was actively harmful on the wall bed. M39 ran the leave-one-out
+# ablation G5 never had, then a 3-arm gate over the 9-bed live-mix-weighted
+# roster at n=2400/cell:
+#     conserve-only vs gacfr3 : +1.74pp  z=+3.42   <- this ship
+#     conserve-only vs plain  : +1.03pp  z=+2.03
+#     plain         vs gacfr3 : +0.71pp  z=+1.39   (no detectable difference)
+# Positive on 6 of 8 beds at ~+2-3pp, including every big-share one.
+#
+# `conserve` survived alone because a MECHANISM probe (scripts/conserve_probe.py)
+# showed it actually acts. Fire rate over 60-90 games/bed across seeds
+# (fires / states where our own deck is in the demote zone):
+#     top (900+ mirror)  103/956 = 11%      grim   39/292 = 13%
+#     mirror              47/744 =  6%      wall    1/473 =  0.2%
+# So it is active in mirror-family and grim deck races and effectively inert
+# vs wall — which matches the gate, where conserve-only's gains were largest
+# on grim (+2.9pp) and absent where it never fires. A significance threshold
+# had discarded this rule; the mechanism probe rescued it.
+#
+# An approved ship changes this default string, never the predicate.
 _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
         "PKM_ATTACH_FIXES",
-        "telepath,deckguard,ash,conserve,benchfloor,racemode3").split(",") if f)
+        "conserve").split(",") if f)
 
 
 def _log_net(rec: dict) -> None:
