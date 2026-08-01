@@ -185,7 +185,10 @@ def _default_fetcher(episode_id: int) -> dict:
             # requests.Response (FileDownload.prepare_from is the identity).
             response.raise_for_status()
             return json.loads(response.content)
-    except Exception as e:  # noqa: BLE001 — every failure mode gets the same remedy
+    # SystemExit is deliberate: `import kaggle` authenticates at import time and
+    # calls exit(1) when ~/.kaggle/kaggle.json is missing, which would otherwise
+    # kill the whole pipeline process with no message and no Hermes failure ping.
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — one remedy for all
         raise RuntimeError(
             f"[NET] Kaggle replay download failed ({type(e).__name__}: {e}). Needs the "
             "`kaggle` package and ~/.kaggle/kaggle.json credentials — run the M7.0 "
@@ -223,7 +226,9 @@ def fetch_agent_logs(episode_id: int, agent_index: int,
             raw = json.loads(files[0].read_text())
     except SchemaError:
         raise
-    except Exception as e:  # noqa: BLE001 — every failure mode gets the same remedy
+    # SystemExit: see _default_fetcher — the kaggle client exits the process
+    # instead of raising when credentials are absent.
+    except (Exception, SystemExit) as e:  # noqa: BLE001 — one remedy for all
         raise RuntimeError(
             f"[NET] Kaggle agent-logs download failed ({type(e).__name__}: {e}). "
             "Needs the `kaggle` package + ~/.kaggle/kaggle.json, and works only "

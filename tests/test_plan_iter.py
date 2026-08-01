@@ -522,6 +522,32 @@ def test_collect_workers_default_is_the_hard_cap():
     assert inspect.signature(pi.collect).parameters["workers"].default == 8
 
 
+def test_collect_refuses_a_pool_above_the_cap(tmp_path, monkeypatch):
+    """...and the cap is now enforced, not just defaulted: an over-wide pool
+    hangs forever with no error, so it must fail loudly at launch."""
+    monkeypatch.delenv("PKM_ALLOW_UNSAFE_WORKERS", raising=False)
+    with pytest.raises(SystemExit, match="proven-stable ceiling"):
+        pi.collect("expert", 1, _pop_file(tmp_path), tmp_path / "out",
+                   workers=12)
+
+
+def test_collect_appends_to_a_populated_dir_and_says_so(tmp_path, monkeypatch,
+                                                       capsys):
+    """collect APPENDS — flush() offsets shard_idx past this worker's existing
+    files. CLAUDE.md's "relaunching clobbers existing shards" does not match
+    the code; the notice states what actually happens (and the game_ids
+    caveat) so nobody re-derives the folklore."""
+    selected = []
+    _stub_engine(monkeypatch, selected)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "shard_w00_0000.npz").write_bytes(b"sentinel")
+    pi.collect("expert", 1, _pop_file(tmp_path), out, workers=1)
+    assert "APPENDS" in capsys.readouterr().out
+    assert (out / "shard_w00_0000.npz").read_bytes() == b"sentinel"
+    assert np.load(out / "shard_w00_0001.npz")["labels"].tolist() == [1, 0]
+
+
 def test_train_v3h_warm_start_prints_init_val_acc(tmp_path, monkeypatch,
                                                   capsys):
     """--init-v3h/--init-v3o warm starts get the same pre-training baseline

@@ -7,6 +7,40 @@ measurement changes the plan.
 
 ---
 
+### 2026-08-01 · M38 pre-work: the within-turn solver was paid to NOT take prizes — score_leaf's prize terms were on the wrong arrays
+**Observation:** `player.prize` is that player's OWN remaining prizes (re-verified on the live
+engine, `scripts/prize_semantics_probe.py`: the winner's array ends at 0). `rl/turn_solver.score_leaf`
+credited `W_PRIZE` (+100k, "prizes I took") to the opponent's array and `W_MY_PRIZE` (-150k,
+"prizes I conceded") to mine — so every prize-taking line scored ≈ -150k against a stand-pat
+floor of 0, under an override bar of `W_PRIZE - 1`. Measured over a seeded 10-game series
+(`scripts/solver_prize_probe.py`): the lethal tier overrode greedy on **7/229 trigger fires
+(3.1%), zero of them prize-taking lines** — it only ever fired on outright wins, which score
+`W_WIN` from `cur.result` and never touch the prize terms. Corrected: **117/416 (28.1%), 104
+prize lines.** The solver is not in the ship bundle, so no live decision changed — but it is the
+`plan_iter --mode expert` teacher, the `score_siblings` ranker labeller, and the opponent behind
+every `solver:` bed including the campaign bar. M12's "score_leaf is the bottleneck" and M13's
+"score_leaf must be replaced, not distilled" had the symptom and never found this cause; M37's
+"`solver:wall` is strawman-invalid, the solver over-digs its own deck" is the same bug seen from
+the bed side — a solver that cannot cash a prize line scores development instead.
+Two more consumers inherited the same swap from `sample-agent/main.py`: `rl/plan._make_plan`'s
+`wins`/`concedes` plan features (known since M36, correctly deferred as a frozen-net feature
+shift) and the PPO prize shaping in `rl/collector.py` / `tcg/selfplay.py`, which paid the learner
+for the OPPONENT's prizes (bounded — terminal ±1 dominates a ±0.6 shaping range).
+`rl/encoders.py`, `rl/postmortem.py` and O11 `gustveto` were always correct, which is why every
+surface Piotr reads agreed with reality and the bug survived 37 milestones.
+**Pivot:** all three corrections sit behind ONE opt-in env var, `PKM_PRIZE_FIX`, default OFF
+(the `WHOLE_BOARD_THREAT` precedent) — the frozen net's features, every historical bed number
+and past PPO runs reproduce unchanged. `tests/test_prize_semantics.py` pins both branches.
+M38 sequencing: re-baseline the beds with the flag ON *before* building the wall BC clone — if
+the fixed teacher repairs the strawman, P0 gets cheaper; either way the clone then rests on a
+teacher that can cash a prize line. The AWR arm and the prize-fix arm are ONE variable (a fixed
+teacher changes the corpus), so pre-register them together. Full audit: `docs/m38-code-audit.md`.
+**Also corrected:** CLAUDE.md's "collect clobbers existing shards" is not what the code does —
+`shard_idx` has offset past existing files since M11, so a relaunch APPENDS (the real caveat is
+colliding `game_ids` across runs). Left for Piotr to amend in his instruction file.
+
+---
+
 ### 2026-07-22 · M27: the deck-out thesis was mis-localized — a per-class confusion on a 31-row cell is not a thesis
 **Observation:** M26 and the M27 stub both rest on "the clone spends its turn-ending action while
 free actions sit unplayed," inferred from the confusion `Boss's Orders -> ATTACK x16` in the

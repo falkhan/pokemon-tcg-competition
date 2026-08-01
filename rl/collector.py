@@ -46,6 +46,24 @@ DECK_DIR = ROOT / "decks"
 PRIZE_SHAPING = 0.1
 LEARN_DECK = "kyogre"           # the deck the learning policy pilots (our champion base)
 
+# --- Prize-array semantics switch (docs/m38-code-audit.md) ------------------
+# `.prize` is OWN-NEEDS — it drains as THAT player takes prizes
+# (scripts/prize_semantics_probe.py). `prize_delta` below was written against
+# the opposite convention, so the dense shaping term pays the learner +0.1 per
+# prize the OPPONENT takes and -0.1 per prize it takes. The terminal +-1 still
+# dominates (|shaping| <= 0.6 over a game), which is why PPO trained at all.
+# OFF by default so M20/M21/M22c runs stay reproducible; same env var as
+# rl/plan.py and rl/turn_solver.py.
+PRIZE_FIX = os.environ.get("PKM_PRIZE_FIX", "0") == "1"
+
+
+def prize_delta(me, op) -> int:
+    """Prize-race delta for the shaping potential: prizes I took minus prizes
+    they took (PRIZE_FIX=1), or the historical inverse (PRIZE_FIX=0)."""
+    my_taken = 6 - len(me.prize)
+    their_taken = 6 - len(op.prize)
+    return my_taken - their_taken if PRIZE_FIX else their_taken - my_taken
+
 
 def _deck(name: str) -> list[int]:
     return [int(x) for x in (DECK_DIR / f"{name}.csv").read_text().split() if x.strip()]
@@ -453,7 +471,7 @@ def _play_worker(args: tuple) -> tuple:
                 (picks, action, logprob, value, sc, sids, opts, oids, plan,
                  plan_rec) = run_learner(obs, learn_deck)
                 me = obs.current.players[seat]; op = obs.current.players[1 - seat]
-                delta = (6 - len(op.prize)) - (6 - len(me.prize))     # prizes I took - they took
+                delta = prize_delta(me, op)          # see PRIZE_FIX above
                 reward = PRIZE_SHAPING * (delta - prev_delta)
                 prev_delta = delta
                 if defect_penalty and _is_over_attach(obs, obs.select.option[action]):

@@ -27,6 +27,7 @@ Usage:  python -m tcg.selfplay --games 400 --workers 4 --checkpoint checkpoints/
 """
 import argparse
 import multiprocessing as mp
+import os
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,18 @@ from tcg.decks import ROOT, load_deck
 
 OUT_DIR = ROOT / "data" / "ppo"
 PRIZE_SHAPING = 0.1             # per-prize reward shaping (terminal ±1 dominates)
+# Prize-array semantics switch — the rl/collector.py twin carries the full
+# note (docs/m38-code-audit.md). `.prize` is OWN-NEEDS, so the historical
+# delta below has the sign flipped; OFF keeps past runs reproducible.
+PRIZE_FIX = os.environ.get("PKM_PRIZE_FIX", "0") == "1"
+
+
+def prize_delta(me, opponent) -> int:
+    """Prizes I took minus prizes they took (PRIZE_FIX=1), or the historical
+    inverse (PRIZE_FIX=0). Twin of rl.collector.prize_delta."""
+    my_taken = 6 - len(me.prize)
+    their_taken = 6 - len(opponent.prize)
+    return my_taken - their_taken if PRIZE_FIX else their_taken - my_taken
 LEARN_DECK = "kyogre"           # the deck the learning policy pilots (our champion base)
 WORKER_SEED_BASE = 1000         # worker i seeds python/torch RNGs with BASE + i
 LOGPROB_EPS = 1e-12             # keeps log(prob) finite for near-zero probabilities
@@ -225,8 +238,8 @@ def play_worker(args: tuple) -> str:
                  option_vectors, option_ids) = run_learner(observation, learn_deck)
                 me = observation.current.players[seat]
                 opponent = observation.current.players[1 - seat]
-                # prizes I took minus prizes they took; reward the per-step change
-                delta = (6 - len(opponent.prize)) - (6 - len(me.prize))
+                # prize-race delta (see PRIZE_FIX); reward the per-step change
+                delta = prize_delta(me, opponent)
                 reward = PRIZE_SHAPING * (delta - prev_delta)
                 prev_delta = delta
                 if race_shaping:

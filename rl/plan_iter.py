@@ -24,6 +24,7 @@ CLI:
       --init-v2 checkpoints/osv2_bc2.pt --name osv3_plan0
 """
 import multiprocessing as mp
+import os
 from pathlib import Path
 from time import perf_counter
 
@@ -35,6 +36,7 @@ from torch.utils.data import DataLoader
 from cg.api import (CardType, OptionType, SelectContext, all_card_data,
                     to_observation_class)
 from cg.game import battle_finish, battle_select, battle_start
+from rl.matchrunner import check_workers
 from rl.turn_solver import MIN_OVERRIDE_SCORE
 from rl.bc import load_population
 from rl.encoders import (N_CONTEXTS, N_OPTION_TYPES, N_STATE_IDS_V3,
@@ -500,8 +502,22 @@ def collect(mode: str, n_games: int, decks_file, out_dir: Path,
             vs_max_turn: int = VS_MAX_TURN) -> dict:
     assert mode in ("expert", "ei")
     assert mode != "ei" or checkpoint, "--mode ei needs --checkpoint"
+    check_workers(workers)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # Shards APPEND: flush() offsets shard_idx past this worker's existing
+    # files, so a second collect into a populated dir adds to it rather than
+    # overwriting (CLAUDE.md's "relaunching clobbers existing shards" warning
+    # does not match the code — docs/m38-code-audit.md, finding 6). The real
+    # caveat is game_ids: they restart at 0 each run, so rows from two runs
+    # share ids and the by-game train/val split groups them together.
+    existing = sorted(out_dir.glob("shard_w*.npz"))
+    if existing:
+        print(f"[COLLECT] {out_dir} already holds {len(existing)} shard(s); "
+              "this run APPENDS (shard indices are offset per worker). Note "
+              "game_ids restart at 0, so the by-game split will group this "
+              "run's game N with the previous run's game N — collect into a "
+              "fresh dir and train on both dirs if that matters.", flush=True)
 
     chunk = -(-n_games // workers)                    # ceil
     jobs = []

@@ -9,6 +9,7 @@ hidden-plan imitation trap (labels stay consistent w.r.t. the inputs).
 Bundle-pure on purpose (numpy + cg.api + rl.combat only — ships inside
 submission/ like rl/combat.py). No torch, no polars.
 """
+import os
 from collections import namedtuple
 
 import numpy as np
@@ -17,6 +18,20 @@ from cg.api import (AreaType, CardType, OptionType, SelectContext,
                     all_card_data)
 from rl.combat import (_ATK, _CARD, _best_damage, _can_afford,
                        _turns_to_first_ko, UNREACHABLE)
+
+# --- Prize-array semantics switch (docs/m38-code-audit.md) ------------------
+# ENGINE FACT, re-verified on the live engine by scripts/prize_semantics_probe.py:
+# a player's `.prize` list is the prizes THAT PLAYER still needs — it drains as
+# THEY take prizes, and the winner's own list ends at 0. `_make_plan` below was
+# written against the opposite convention, so its `wins`/`concedes` features
+# read the wrong player's array (found M36, docs/M36-plan.md).
+#
+# The shipped net was TRAINED on the wrong features, so correcting them at
+# inference time is a feature-distribution shift on a frozen net — OFF by
+# default, exactly like turn_solver's WHOLE_BOARD_THREAT falsification switch.
+# Set PKM_PRIZE_FIX=1 to build/train an arm on the corrected features (the
+# same env var flips rl/turn_solver.py and rl/collector.py).
+PRIZE_FIX = os.environ.get("PKM_PRIZE_FIX", "0") == "1"
 
 PLAN_DIM = 27
 MAX_PLAN_CANDS = 48
@@ -106,14 +121,20 @@ def _make_plan(aslot, attacker, tslot, target, aidx, aid, needs_attach,
     target_prize = _CARD.get(target.id, (0, 0, 0, [], 1))[4]
     attacker_prize = _CARD.get(attacker.id, (0, 0, 0, [], 1))[4]
     lethal = dmg >= (target.hp or 0)
-    wins = lethal and target_prize >= len(op.prize)
+    # Prize arrays are OWN-NEEDS (see PRIZE_FIX above): KOing `target` draws
+    # from MY pile, so this KO wins iff it covers what I still need; losing my
+    # attacker draws from THEIRS. PRIZE_FIX=0 keeps the arrays the frozen net
+    # was trained on (they are swapped) — byte-identical live behaviour.
+    my_need, their_need = ((len(me.prize), len(op.prize)) if PRIZE_FIX
+                           else (len(op.prize), len(me.prize)))
+    wins = lethal and target_prize >= my_need
     # Risk block: can the opponent's CURRENT active return-KO my attacker?
     # (+1 energy — assume they attach next turn; conservative like should_solve)
     ret_dmg = _best_damage(op_active, attacker, extra_energy=1)
     return_ko = ret_dmg >= (attacker.hp or 0) and not wins
-    # len(me.prize) = prizes the OPPONENT still needs (they take them by
-    # KOing my Pokémon) — losing this attacker hands them the game.
-    concedes = return_ko and attacker_prize >= len(me.prize)
+    # Losing this attacker hands them the prizes it is worth — game over if
+    # that covers everything they still need.
+    concedes = return_ko and attacker_prize >= their_need
     opp_ttk = _turns_to_first_ko(op_active, attacker) if op_active is not None \
         else UNREACHABLE
     return Plan(aslot, tslot, aidx, aid, needs_attach, tslot > 0, dmg,
@@ -365,8 +386,9 @@ _DRAWFLOOR_HAND_AT = 4      # hand <= 4: starved, a draw actually helps (not
 _DRAWFLOOR_DECK_AT = 10     # ... the full-hand hoarding cases); deck >= 10
 # O11 (m36): a player's .prize list is the prizes THEY still need (verified
 # empirically vs the diag end-states + a forced kyogre probe, docs/M36-plan.md
-# execution log — NOT what the _make_plan comment below says). Opponent at
-# match point = len(op.prize) <= 1.
+# execution log; re-verified on the live engine by
+# scripts/prize_semantics_probe.py). Opponent at match point =
+# len(op.prize) <= 1.
 _GUSTVETO_OPP_PRIZES_AT = 1
 # O12 (m37): archetype-detected race mode. The 600-band stall/heal-tank lines
 # farm us by deck-out (m36 post-mortem: 9/26 losses; hop/garchomp 0-4 live).

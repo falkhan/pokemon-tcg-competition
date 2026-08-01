@@ -237,6 +237,12 @@ def classify_end(last_cur: dict, us: int, our_reward) -> str:
                 f"(opponent still had {b_op['prizes_left']} prizes to take)")
     if (b_us["deck"] or 0) == 0:
         return "loss: DECK-OUT — we could not draw"
+    # deck == 1 at our last decision is the same loss: the next turn opens with
+    # a mandatory draw that empties the deck, and the draw after it kills us.
+    # M37 filed two such losses as "unclassified" and undercounted the deck-out
+    # mass (docs/m37-post-mortem.md loss anatomy).
+    if (b_us["deck"] or 0) == 1:
+        return "loss: DECK-OUT — one card left, the next mandatory draw empties it"
     if b_op["prizes_left"] <= 1:
         return "loss: PRIZES — opponent took their prizes"
     return "loss: unclassified (timeout/error? check statuses)"

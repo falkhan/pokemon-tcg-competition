@@ -32,6 +32,7 @@ import argparse
 import inspect
 import json
 import multiprocessing as mp
+import os
 import random
 import time
 from pathlib import Path
@@ -44,6 +45,28 @@ SOLVED_MAX_NODES = 120
 SOLVED_ALLOW = None        # None = every trigger tier; frozenset to gate tiers
 SOLVED_STATS = None        # set to a dict to collect trig_*/fire_* counters
 DECK_DIR = ROOT / "decks"
+
+# Proven-stable pool ceiling. 12 workers has deadlocked repeatedly (M17, the
+# m19b screen): a native libcg.so `free(): invalid pointer` corrupts the
+# mp.Pool and the run hangs forever with NO error and no exit — the worst
+# failure mode there is, because the heartbeat keeps echoing a stale progress
+# line. 8 is the ceiling CLAUDE.md mandates; PKM_ALLOW_UNSAFE_WORKERS=1 is the
+# deliberate, documented override.
+MAX_WORKERS = 8
+
+
+def check_workers(workers: int) -> None:
+    """Refuse a pool wider than the proven-stable ceiling (see MAX_WORKERS)."""
+    if workers > MAX_WORKERS and os.environ.get(
+            "PKM_ALLOW_UNSAFE_WORKERS", "0") != "1":
+        raise SystemExit(
+            f"[WORKERS] --workers {workers} exceeds the proven-stable ceiling "
+            f"of {MAX_WORKERS}. 12 workers has deadlocked repeatedly (M17, "
+            "m19b) via a native libcg.so free(): invalid pointer in mp.Pool — "
+            "the pool hangs forever with no error. Re-run with "
+            f"--workers {MAX_WORKERS}, or set PKM_ALLOW_UNSAFE_WORKERS=1 to "
+            "override deliberately.")
+
 
 OpponentSpec = tuple
 
@@ -786,6 +809,7 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
     finishes, and a rerun with the SAME key resumes, skipping completed
     chunks — long measurements survive crashes and pauses. A key mismatch
     raises instead of silently mixing two different runs."""
+    check_workers(workers)
     if workers <= 1 or game_fn is not None:
         if workers > 1:
             raise ValueError("game_fn requires workers<=1 (not picklable)")

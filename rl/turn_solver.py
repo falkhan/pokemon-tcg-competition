@@ -93,6 +93,17 @@ W_RACE = -10             # per turn of my best turns-to-first-KO (tiebreak)
 DECK_LOW_AT = 6          # deckCount at or below which draws start costing
 MIN_OVERRIDE_SCORE = W_PRIZE - 1  # override greedy only for >=1 prize or a win
 
+# --- Prize-array semantics switch (docs/m38-code-audit.md) ------------------
+# `.prize` is OWN-NEEDS: it drains as THAT player takes prizes (engine-verified,
+# scripts/prize_semantics_probe.py). score_leaf below credits the deltas to the
+# wrong arrays, so W_PRIZE lands on prizes I CONCEDE and W_MY_PRIZE on prizes I
+# TAKE — measured effect: the lethal tier overrides greedy on 3.1% of trigger
+# fires and never once on a prize-taking line (scripts/solver_prize_probe.py).
+# Flipping it is a TEACHER/BED change (every `solver:` bed number and every
+# plan_iter expert label moves), so it stays OFF until an A/B says otherwise —
+# same env var as rl/plan.py and rl/collector.py.
+PRIZE_FIX = os.environ.get("PKM_PRIZE_FIX", "0") == "1"
+
 # Opponent hidden-zone fillers (rl/mcts.py recipe): the opponent never acts
 # within my turn, so placeholders are exact, not an approximation.
 FILLER_POKEMON = 1072    # Snorlax (a Basic, legal as a hidden active)
@@ -150,7 +161,11 @@ def solve_trigger(obs) -> str | None:
             _hits_to_ko(p, op_active) == 1 and _turns_to_ready(p, op_active) <= 1
             for p in board):
         return "T3_multiprize"
-    if len(op.prize) <= 2 and best_plus > 0:                       # T4: game-closing range
+    # T4: game-closing range = *I* am <= 2 prizes from winning. Under the
+    # engine's own-needs arrays that is len(me.prize); the historical trigger
+    # reads len(op.prize), i.e. it fires when the OPPONENT is closing.
+    closing = len(me.prize) if PRIZE_FIX else len(op.prize)
+    if closing <= 2 and best_plus > 0:
         return "T4_closing"
     return None
 
@@ -231,8 +246,10 @@ def _open_search(obs, deck):
 
 def _root_snapshot(obs) -> _Snap:
     """Pre-search facts the leaf scorer diffs against. Prize semantics: the
-    engine drains the OPPONENT's prize list as I take prizes (a KO wins when
-    len(op.prize) <= its prize value — sample-agent/main.py)."""
+    engine drains a player's OWN prize list as THEY take prizes, so a KO wins
+    when len(me.prize) <= its prize value (engine-verified,
+    scripts/prize_semantics_probe.py). sample-agent/main.py reads the opposite
+    array — the source of the swap score_leaf's PRIZE_FIX branch corrects."""
     st = obs.current
     me, op = st.players[st.yourIndex], st.players[1 - st.yourIndex]
     op_active = op.active[0] if op.active and op.active[0] is not None else None
@@ -297,8 +314,14 @@ def score_leaf(snap: _Snap, obs, dev: bool = False, leaf_value=None) -> float:
             return W_DRAW
         return W_WIN if cur.result == snap.me else W_LOSS
     me_p, op_p = cur.players[snap.me], cur.players[1 - snap.me]
-    score = W_PRIZE * max(0, snap.op_prizes - len(op_p.prize))      # prizes I took
-    score += W_MY_PRIZE * max(0, snap.my_prizes - len(me_p.prize))  # prizes I conceded
+    # My own array drains as I take prizes; theirs drains as they take mine
+    # (self-KO effects — the only way they gain inside my turn). PRIZE_FIX=0
+    # keeps the historical (swapped) attribution every bed was measured on.
+    took = max(0, (snap.my_prizes - len(me_p.prize)) if PRIZE_FIX
+               else (snap.op_prizes - len(op_p.prize)))
+    conceded = max(0, (snap.op_prizes - len(op_p.prize)) if PRIZE_FIX
+                   else (snap.my_prizes - len(me_p.prize)))
+    score = W_PRIZE * took + W_MY_PRIZE * conceded
     my_active = me_p.active[0] if me_p.active and me_p.active[0] is not None else None
     op_active = op_p.active[0] if op_p.active and op_p.active[0] is not None else None
     board = _my_board(me_p)
