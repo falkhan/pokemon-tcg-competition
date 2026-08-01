@@ -9,6 +9,7 @@ np = pytest.importorskip("numpy")
 torch = pytest.importorskip("torch")
 
 import rl.plan_iter as pi
+import rl.turn_solver as ts
 from rl.encoders import (N_CONTEXTS, N_OPTION_IDS, N_STATE_IDS,
                          N_STATE_IDS_V3, OPTION_DIM, STATE_V2_DIM)
 from rl.plan import PLAN_DIM
@@ -205,6 +206,38 @@ def test_train_fresh_is_width_driven(tmp_path, monkeypatch):
     assert option_dim_of(sd) == OPTION_DIM        # 90, from the data
 
 
+def test_train_fresh_infers_v4_extra_dim(tmp_path, monkeypatch):
+    """M38: the first-ever fresh (no-init) train on encoder-v4 expert shards
+    found the fresh path building the net 341 columns too narrow (mat1/mat2
+    crash) — extra_dim must be inferred from the data's state width like the
+    id/option widths are. Every prior v4 net was warm-started, which sniffs
+    the width from the checkpoint instead, so this path was never exercised."""
+    from rl.encoders import N_STATE_IDS_V4, V4_EXTRA_DIM
+    rng = np.random.default_rng(11)
+    d = tmp_path / "shards"
+    d.mkdir()
+    n = 4
+    np.savez_compressed(                          # 1-option menus: val_acc 1.0
+        d / "shard_0000.npz",                     # guarantees a checkpoint save
+        states=rng.standard_normal(
+            (n, STATE_V2_DIM + N_CONTEXTS + V4_EXTRA_DIM)).astype(np.float32),
+        state_ids=rng.integers(0, 1268, (n, N_STATE_IDS_V4)).astype(np.int32),
+        options=rng.standard_normal((n, OPTION_DIM)).astype(np.float32),
+        option_ids=rng.integers(0, 1268, (n, 2)).astype(np.int32),
+        n_options=np.ones(n, dtype=np.int32),
+        labels=np.zeros(n, dtype=np.int32),
+        game_ids=np.arange(n, dtype=np.int32) // 2,
+        results=np.ones(n, dtype=np.float32),
+        deck_idx=np.zeros(n, dtype=np.int32),
+    )
+    monkeypatch.setattr(pi, "ROOT", tmp_path)     # redirect checkpoints/
+    pi.train([d], name="_fresh_v4", epochs=1, batch_size=4)   # crashed pre-fix
+    sd = torch.load(tmp_path / "checkpoints" / "_fresh_v4.pt",
+                    map_location="cpu")
+    assert "enc_ver" in sd                        # the net declares itself v4
+    assert pi._n_ids_of(sd) == N_STATE_IDS_V4
+
+
 def test_dataset_weights_default_and_passthrough(tmp_path):
     rng = np.random.default_rng(9)
     old_dir, new_dir = tmp_path / "old", tmp_path / "new"
@@ -271,9 +304,12 @@ def _stub_engine(monkeypatch, selected, n_prompts=2, solve_score=2e5):
                         lambda o, ob: (np.zeros(5, np.float32),
                                        np.zeros(2, np.int32)))
     # teacher solve: the line says option 1 then option 0
+    # pw mirrors the score: a bar-clearing fake line IS a prize line, so the
+    # tests stay coherent under every M38_BAR arm (semantic default incl.).
     monkeypatch.setattr(pi, "_solve",
                         lambda obs_, deck, dl: (solve_score, [[1], [0]],
-                                                [obs, obs]))
+                                                [obs, obs],
+                                                solve_score >= ts.MIN_OVERRIDE_SCORE))
     monkeypatch.setattr(pi, "derive_plan", lambda line, trail, root: None)
     monkeypatch.setattr(pi, "enumerate_plans", lambda o: [None])
     # the greedy fallback: stub at its source (imported inside _collect_chunk)
@@ -402,7 +438,7 @@ def _vs_harness(monkeypatch, score=1e6):
     def fake_solve(obs_, deck_, deadline_s=0.0, dev=False, leaf_value=None,
                    **kw):
         leaf_value(obs_)
-        return score, [[0]], []
+        return score, [[0]], [], False
 
     monkeypatch.setattr(ts, "solve_turn_line", fake_solve)
     monkeypatch.setattr(

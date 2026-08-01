@@ -114,11 +114,12 @@ def test_headline_finds_the_multi_prize_lethal_greedy_misses(monkeypatch):
 
     # The winning line is worth both prizes, found through the submenu.
     snap = ts._root_snapshot(root)
-    score, line, trail = ts._dfs(search_state(root, 0), snap, 0,
-                                 perf_counter() + 1.0, {"nodes": 0})
+    score, line, trail, pw = ts._dfs(search_state(root, 0), snap, 0,
+                                     perf_counter() + 1.0, {"nodes": 0})
     assert score >= 2 * ts.W_PRIZE
     assert line == [[1], [0], [0]]                       # PLAY -> target -> ATTACK
     assert len(trail) == len(line) and trail[0] is root  # M11: per-step obs
+    assert pw is True                                    # M38: semantic fact rides along
 
     pilot = ts.make_solver_pilot(DECK)
     assert pilot(root) == [1]
@@ -178,11 +179,12 @@ def test_multi_select_prompt_capped_and_lethal_pair_found(monkeypatch):
     patch_engine(monkeypatch, root, lambda s, a: tree[(s, tuple(a))])
 
     snap = ts._root_snapshot(root)
-    score, line, trail = ts._dfs(search_state(root, 0), snap, 0,
-                                 perf_counter() + 1.0, {"nodes": 0})
+    score, line, trail, pw = ts._dfs(search_state(root, 0), snap, 0,
+                                     perf_counter() + 1.0, {"nodes": 0})
     assert score >= 2 * ts.W_PRIZE
     assert line == [[0], [1, 3], [0]]                    # the lethal discard pair
     assert len(trail) == len(line)
+    assert pw is True
 
 
 def test_deadline_aborts_before_any_step(monkeypatch):
@@ -330,6 +332,74 @@ def test_score_leaf_prize_direction_is_not_inverted():
     # forces a deliberate update.
     assert leaf(my_prizes=3) < ts.MIN_OVERRIDE_SCORE     # 99_980 < 99_999
     assert leaf(my_prizes=2) > ts.MIN_OVERRIDE_SCORE     # 2 prizes clear it
+
+
+def test_m38_old_leaf_flag_restores_the_inversion(monkeypatch):
+    """A0 control arm (docs/M38-plan.md Phase 0): M38_OLD_LEAF=1 vendors the
+    pre-audit prize terms EXACTLY — our own KO scores W_MY_PRIZE again, a
+    conceded prize scores W_PRIZE. Only the leaf terms are vendored (the T4
+    trigger fix and docstrings stay), so the battery isolates the leaf.
+    Remove with the flag once the Phase 0 battery decides."""
+    snap = ts._Snap(me=0, my_prizes=4, op_prizes=4, op_active_hp=130,
+                    my_deck_count=30)
+
+    def leaf(my_prizes=4, op_prizes=4):
+        mine = player(active=pokemon(1, hp=120, energies=(F, F)),
+                      prizes_remaining=my_prizes, deck_count=30)
+        opp = player(active=pokemon(2, hp=130), prizes_remaining=op_prizes)
+        return ts.score_leaf(snap, flipped(mine, opp))
+
+    monkeypatch.setattr(ts, "M38_OLD_LEAF", True)
+    stand_pat = leaf()
+    # Sign AND magnitude: the vendored constants, not merely a flip.
+    assert leaf(my_prizes=3) - stand_pat == ts.W_MY_PRIZE   # my KO = "loss"
+    assert leaf(op_prizes=3) - stand_pat == ts.W_PRIZE      # conceding = "gain"
+
+
+def test_override_cleared_bar_arms(monkeypatch):
+    """G1 bar arms behind M38_BAR (docs/M38-plan.md). The riders-under-bar
+    1-prize score (99_980, the calibration-gap pin above) is the exact case
+    the arms disagree on. DEFAULT = semantic since the Phase 0 battery
+    decided G1 (Piotr, 2026-07-31)."""
+    one_prize_with_riders = ts.W_PRIZE - 20.0
+    # A3 semantic gate — the shipping default: the state fact decides, the
+    # W-vector is irrelevant.
+    assert ts.M38_BAR == "semantic"
+    assert ts.override_cleared(one_prize_with_riders, True)
+    assert not ts.override_cleared(one_prize_with_riders, False)
+    # A1 pre-M38 bar: declines the riders case (the audit's "still mostly
+    # gagged") — kept selectable for reproducing pre-G1 baselines.
+    monkeypatch.setattr(ts, "M38_BAR", "current")
+    assert not ts.override_cleared(one_prize_with_riders, True)
+    assert ts.override_cleared(2 * ts.W_PRIZE - 20.0, True)
+    # A2 lowered constant: clears it, still declines a net-losing prize
+    # trade and the largest no-prize total.
+    monkeypatch.setattr(ts, "M38_BAR", "const")
+    assert ts.override_cleared(one_prize_with_riders, True)
+    assert not ts.override_cleared(float(ts.W_PRIZE + ts.W_MY_PRIZE), True)
+    assert not ts.override_cleared(3 * ts.W_THREAT + 130.0, False)
+
+
+def test_solve_turn_semantic_arm_fires_on_the_gagged_one_prize_line(monkeypatch):
+    """The audit's P0b, end to end: a real 1-prize line whose riders put it
+    under MIN_OVERRIDE_SCORE is declined by the current bar but fired by the
+    A2/A3 arms. Also pins the prize_or_win threading through
+    _dfs -> solve_turn_line -> solve_turn."""
+    my_p, op_p = me_board(), op_board()
+    root = main_menu(my_p, op_p, [ATTACK_102, END])
+    ko1 = flipped(me_board(prizes=3), op_board())        # I took exactly 1 prize
+    ended = flipped(my_p, op_p)
+    tree = {(0, (0,)): search_state(ko1, 1), (0, (1,)): search_state(ended, 2)}
+    patch_engine(monkeypatch, root, lambda sid, a: tree[(sid, tuple(a))])
+
+    score, line, _, pw = ts.solve_turn_line(root, DECK)
+    assert line == [[0]] and pw is True
+    assert 0 < score < ts.MIN_OVERRIDE_SCORE             # the calibration gap, live
+    assert ts.solve_turn(root, DECK) == [0]              # A3 default: fires
+    monkeypatch.setattr(ts, "M38_BAR", "current")
+    assert ts.solve_turn(root, DECK) is None             # pre-M38 bar: gagged
+    monkeypatch.setattr(ts, "M38_BAR", "const")
+    assert ts.solve_turn(root, DECK) == [0]              # A2: fires
 
 
 def test_score_leaf_benchless_return_ko_dominates_prizes():

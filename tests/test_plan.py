@@ -101,10 +101,12 @@ class TestEnumeratePlans:
 
     def test_risk_flags_on_sacrificial_plan(self):
         # My 3-prize mega (card 3) attacks while opp active can return-KO it
-        # and the opponent needs <= 3 prizes: concedes_game must flag.
-        me = b.player(active=b.pokemon(3, hp=50, energies=[F, F]),
-                      prizes_remaining=2)
-        opp = b.player(active=b.pokemon(1, hp=400, energies=[F, F]))
+        # and the OPPONENT has <= 3 prizes left to take (their array drains
+        # as THEY take prizes — M38 P2 fix): concedes_game must flag.
+        # Pre-fix this fixture set MY prizes low, encoding the inversion.
+        me = b.player(active=b.pokemon(3, hp=50, energies=[F, F]))
+        opp = b.player(active=b.pokemon(1, hp=400, energies=[F, F]),
+                       prizes_remaining=2)
         cands = rp.enumerate_plans(b.observation(me=me, opponent=opp))
         atk = [c for c in cands[1:] if c.attacker_slot == 0]
         assert atk and all(c.return_ko and c.concedes for c in atk)

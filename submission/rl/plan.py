@@ -106,14 +106,18 @@ def _make_plan(aslot, attacker, tslot, target, aidx, aid, needs_attach,
     target_prize = _CARD.get(target.id, (0, 0, 0, [], 1))[4]
     attacker_prize = _CARD.get(attacker.id, (0, 0, 0, [], 1))[4]
     lethal = dmg >= (target.hp or 0)
-    wins = lethal and target_prize >= len(op.prize)
+    # Prize semantics (M37 audit / M38 P2 ride-along, verified live twice):
+    # a player's .prize is the prizes THAT player still has to TAKE, and it
+    # drains for whoever scores the KO. My KO wins iff its prize haul
+    # finishes MY remaining count; their return-KO concedes iff it finishes
+    # THEIRS. (Pre-fix this used the opposite arrays; measured disagreement
+    # was 0.0%/0.2% over 1,288 real candidates, hence the deferred fix.)
+    wins = lethal and target_prize >= len(me.prize)
     # Risk block: can the opponent's CURRENT active return-KO my attacker?
     # (+1 energy — assume they attach next turn; conservative like should_solve)
     ret_dmg = _best_damage(op_active, attacker, extra_energy=1)
     return_ko = ret_dmg >= (attacker.hp or 0) and not wins
-    # len(me.prize) = prizes the OPPONENT still needs (they take them by
-    # KOing my Pokémon) — losing this attacker hands them the game.
-    concedes = return_ko and attacker_prize >= len(me.prize)
+    concedes = return_ko and attacker_prize >= len(op.prize)
     opp_ttk = _turns_to_first_ko(op_active, attacker) if op_active is not None \
         else UNREACHABLE
     return Plan(aslot, tslot, aidx, aid, needs_attach, tslot > 0, dmg,
