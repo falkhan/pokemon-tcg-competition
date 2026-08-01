@@ -46,6 +46,151 @@ they're picked up.
   700–800 sample (the 600-band weights are one milestone stale). Cheap;
   candidate ride-along for any M38/M39 ship commit.
 - **Stop-investing list** (do not resurrect without new evidence): grim
-  deck-tech (6-2 live, self-resolved), gustveto (2 residual plays), hop beds
-  (absent at altitude), brick residual (2 losses, unactionable), starmie
-  (solved).
+  deck-tech (~~6-2 live, self-resolved~~ REVOKED by M38 post-mortem — 1-6
+  live), gustveto (2 residual plays), hop beds (absent at altitude), brick
+  residual (2 losses, unactionable), starmie (solved).
+
+## Research sweep 2026-08-01 — methods beyond the current pipeline (M39+)
+
+Provenance: /deep-research sweep (30 sources searched, 33 fetched, 161
+claims extracted). The workflow's adversarial-verify phase crashed twice;
+verification was done inline by cross-source consistency + our own campaign
+evidence instead — single-source claims are flagged. Ranked by (evidence
+quality in comparable settings) × (fit to our constraints: 16k–340k-label
+corpora, CPU-only, ~5 games/s engine, dose law).
+
+### High priority — near-term milestone candidates
+
+1. **Advantage-filtered BC on the harvest corpus (upgrade of the queued AWR
+   arm).** Evidence: the strongest domain match in the sweep — a Pokemon
+   Showdown agent (arXiv 2504.04395, RLC 2025) reached top-10% of human
+   ladder via exactly our staged recipe (BC → offline RL on the same
+   replays → self-play fine-tune); offline-RL objectives beat pure BC
+   significantly, and the CHOICE of variant (exp-weighted AWR vs binary
+   filter vs MaxQ) mattered little. AFBC (arXiv 2110.04698) prefers the
+   binary advantage filter `1{A>0}` over exp-weighting (temperature
+   sensitivity) and finds ~100k expert samples sufficient — bracketing our
+   corpus. Kumar et al. (arXiv 2204.05618) locate the offline-RL-over-BC
+   advantage precisely at sparse rewards + noisy data + long horizons =
+   our regime.
+   *Pros:* `--outcome-weight` hook already validated (M37, never
+   launched); near-zero incremental cost as an M39 P3 arm; binary filter
+   removes the one hyperparameter.
+   *Cons:* the Showdown evidence is at 100–1000× our data scale (38M
+   timesteps, 15–200M-param transformers); proper advantage estimates need
+   a value net — ours is old-lineage prize-phobic (see gen-2 item), so v1
+   must use outcome (seat_won) as the advantage proxy.
+2. **Offline best-response via self-play harvest vs the loss-family beds
+   ("manufacture the vs-loss corpus").** Evidence: BC-init + best-response
+   RL vs a FIXED opponent took an exploiter from 42%→90% vs ByteRL (arXiv
+   2404.16689); adding synthetic self-play data drove the Showdown agent's
+   jump from ~58% to 64–80% win rates. Our translation needs NO new infra:
+   `plan_iter collect` games vs `m38_bc_wall`/`m39_bc_grim`/stall beds,
+   filter winning seats, low-dose fine-tune per the dose law — an offline
+   best-response out of existing tooling. Natural fallback if the M39 P3
+   harvested vs-loss corpus runs thin.
+   *Pros:* targets exactly the 2-13 wall/grim/stall loss block; corpus
+   size is manufacturable on demand; entire pipeline exists.
+   *Cons:* exploiter overfit is measured and real (0.90 at 32 decks →
+   0.54 at 1024 — arXiv 2404.16689), so gate on the full weighted roster,
+   never the target bed alone; the Showdown paper hit opponent-distribution
+   overfitting from realistic self-play partners (needed forced diversity);
+   we imitate OUR OWN net's winning seats — in-family label quality caps
+   the ceiling (M38's lesson about demonstrator strength).
+3. **Retention-regularized fine-tuning to break the dose law.** Evidence:
+   ICML 2024 Spotlight (arXiv 2402.02868) identifies our exact failure —
+   fine-tuning erodes competence on states the fine-tune corpus
+   underrepresents ("state coverage gap" + "imperfect cloning gap"), and
+   shows retention methods (replay/BC-mixing of pre-training data,
+   kickstarting-KL to the frozen parent) let the full transfer happen,
+   doubling the NetHack neural SOTA. EWC UNDERPERFORMED BC-based retention
+   in both their testbeds — try it last. Caution from StratFormer (arXiv
+   2604.25796, single source): a KL anchor can destroy the gains the
+   fine-tune was for, cross-entropy anchoring preserved them; and
+   kickstarting failed completely where the parent never saw the new
+   states — anchor only on states the champion handles well.
+   *Pros:* directly attacks the ~1-epoch ceiling (M38's w9294_cont
+   10-epoch collapse is textbook state-coverage-gap); simplest arm is pure
+   data mixing — champion-corpus rows blended into fine-tune batches, no
+   new loss code; would let bigger corpora actually be absorbed.
+   *Cons:* new hyperparameter surface (mix ratio / anchor coefficient); no
+   card-game evidence; must beat the epoch-1 dose-law baseline that
+   already works, on the weighted gate.
+4. **Opponent-deck inference feeding the rules layer.** Evidence: a plain
+   n-gram model over the opponent's played cards predicted a Hearthstone
+   opponent's most-likely card at >95% top-1 by turns 3–5 from only 50k
+   replays (Bursztein blog — old + single source, but mechanism is
+   trivially replicable); PTCG-Bench (arXiv 2605.29653) found game-history
+   context worth ~115 rating points in Pokemon TCG specifically.
+   Consumer: the racemode/conserve triggers currently key on VISIBLE board
+   ids — a deck classifier fires conserve BEFORE the wall/stall board
+   shows, generalizing the trigger-blindspot fix (M38's Fan Rotom 0-2 mode)
+   to unseen variants.
+   *Pros:* tiny model, CPU-trivial, trains on the existing replay cache;
+   the rules layer is a safe consumer (no net retrain); archetype-few meta.
+   *Cons:* BRExIt (arXiv 2206.00113) warns opponent-prediction bolted on
+   WITHOUT a consumer made agents worse — build the trigger consumer first,
+   never an auxiliary head; needs re-training each meta era (cheap);
+   early-game misprediction argues for confidence-gated firing.
+
+### Medium — research-grade, needs an enabler first
+
+5. **Use the discarded loser replays (ROIDA-style).** Offline IL that
+   splits unlabeled auxiliary data into high/low-quality via a
+   positive-unlabeled discriminator, weighted-BC on the good + TD on the
+   rest (arXiv 2410.03626, TMLR) — worked from as few as 3–7 expert
+   trajectories. Our harvest keeps winner seats only; the losers are ~50%
+   of decisions thrown away.
+   *Pros:* doubles usable data at zero harvest cost; PU discriminator is
+   small and CPU-cheap.
+   *Cons:* D4RL/manipulation evidence only; single source; TD component
+   needs value infrastructure — sequence after the value-net retrain.
+6. **Value-net retrain on the harvest corpus** (merge with the existing
+   "gen-2 collect + value-net retrain" item, re-scoped by the M38
+   post-mortem away from solver-teacher data). Now also the enabler for
+   proper advantages in #1 and #5.
+7. **Online PPO best-response.** The strongest exploiter evidence (#2's
+   ByteRL result) used PPO fine-tuning, and M28 left partial infra
+   (`scripts/m28_c1_ppo.sh` — audit its state before writing this off).
+   *Pros:* highest measured ceiling vs fixed opponents.
+   *Cons:* sample scale (the Rummy study, arXiv 2606.21975: 327M env
+   steps) is ~2 weeks of our engine flat-out at best; offline #2
+   approximates it inside existing tooling — do #2 first.
+8. **Architecture inductive bias.** Largest single design win in a
+   CPU-scale card-game study (+8–11pp from a game-structure-matched net,
+   arXiv 2606.21975, single source).
+   *Cons:* requires from-scratch training, and every fresh-train arm we've
+   run on ≤340k rows collapsed (M38 scratch/fresh both killed) — parked
+   until a self-play-scale corpus exists (#2 could generate one).
+
+### Negative results adopted from the literature (stop-investing, cited)
+
+- **Deep equilibrium search lane (NFSP/CFR/ReBeL/Student of Games):**
+  belief-state enumeration is intractable for collectible card games
+  (~10^198 consistent decks in LOCM — arXiv 2404.16689); ReBeL's training
+  ran on 90 DGX-1 machines (arXiv 2007.13544); SoG's guarantee is
+  compute-scaled (Science Advances 2023). Do not spend a milestone here.
+- **Heavy test-time search hybrids:** GO-MCTS needs 25–42 s/turn and
+  millions of training games (arXiv 2404.13150); the sound-search
+  alternative (IJCAI 2024 look-ahead-on-policy) is validated only on
+  Leduc-scale games; PTCG-Bench's authors excluded search-based RL as
+  ill-suited to Pokemon TCG. External confirmation of our own G5/M37/M38
+  rule-stack-and-solver findings: search-free policy nets beat search at
+  CPU budgets (Showdown top-10% search-free; Rummy 580k-param net at
+  0.33 ms/action beating a 2.4 s/action searcher). The solver stays a
+  label/analysis instrument, not a pilot component.
+- **Decision Transformer:** the sweep's one live contradiction — DT-wins
+  claims (arXiv 2305.14550) are directly rebutted at sparse rewards (arXiv
+  2507.10174: filtered-BC MLPs match or beat DT at lower cost; "no regime
+  where DT is clearly preferable"), and DT's data appetite (5× data for
+  2.5× score) plus compute cost disqualify it at our scale regardless of
+  who is right.
+- **LLM-agent / in-context self-improvement mechanisms** (Reflexion,
+  ExpeL, skill libraries…): all five failed to self-improve in Pokemon TCG
+  itself (PTCG-Bench, arXiv 2605.29653). Side finding worth keeping: legal-
+  action masking was their single most valuable component (118 rating
+  points) — our rules-layer action masking is load-bearing; never strip it
+  as part of a rule-stack strip.
+- **Auxiliary opponent-prediction heads without a consumer:** measurably
+  harmful (BRExIt, arXiv 2206.00113). Any opponent-modeling work must ship
+  its consumer (rules trigger or search) in the same milestone.
