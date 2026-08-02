@@ -150,10 +150,20 @@ _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
 # had discarded this rule; the mechanism probe rescued it.
 #
 # An approved ship changes this default string, never the predicate.
+#
+# `planzero` added 2026-08-02 (M40 S6) on the PRE-REGISTERED NULL branch, not
+# on a win. The battery measured +0.43pp (z=0.91) on cont3 and +0.80pp (z=1.72)
+# on retain_b — same sign, neither resolving against a 1.3pp MDE. The plan
+# decided in advance (§6 decision 2) that a null adopts it ANYWAY, because it
+# is not a bet: every training row since M24 carries plans=zeros, so zeroing at
+# serve makes the served distribution match the trained one exactly. It removes
+# a mismatch rather than adding a mechanism, and removals are the class of
+# change that has actually transferred live. Bundled with the next net ship
+# rather than spending a slot of its own.
 _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
         "PKM_ATTACH_FIXES",
-        "conserve,racemode2,racemode4").split(",") if f)
+        "conserve,racemode2,racemode4,planzero").split(",") if f)
 # M40 S6: `planzero` is a SERVE fix, not a reranker — it changes what the trunk
 # is FED, so it is read out here rather than passed to apply_*_overrides (which
 # ignore it harmlessly). See rl/plan.py O14 for why the plan head is
