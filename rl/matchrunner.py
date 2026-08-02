@@ -115,6 +115,45 @@ _MODEL_FIX_KINDS = {
     # branch was killed by the garchomp 5-seed confirm (z -2.13).
     "modelt-gacfr3": frozenset({"telepath", "deckguard", "ash", "conserve",
                                 "benchfloor", "racemode3"}),
+    # M39 P0.7 leave-one-out ablation of the SHIPPED stack (gacfr3). G5
+    # measured the stack only in aggregate (plain .323 > gacf .278 > gacfr3
+    # .254 on the wall bed) and its diary states per-rule attribution beyond
+    # racemode3 is INCOMPLETE — so "strip everything" was an inference from
+    # an aggregate. These five cells + the existing `modelt-gacf`
+    # (= gacfr3 minus racemode3) + `model` (plain) decompose it.
+    "abl-no-telepath": frozenset({"deckguard", "ash", "conserve",
+                                  "benchfloor", "racemode3"}),
+    "abl-no-deckguard": frozenset({"telepath", "ash", "conserve",
+                                   "benchfloor", "racemode3"}),
+    "abl-no-ash": frozenset({"telepath", "deckguard", "conserve",
+                             "benchfloor", "racemode3"}),
+    "abl-no-conserve": frozenset({"telepath", "deckguard", "ash",
+                                  "benchfloor", "racemode3"}),
+    "abl-no-benchfloor": frozenset({"telepath", "deckguard", "ash",
+                                    "conserve", "racemode3"}),
+    # M39 P1-inv: the third Ship A candidate. Decision 1 settled on a full
+    # strip, but `conserve` was the one rule whose removal showed a
+    # directional cost (-2.75pp, z=-1.91 at n=2400 on the 900+ bed) and it
+    # is the only rule whose mechanism (M30 low-deck draw protection) maps
+    # onto our largest loss mode (deck-out races, 29% of losses). Rather
+    # than settle it by judgement, it becomes a gate cell: strip everything
+    # EXCEPT conserve.
+    "model-conserve": frozenset({"conserve"}),
+    # M39 P2 — the anti-deck-out package, measured one rule at a time on top
+    # of the SHIPPED Ship A config (`conserve`) so every cell is a single
+    # variable against the live agent rather than against a hypothetical.
+    # r2  = racemode2 (P2a): the m37 wall-blanket/pressure-margin split,
+    #       never shipped live, now carrying the P2a id additions (Mega
+    #       Kangaskhan ex on the wall side, Fan Rotom on the pressure side).
+    # rm4 = racemode4 (P2b): demote OUR measured burn sources in a race.
+    # ash = raceash (P2b): recycle Sacred Ash early in a race (a PROMOTE —
+    #       opposite sign to rm4, which is why it is its own cell).
+    "model-c-r2": frozenset({"conserve", "racemode2"}),
+    "model-c-rm4": frozenset({"conserve", "racemode4"}),
+    "model-c-ash": frozenset({"conserve", "raceash"}),
+    "model-c-pkg": frozenset({"conserve", "racemode2", "racemode4"}),
+    "model-c-pkga": frozenset({"conserve", "racemode2", "racemode4",
+                               "raceash"}),
 }
 
 

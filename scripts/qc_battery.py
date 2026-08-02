@@ -27,6 +27,25 @@ SAMPLE_AGENTS = {
     "iono": "sample-agent-iono/main.py",
     "dragapult": "sample-agent-dragapult/main.py",
 }
+
+# M39: the loss-family legs. M38 went 11W-1L here against a roster covering
+# ZERO of the top-3 live loss families — the QC rule was followed to the
+# letter and still measured the wrong thing, so the mandatory replay review
+# had nothing relevant to look at. These are the families that actually beat
+# us, and QC must cover them permanently (docs/M39-plan.md finding #4).
+# Built by scripts/m39_build_qc_beds.py; they run PLAIN (our fix stack keys
+# on our own cards), so they are the same agents the gate beds are.
+# `stall` is deliberately absent: 9 seats at band, unbuildable (docs/M39.md).
+BED_AGENTS = {
+    "wall": "dist/qc_beds/wall/main.py",
+    # G-13: the hardest of the three wall panel draws (.188 vs d1's .296
+    # against the live config). QC's job is replays that expose defects, and
+    # the softest draw is the least likely to produce one.
+    "wall_hard": "dist/qc_beds/wall_hard/main.py",
+    "grim": "dist/qc_beds/grim/main.py",
+    "archaludon": "dist/qc_beds/archaludon/main.py",
+    "top900": "dist/qc_beds/top/main.py",
+}
 PREV_DIR = ROOT / "dist/prev_ship_agent"
 
 
@@ -56,6 +75,13 @@ def main():
     from tcg.evaluation import play_games
 
     opponents = {k: str(ROOT / v) for k, v in SAMPLE_AGENTS.items()}
+    for name, rel in BED_AGENTS.items():
+        path = ROOT / rel
+        if path.exists():
+            opponents[name] = str(path)
+        else:
+            print(f"WARNING: bed leg {name} missing ({rel}) — run "
+                  f"scripts/m39_build_qc_beds.py; QC will NOT cover it")
     tarballs = sorted((ROOT / "dist").glob("submission_*.tar.gz"))
     prev = Path(args.prev) if args.prev else \
         (tarballs[-2] if len(tarballs) >= 2 else None)
@@ -84,6 +110,13 @@ def main():
     if failures:
         print(f"SWEPT 0-{args.games} by: {', '.join(failures)} — "
               f"investigate before asking for the ship go")
+    # docs/VALIDATION.md Tier 4: at n=3/opponent the minimum detectable
+    # effect is near 100pp. This battery cannot measure strength and its W-L
+    # must never be quoted as evidence of it (M38 cited 11W-1L that way).
+    print("\nThis is a SMOKE TEST — crashes, timeouts, illegal actions, "
+          "catastrophic breakage. It is NOT a strength measurement at n="
+          f"{args.games}/opponent; the weighted gate is. Its real output is "
+          "the replays, for Piotr's mandatory review.")
 
 
 if __name__ == "__main__":

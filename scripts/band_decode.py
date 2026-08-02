@@ -1,5 +1,13 @@
 """600-band-weighted portfolio decode (M37 — the band-trap answer).
 
+SUPERSEDED for M39+ ship gates by `scripts/m39_decide.py`, which reads the
+committed `data/m39_live_mix.json` instead of an in-code table and enforces
+G-3's 80% coverage floor (a roster below it emits no verdict at all). Kept
+for decoding historical M36/M37 batteries, and re-weighted below onto the
+current sample so any legacy use is not two metas stale — but do NOT add a
+second weighting table to the M39 gate path; two sources of truth drift,
+which is exactly the class of error M39 exists to stop.
+
 Same decode law as scripts/portfolio_decode.py (0 = side-A WIN, 2 = draw
 counts half), but weighted by the 600-BAND composition the M36 sub actually
 faced, not the 750-band meta_v3 shares. Rationale (docs/m36-post-mortem.md):
@@ -29,12 +37,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# bed -> frozen 600-band live-game count it represents (n=52, see docstring)
+# bed -> live-game count it represents.
+# RE-FROZEN 2026-08-01 (M39 P0.6) on the pooled M37 55065484 + M38 55146658
+# sample, n=147 ladder games — the same source as data/m39_live_mix.json, so
+# the two cannot disagree about the meta even though only the json is the
+# gate input. Previous freeze was the sub-55030954 600-band cache (n=52),
+# two metas stale. The headline shift: archaludon 1 -> 18 (it was a rounding
+# error at the 600 band and is now the third-largest family), stall 2 -> 4.
 BAND_WEIGHTS = {
-    "mirror": 12, "grimlive": 8, "luc": 8, "wall": 5, "hop": 2,
-    "garchomp": 2, "arch": 1,
+    "luc": 29, "mirror": 23, "wall": 20, "arch": 18, "grimlive": 18,
+    "dragapult": 7, "garchomp": 7, "rocket": 5, "hop": 4, "iono": 1,
 }
-LIVE_N = 52
+LIVE_N = 147
 UNCOVERED = LIVE_N - sum(BAND_WEIGHTS.values())
 
 
