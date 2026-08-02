@@ -21,7 +21,7 @@ interval; this table is the index, not the evidence.
 | lane | phase | status | result |
 |---|---|---|---|
 | **S4.1 X0** accrual audit | — | ✅ **DONE** | Reads do **not** split (parallel is real), but subs DIE: lifetime min 36 / median 50 / **max 112**. n=150 unreachable |
-| **S4.2** floor ship | — | 🚀 **SHIPPED 55185485** | live **782.4** at n=25. read-n **45** (revised from 150) |
+| **S4.2** floor ship | — | ❌ **LIVE REGRESSION** | 55185485 read DONE at n=47≥45: **0.36 wr, 659.7**, z=2.06 vs A+B's 0.54 — `retain_b` is live-negative (diary 08-03) |
 | **S4.3** replication ship | — | ⬜ not started | now the *only* route to n≥150 (X0) |
 | **S5** encoder v4 | walker | ✅ done | `iter_replay_prompts`; naive path corrupts 1.02% of rows |
 | | fidelity probe | ✅ **PASS** | **100.0000%** over 3,902 prompts — the pre-registered gate |
