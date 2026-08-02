@@ -1,234 +1,235 @@
-# M40 plan — STUB. The last real attempt, and what M39 says it should be
+# M40 plan — STUB. Leave the band, or stop pretending we are trying to
 
-**Status: STUB, drafted 2026-08-02 from [M39.md](M39.md), the
-[M39 plan](M39-plan.md) and [BACKLOG](BACKLOG.md). Nothing is scheduled.**
-Every phase below is a candidate; the decision points at the end are
-unanswered and this plan does not proceed until Piotr resolves at least
-decisions 1 and 2. Written in the M39 convention (scope / options /
-recommendation / rationale) so the *reasoning* survives even where the
-verdict changes.
-
-**Do not start P0 until decisions 1–2 are answered.** M39's own finding #6
-is that the attractive lane is how a milestone gets lost, and M40 has less
-room to lose one than any milestone so far.
+**Status: STUB, drafted 2026-08-02, rewritten the same day after Piotr's
+steer: "there's no point building for a modest increment — we've been stuck
+in the same ELO slot for a long time."** That is correct, and the first
+version of this plan was wrong to recommend banking +24 ELO. Nothing here is
+scheduled; decisions at the end are unanswered.
 
 ---
 
-## The situation, stated plainly
+## 1. Why we are stuck — and it is not policy quality
 
-| fact | value | source |
-|---|---|---|
-| live now | **Ship A 55172160 = 780.4** | leaderboard, 08-02 |
-| in flight | Ship B 55182097 (dwell n=150 declared) | expected ≈ +17 ELO |
-| campaign target | **implied ELO 1000** | M39 plan revision 2, Piotr's call |
-| **gap after Ship B lands as expected** | **≈ 200 ELO** | 1000 − ~795 |
-| **submission slots left** | **2** — slot 3 (the attempt) + slot 4 (reserve) | M39 slot budget; **CONFIRM this is still right** |
-| calendar | ~6 weeks (`…-challenge-strategy` closes 2026-09-13) | competition page |
+The campaign's scores: M30/M35 **817**, M37 **736**, M38 **665**, M39 Ship A
+**780**. Five milestones oscillating inside one ~150-point band. The usual
+story is "the policy needs to be better". The M39 data says something more
+specific and more actionable.
 
-**Slots, not calendar, are the binding constraint — and slot 4 is
-insurance, so M40 realistically gets ONE shot.** That single fact should
-drive every choice below.
+**Two facts that cannot both be about our policy:**
 
-## What M39 settled, and what each finding obliges M40 to do
+| | |
+|---|---|
+| our WR vs `m39_bc_top` — a BC clone of **900–1058-band** pilots of our own list | **0.532** (panel of 3 draws, n=3600) — *we are above parity* |
+| our live record vs **800+** opponents, M37+M38 | **0-6** |
 
-| M39 finding | evidence | what it obliges |
-|---|---|---|
-| **The ceiling trigger FIRED — imitation is exhausted at 900+** | 5 arms, 2 independently-failing corpora, **every one negative** on the `m39_bc_top` panel | M40 is **not** another harvest/fine-tune round. That branch was pre-registered and it fired. |
-| **Retention is the lever, not dose rationing** | mixing champion shards swung corpus A **+3.90pp** and corpus B **+2.70pp**, turning both losing corpora into wins | retention is a **default** on every future fine-tune, never an arm |
-| **Loser rows carry signal** | α=0.25 beats winners-only by **+2.28pp** | `--outcome-weight 0.25` becomes the default too; **both M39 retention arms used the worse α=0**, so the retention×α cross is unexplored and free |
-| **A measured, unshipped +3.47pp already exists** | `m39_retain_b` + `conserve,racemode2,racemode4` = **+3.47pp weighted, z=+7.44**, G-4 already paid | slot 3 has a **safe floor option** that needs no new research — see decision 1 |
-| **Bed strength is a training lottery (G-13)** | wall panel spread 10.8pp; `m38_bc_wall` is the softest of three draws | panels are standing; every new bed ships as ≥3 draws |
-| **Mechanism probes beat significance thresholds — twice** | `conserve` (rescued at z=−1.91, now +115 live); racemode2+4 synergy predicted by fire counts | G-11 stays mandatory, and a probe is written **before** the deciding battery |
-| **`plan_iter collect` cannot label a best-response corpus** | it uses `_teacher_step` (solver teacher) in BOTH modes | any self-play lane uses `scripts/m39_collect_bestresp.py`, not `collect` |
-| **Self-imitation did not beat its own fixed opponent** | `m39_bestresp` −2.7pp on the wall beds it was collected against | 8% uniform exploration is too weak. If the self-play lane runs, its exploration and its label source are the design, not a detail. |
+We beat a "900-band" bed and have never once beaten a real 800+ player.
+Both cannot be true of the same opponents, so the bed is not what its label
+says.
 
-## Candidate phases (none scheduled)
+**M39 accidentally measured the compression factor.** D1's head-to-head put
+the 1000-band grim clone over the 750-band grim clone at **0.623 (z=+12.04)**
+— clones *do* transmit relative skill, so cloning is not saturated. But 0.623
+is ≈86 ELO of separation from demonstrators ~250 ELO apart. **A BC clone
+retains roughly a third to a half of its demonstrator's edge.**
 
-### E0 — pay the enabler debt: value net on the harvest corpus
+Apply that to every bed we own and the campaign's history stops being a
+mystery:
 
-**BACKLOG sweep #6, promoted to headline by the ceiling result.** Three
-parked items share one blocker and this is it: without per-decision
-advantages, #1 degrades to outcome-as-proxy (what M39's α-ladder did), #5's
-TD half cannot be built, and #7 has no critic.
+> **Our entire offline apparatus is a ~700-band opponent set wearing
+> 700–1000-band labels. We have spent five milestones optimizing win rate
+> against opposition at the band we are already in. You cannot exit a band by
+> optimizing against it.**
 
-- Train a value head on the harvest corpus (the 3,908-seat cache), **not**
-  on solver-teacher data — M38's central negative result.
-- Validate it the way M39 validated beds: **panels** (≥3 draws) and a
-  held-out-band check. A value net is an instrument, and M39's whole lesson
-  is that un-panelled instruments lie by ~6–12pp.
-- **Exit criterion, pre-registered:** the value net must rank held-out
-  outcomes better than the outcome-proxy baseline on the *loss families*
-  specifically. If it cannot, everything downstream of it is dead and M40
-  says so on day two rather than on a burnt slot.
+It also explains why the gates keep half-transferring: Ship A's +115 came
+from *removing* rules (undoing damage is measurable against any opponent),
+while M37's and M38's predicted wall/grim gains — which required actually
+outplaying a stronger opponent — did not transfer at all.
 
-Cost: days, zero slots. Risk: the old value lineage is prize-phobic and a
-retrain may inherit it.
+**Stated as a hypothesis, with its own weakness up front (G-9):** the 0-6 is
+n=6, and no live cell may gate a decision at any n. The compression estimate
+rests on one head-to-head. **M40's first job is to test this properly, not to
+assume it** — see S3. But it is the only story that fits both numbers, and if
+it is right then "a modest increment" was never the choice; the choice was
+between a real attempt and a rounding error.
 
-### E1 — advantage-filtered BC, done properly (BACKLOG sweep #1)
+## 2. What a step change has to come from
 
-Only reachable after E0. M39 ran the outcome-proxy version and got a real
-but sub-control result (α=0.25 at −0.82pp). With true advantages this becomes
-the binary filter `1{A>0}` that AFBC prefers, on a corpus that retention has
-already shown how to absorb.
+If the beds are the ceiling, then anything that *optimizes against the beds*
+inherits the ceiling — which is every lane M37–M39 ran. Three mechanisms do
+not:
 
-**Composition that M39 never tested and should run first because it is
-nearly free: retention × α=0.25.** Both retention arms used α=0; the α ladder
-was run without retention. The cross is one training run.
+### S1 — give the neural line the within-turn combo solver it has never had
 
-### E2 — self-play / best-response, if the lane is entered at all
+**The single largest unexploited structural gap in the codebase, and it is
+not new research — it is shipping infrastructure we already own to a lineage
+that never received it.**
 
-M39's `bestresp` failed, and the failure is diagnostic rather than fatal:
-8% uniform-random exploration produced a corpus the net already agreed with
-93.5% of the time. A serious version needs at least one of —
+From [matchrunner.py:390](../rl/matchrunner.py:390) and
+[turn_solver.py:531](../rl/turn_solver.py:531): *"the shipped neural bundle
+is a greedy one-action argmax, which is the exact failure this module was
+written to fix — a multi-prize lethal that needs item → attach → attack is
+never assembled. The solver has only ever shipped in the RULES bundle, so the
+neural line never got it."*
 
-- **exploration that is not uniform** (sample from the policy at temperature,
-  or ε-greedy over the top-k, so explored actions are plausible);
-- **a critic** (E0) so the filter is per-decision rather than per-game;
-- **opponent diversity** — the Showdown paper hit opponent-distribution
-  overfitting with realistic partners, and our beds are three clones per
-  family. G-13 panels give us 3× diversity already; that is probably still
-  too few.
+**We have been shipping a policy that cannot assemble a two-step lethal since
+M11.**
 
-Online PPO (sweep #7) stays parked: 327M env steps ≈ 2 weeks of engine
-flat-out, which does not fit inside one slot's preparation.
+Screen run 2026-08-02 (`solved:` vs `model-conserve:` on `m38_bc_wall`,
+n=30/arm):
 
-### E3 — opponent-deck inference (BACKLOG sweep #4, cut from M39 with its design intact)
+| arm | W-L vs the wall bed | mean move | p99 | max |
+|---|---|---|---|---|
+| `model-conserve` (live) | 9-21 (**0.300**) | 0.62 ms | 1.3 ms | 8.0 ms |
+| **`solved` (net + combo solver)** | **16-14 (0.533)** | **5.92 ms** | 28.9 ms | 117.9 ms |
 
-The one item that arrives pre-designed: an n-gram / naive-Bayes archetype
-posterior over the opponent's *played* card ids, consulted by the racemode
-trigger only when the id-set has not already fired, confidence-gated, behind
-a flag defaulting OFF, with a contract test asserting identical behaviour on
-every fixture where the id-set trigger never fires.
+The 0.300 reproduces the panel gate's 0.296 exactly, so the control is sound.
+**+23pp on our worst matchup.**
 
-**M39 raised its value.** The rules lane is now the campaign's best-measured
-lever (racemode2+4 = +2.37pp weighted, +11.2pp on the wall panel), and the
-package's trigger is exactly what E3 would fire earlier. It also directly
-addresses M39's two admitted blind spots — `kanga` and `stall`, 4.1% of live
-games, **unmeasurable offline because no bed is buildable** (19 and 34
-seats). A classifier generalises where an id list cannot.
+**This is a SCREEN, not a measurement.** n=30 resolves ~35pp (G-12), and this
+campaign has corrected four small-n over-reads in the last week. It does not
+enter a ship decision until a panel battery says so. But it is the largest
+screen delta the campaign has produced, on the matchup we are worst at, from
+code that already exists.
 
-BRExIt's warning is satisfied by construction: the consumer ships in the same
-milestone.
+Why it is plausible rather than lucky: this is **structural action-space
+competence, not policy quality** — the same class as PTCG-Bench's finding
+that legal-action masking was worth **118 rating points**, their single
+largest component. And it is opponent-independent, so unlike every M37–M39
+lane it does not inherit the clone ceiling.
 
-### E4 — housekeeping, only if a slot-3 decision leaves room
+**It reopens a documented stop-invest line and therefore needs Piotr's
+explicit sign-off.** The BACKLOG says *"search-free policy nets beat search
+at CPU budgets; the solver stays a label/analysis instrument, not a pilot
+component."* Those citations are about **replacing** a policy with tree
+search (GO-MCTS at 25–42 s/turn; ReBeL on 90 DGX-1 machines). Completing a
+turn the policy has already chosen, at 6 ms inside a 50 ms budget, is a
+different intervention. Our own M22c evidence against it predates the entire
+replay-BC lineage and was measured on a net that no longer exists.
 
-`rl/` ↔ `tcg/` duplication (~200 KB, seven pairs, manual parity tests); the
-three pre-existing `test_meta_eval` failures; W_COUNTER retune and
-`setup_plans_late` re-evaluation (both gated on a gen-2 collect that only
-happens if E2 runs).
+Open risks, to be closed before any ship: the **117.9 ms max move** against
+the real per-move limit; whether the gain survives on beds other than wall;
+and whether the solver's own action model is faithful on the current net.
 
-## Pre-registered kill conditions (draft)
+### S2 — self-play iteration (the only mechanism that exceeds demonstration)
 
-- **E0 value net cannot out-rank the outcome proxy on the loss families** →
-  the enabler debt is unpayable at this corpus quality; E1 and E5 die with
-  it, and slot 3 falls back to decision 1's floor option.
-- **E2 self-play produces a corpus the net agrees with >90% of the time** →
-  the exploration design failed again; kill before training, not after
-  gating. (This is checkable at collection time — M39's corpus B announced
-  its own weakness as `init val_acc 0.935` and nobody read it as a kill
-  signal until the gate agreed.)
-- **Any arm wins the weighted pool but not the loss families** → the M38
-  failure mode; not a ship.
-- **Nothing beats +3.47pp on the weighted gate by slot-3 decision day** →
-  ship the already-measured `retain_b × package` and spend the milestone's
-  remaining time on E3/E4. This is a *good* outcome, not a failure.
+M39 proved imitation is exhausted on this corpus (5 arms, 2 corpora, every
+one negative on the 900+ panel). Self-play is the textbook answer, and it is
+the one lane the campaign has never run properly. It needs, in order:
 
-## Standing guardrails (inherited, binding)
+1. **E0 — the value net on the harvest corpus** (BACKLOG sweep #6, the
+   enabler three parked items share). Pre-registered exit criterion: it must
+   out-rank the outcome proxy **on the loss families** or the whole branch
+   dies on day two rather than on a slot.
+2. **A real exploration design.** M39's `bestresp` failed for a diagnosable
+   reason: 8% uniform-random exploration produced a corpus the net already
+   agreed with **93.5%** of the time, and it then lost to the very beds it
+   was collected against. Policy-temperature or ε-over-top-k sampling, not
+   uniform noise.
+3. **Opponent diversity beyond three clones per family** — the Showdown paper
+   hit opponent-distribution overfitting even with realistic partners.
 
-G-1…G-13 from [M39-plan.md](M39-plan.md#process-guardrails-standing-binding-from-m39-on)
-carry over unchanged. Three that M39 proved the hard way and M40 should
-expect to lean on:
+Honest cost: this is the expensive lane and it may return nothing inside one
+milestone. Online PPO stays parked (327M env steps ≈ 2 weeks of engine).
 
-- **G-11 (mechanism proof per ship)** — it rescued `conserve` (+115 live) and
-  predicted the racemode2+4 synergy. Write the probe *before* the battery.
-- **G-12 (offline power)** — n=800 resolves ~10pp; most effects are ~2–5pp.
-- **G-13 (panels)** — no single-clone bed, and the same scepticism now
-  extends to **any** trained instrument, including E0's value net.
+### S3 — build opponents ABOVE the clone ceiling, and re-measure the gap
 
-## Decision points for Piotr (unanswered — this plan does not start without 1 and 2)
+**Prerequisite for believing anything S1 or S2 reports**, and the direct test
+of §1's hypothesis. If every bed is 700-band, then S1's +23pp and any S2 gain
+are measured against the wrong opposition and may not transfer either.
 
-### 1. What is slot 3? — the milestone's only real question
+Cheapest construction, using what S1 builds anyway: **clone + solver
+composites** (`solved:<bed_ckpt>:<bed_deck>`). If the composite beats its own
+plain clone the way our composite beats ours, we have opponents meaningfully
+above the clone ceiling for the first time, at zero new research.
 
-**Scope.** Slot 3 is the last real submission (slot 4 is reserve). Two
-candidates, and they are not close in risk:
+Then re-run the P0.8 gap read against a solver-augmented top bed. Two
+readings, both decision-relevant:
 
-| option | expected | evidence | risk |
-|---|---|---|---|
-| **(a) bank the measured gain** — `m39_retain_b` + `conserve,racemode2,racemode4` | **+3.47pp, z=+7.44** ≈ +24 ELO | already gated on the panel roster; G-4 already paid | two-lane, so it needs Ship B's n=150 read first (G-7) |
-| **(b) spend it on the E0→E1/E2 lane** | unknown; nothing in the BACKLOG has 200-ELO evidence at our scale | literature at 100–1000× our data scale | could return nothing and burn the last real slot |
+- the gap re-opens (we fall well below parity) → §1 confirmed, the campaign's
+  offline numbers have been systematically optimistic, and **every historical
+  bed absolute needs an asterisk**;
+- the gap holds → §1 is wrong, our beds are honest, and the 0-6 live record
+  needs a different explanation (matchup structure, or six unlucky games).
 
-**Recommendation: (a), with (b) run offline as the M41/stretch lane.**
-The arithmetic is uncomfortable and should be stated rather than dressed up:
-**+24 ELO against a ~200 ELO gap.** Option (b) is the only one that could in
-principle close it, but M39 just spent a full milestone establishing that
-imitation on this corpus cannot, and (b)'s remaining mechanisms are exactly
-the ones the sweep rated as needing an enabler we do not yet have. Banking
-(a) is not defeatism — it is refusing to trade a measured +24 for a lottery
-ticket when the reserve slot is the only thing left behind it.
+Either way M40 learns something the last three milestones could not.
 
-**This is Piotr's call and I have deliberately not pre-committed the plan
-to it.**
+## 3. Slot structure — what makes the aggressive bet rational
 
-### 2. Does the 1000 target still stand?
+The first draft framed this as "bank +24 or gamble". That was a false choice,
+because **the measured gain does not expire**:
 
-**Scope.** The target was raised 800 → 1000 in M39 revision 2, aimed at
-slot 3. Slot 3 is now the last real slot and the gap is ~200 ELO.
+| slot | use |
+|---|---|
+| **3** | **the step change** — the best of S1 / S2 by the gate, on a panel roster that S3 has validated |
+| **4 (reserve)** | **the already-gated floor: `m39_retain_b` + `conserve,racemode2,racemode4` = +3.47pp, z=+7.44, G-4 already paid** |
 
-**Options.** (i) hold 1000 and accept that M40 probably misses it;
-(ii) re-point to a defensible landing (~820–850) and judge M40 against that;
-(iii) hold 1000 but move the attempt to a hypothetical M41 with more slots —
-only meaningful if the slot budget is not what we think it is.
+The +3.47pp config is measured, exported-ready, and will still be measured in
+six weeks. Holding it in slot 4 converts the reserve from dead weight into a
+real safety net, and that is precisely what makes spending slot 3 on a swing
+the *conservative* choice rather than a reckless one. **Verify the slot count
+first (decision 3) — the whole structure depends on it.**
 
-**Recommendation: (ii), stated in advance.** M39 was judged a success by a
-pre-registered bar it actually met (780 with a slot-3 thesis). M40 deserves
-the same treatment, and a target that arithmetic says is unreachable in the
-remaining budget makes the milestone unjudgeable rather than ambitious.
-**Counter-argument kept live:** Piotr raised the target on purpose in M39 to
-avoid relaxing confidence, and it produced the campaign's best result — so
-the case for holding 1000 is not sentimental.
+## 4. Pre-registered kills (draft)
 
-### 3. Confirm the slot budget
+- **S1 does not replicate on a panel battery** (n≥1200/draw across ≥3
+  families) → the screen was noise; drop it and S3 still stands on its own.
+- **S1's max move exceeds the live per-move limit and cannot be tuned under
+  it without losing the gain** → kill; a timeout is a lost game.
+- **E0's value net cannot out-rank the outcome proxy on the loss families** →
+  S2 dies with it.
+- **S2 collection produces a corpus the net agrees with >90% of the time** →
+  the exploration design failed again; kill at collection time, not after
+  gating. M39's corpus B announced this as `init val_acc 0.935` and nobody
+  read it as a kill signal until the gate agreed.
+- **Nothing beats the slot-4 floor by decision day** → ship the floor from
+  slot 3 and keep 4 in reserve. Not a failure; a correctly-priced bet losing.
 
-The "4 remaining" figure entered the plan at M39 drafting and has never been
-re-verified against the competition's actual submission allowance. Decisions
-1 and 2 both hinge on whether 2 is really the number. **Verify before
-answering 1.**
+## 5. Standing guardrails
 
-### 4. Does the self-play lane get built at all?
+G-1…G-13 carry over unchanged. Three that M39 earned and M40 will lean on:
+**G-11** (write the mechanism probe *before* the deciding battery — it
+rescued `conserve`, now +115 live, and predicted the racemode2+4 synergy);
+**G-12** (n=800 resolves ~10pp; S1's screen is n=30); **G-13** (no
+single-clone bed — and the same scepticism now extends to E0's value net and
+to any solver-composite bed).
 
-Even under decision 1(a), E0+E2 can run offline at zero slot cost. The
-question is whether it is worth the machine time and the attention given the
-M39 result, or whether E3 (opponent-deck inference, pre-designed, feeding
-the campaign's best-measured lever) is the better use of the same weeks.
+## 6. Decisions for Piotr (unanswered)
 
-**Recommendation: E0 yes (it is the enabler for everything and it is
-cheap), E3 yes, E2 only if E0's exit criterion passes.**
-
-### 5. Ship B's read, and what it changes
-
-Ship B's declared dwell is n=150. Its wall cell carries a specific
-falsifiable prediction — **opponent deck-outs at ~30% in live wall replays**.
-If that transfers, the rules lane is the campaign's proven vehicle and E3
-becomes the obvious slot-4 candidate. If it does not, the fourth bed-fidelity
-failure in a row means offline beds cannot be trusted for the rules lane
-either, and that is a bigger finding than anything else in this plan.
-
-**Nothing in M40 should be finalised before that read.**
+1. **Sign off on reopening the search lane (S1)?** It contradicts a
+   documented stop-invest line, on evidence I have argued is about a
+   different intervention. It is also the cheapest large lever on the table
+   and needs no new research. **Recommendation: yes — a panel battery costs a
+   day and settles it.**
+2. **Does S2 run in M40, or does M40 spend its weeks on S1+S3 and hand S2 to
+   M41?** Running both risks the M38 failure mode (a milestone losing its
+   cycle to the attractive lane). **Recommendation: E0 yes regardless (cheap,
+   and it is the enabler for everything downstream); full S2 only if E0's
+   exit criterion passes AND S1 has already been settled.**
+3. **Confirm the slot budget.** "4 remaining" entered at M39 drafting and has
+   never been re-verified. The whole slot-3/slot-4 structure depends on it.
+4. **The target.** With this framing I am no longer recommending re-pointing
+   to 820–850. If §1 is right, the ceiling was never a property of our
+   policy, and 1000 stays the honest target. If S3 refutes §1, the target
+   question returns with better information than it has now.
+5. **Nothing finalises before Ship B's n=150 read** — its wall cell carries a
+   falsifiable mechanism prediction (opponent deck-outs ~30% live). It is
+   also the cleanest available test of whether *any* bed-derived number
+   transfers, which is §1's question in live form.
 
 ---
 
-## BACKLOG disposition (draft, for the real plan to confirm)
+## BACKLOG disposition (draft)
 
 | item | proposed M40 disposition |
 |---|---|
-| Value-net retrain / gen-2 (sweep #6) | **E0 — headline enabler** |
-| Advantage-filtered BC (sweep #1) | **E1**, blocked on E0; run retention×α=0.25 first (free) |
-| Offline best-response (sweep #2) | **E2**, only if E0 passes; needs a real exploration design |
+| **Within-turn solver on the neural line** (not previously a BACKLOG item — it was a code comment) | **S1, headline candidate** |
+| Value-net retrain / gen-2 (sweep #6) | **E0 — enabler, runs regardless** |
+| Offline best-response (sweep #2) | **S2**, gated on E0 + a real exploration design |
+| Advantage-filtered BC (sweep #1) | blocked on E0; **retention × α=0.25 is the free untested cross** M39 left behind |
 | Retention (sweep #3) | **no longer an item — it is the default** |
-| Opponent-deck inference (sweep #4) | **E3**, design intact from M39 |
-| ROIDA loser replays (sweep #5) | blocked on E0; the α-ladder already took the free half |
-| Online PPO (sweep #7) | stays parked — 327M env steps |
-| Architecture inductive bias (sweep #8) | stays parked — needs a self-play-scale corpus (E2 could make one) |
-| `rl/`↔`tcg/` duplication, W_COUNTER, `setup_plans_late` | **E4**, only if slot 3 resolves early |
-| Deep equilibrium search / test-time search / DT / LLM self-improvement | **stop-invest, unchanged** |
-| Stop-investing list | unchanged, except **grim stays revoked** |
+| Opponent-deck inference (sweep #4) | strong slot-4 candidate if Ship B's wall claim transfers |
+| ROIDA loser replays (sweep #5) | blocked on E0 |
+| Online PPO (sweep #7) | parked — 327M env steps |
+| Architecture inductive bias (sweep #8) | parked — needs a self-play-scale corpus (S2 could make one) |
+| Heavy test-time search / DT / LLM self-improvement / deep equilibrium | **stop-invest, unchanged** — S1 is *not* this, and the plan says why |
+| `rl/`↔`tcg/` duplication, W_COUNTER, `setup_plans_late` | housekeeping, only if slot 3 resolves early |
