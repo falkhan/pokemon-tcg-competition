@@ -32,10 +32,160 @@ def md5(p: Path) -> str:
     return hashlib.md5(p.read_bytes()).hexdigest()
 
 
+# A plan-CARRYING corpus does not measure 1.0 non-zero plans: encode_plan(None)
+# is all-zeros and the null plan is a legitimate, frequent choice. Measured on
+# the three plan-carrying corpora we have (data/plan_m16, plan_m18,
+# plan_m19_rw2x): 0.159 / 0.180 / 0.193. Replay-derived corpora measure exactly
+# 0.000. The two regimes are three orders of magnitude apart, so the thresholds
+# below are not close calls.
+PLAN_SERVED_MIN = 0.05     # a bundle that serves plans needs a corpus with them
+PLAN_ZEROED_MAX = 0.01     # a bundle that zeroes them needs a corpus without
+
+
+def _corpus_stats(d: Path) -> dict | None:
+    """Per-shard-dir widths and plan occupancy. Never pools across dirs — the
+    BCDatasetV3 pad shim pools them at TRAIN time (zero-padding narrow states
+    to the widest), and that pooling is precisely what hides an encoder-version
+    mismatch. Reporting per dir is the whole point."""
+    import numpy as np
+    shards = sorted(d.glob("*.npz"))
+    if not shards:
+        return None
+    ctx_w, id_w, opt_w = set(), set(), set()
+    rows = plan_rows = 0
+    has_plans = False
+    for s in shards:
+        z = np.load(s)
+        ctx_w.add(int(z["states"].shape[1]))
+        id_w.add(int(z["state_ids"].shape[1]))
+        opt_w.add(int(z["options"].shape[1]))
+        n = int(z["states"].shape[0])
+        rows += n
+        if "plans" in z.files:
+            has_plans = True
+            plan_rows += int(np.count_nonzero(z["plans"].any(axis=1)))
+    return dict(dir=str(d), rows=rows, ctx_w=ctx_w, id_w=id_w, opt_w=opt_w,
+                has_plans=has_plans,
+                plan_frac=(plan_rows / rows) if rows else 0.0)
+
+
+def input_parity_checks(npz_path: Path, main_src: str,
+                        corpus_dirs) -> list[tuple[str, bool, str]]:
+    """G-14. Returns (label, ok, detail) triples. No engine dependency."""
+    import numpy as np
+    from rl.encoders import N_CONTEXTS, STATE_V2_DIM, V4_EXTRA_DIM
+    from rl.plan import PLAN_DIM, SERVE_FIX_PLANZERO
+
+    out: list[tuple[str, bool, str]] = []
+    if not npz_path.exists():
+        return [("6. serve/train input parity", False, "no policy_weights.npz")]
+    z = np.load(npz_path)
+    is_v3 = "plan_enc.0.weight" in z
+    is_v4 = "enc_ver" in z
+    embed_dim = int(z["embedding.weight"].shape[1])
+    w_in = int(z["state_enc.0.weight"].shape[1])
+    serve_ctx_w = STATE_V2_DIM + N_CONTEXTS + (V4_EXTRA_DIM if is_v4 else 0)
+    serve_n_ids = (w_in - serve_ctx_w - (PLAN_DIM if is_v3 else 0)) // embed_dim
+
+    m = re.search(r'"PKM_ATTACH_FIXES",\s*\n?\s*"([^"]*)"', main_src)
+    names = [x for x in (m.group(1).split(",") if m else []) if x]
+    serves_plan = is_v3 and SERVE_FIX_PLANZERO not in names
+
+    stats = []
+    for d in corpus_dirs:
+        st = _corpus_stats(Path(d))
+        if st is None:
+            out.append(("6. corpus readable", False, f"no shards in {d}"))
+        else:
+            stats.append(st)
+    if not stats:
+        return out or [("6. serve/train input parity", False, "no corpus")]
+
+    # 6a — the S6 defect: what the trunk is CONDITIONED on.
+    tot = sum(s["rows"] for s in stats)
+    frac = sum(s["plan_frac"] * s["rows"] for s in stats) / tot
+    if serves_plan:
+        ok = frac >= PLAN_SERVED_MIN
+        detail = (f"bundle serves a plan-head argmax every MAIN "
+                  f"(fixes: {','.join(names) or 'none'}); corpus has "
+                  f"{frac:.4f} non-zero-plan rows over {tot}")
+        if not ok:
+            detail += (f"\n       every served MAIN prompt is OUT OF "
+                       f"DISTRIBUTION for the trunk (want >= "
+                       f"{PLAN_SERVED_MIN}; plan-conditioned corpora "
+                       f"measure 0.16-0.19)\n       -> add "
+                       f"'{SERVE_FIX_PLANZERO}' to PKM_ATTACH_FIXES, or "
+                       f"train on a plan-carrying corpus")
+            for s in stats:
+                detail += (f"\n         {s['dir']:<34} {s['rows']:>7} rows  "
+                           + ("plans present" if s["has_plans"]
+                              else "NO `plans` column (-> zeros)"))
+    else:
+        ok = frac <= PLAN_ZEROED_MAX
+        detail = (f"bundle serves plan=0 ('{SERVE_FIX_PLANZERO}'); corpus "
+                  f"{frac:.4f} non-zero-plan rows -- matched")
+    out.append(("6a. serve/train PLAN parity", ok, detail))
+
+    # 6b — the S5 defect: encoder version, per dir, never pooled.
+    bad = [s for s in stats
+           if s["ctx_w"] != {serve_ctx_w} or s["id_w"] != {serve_n_ids}]
+    out.append((
+        "6b. serve/train ENCODER width parity", not bad,
+        f"serve ctx {serve_ctx_w} ids {serve_n_ids} "
+        f"(v{'4' if is_v4 else '3'}) vs {len(stats)} corpus dir(s)"
+        + ("" if not bad else "\n       MISMATCH: " + "; ".join(
+            f"{s['dir']} ctx {sorted(s['ctx_w'])} ids {sorted(s['id_w'])}"
+            for s in bad)
+            + "\n       BCDatasetV3 zero-pads this at train time, so it "
+              "loads silently and trains on a vector\n       the encoder can "
+              "never emit at serve time")))
+
+    # 6c — option width. main.py truncates wide options, so wider is fine;
+    # NARROWER means the net's tail option columns saw nothing in training.
+    serve_opt = int(z["option_enc.0.weight"].shape[1]) - 2 * embed_dim
+    narrow = [s for s in stats if min(s["opt_w"]) < serve_opt]
+    out.append(("6c. corpus option width >= serve width", not narrow,
+                f"serve {serve_opt}, corpus min "
+                f"{min(min(s['opt_w']) for s in stats)}"))
+
+    # 6d — v4 integrity. OppMemory.features writes v[3 + hot] = 1.0
+    # unconditionally, where hot in 0..6 (rl/memory.py:153-165) — so the
+    # attach-target ONE-HOT at v4-block offsets 3..9 sums to exactly 1.0 in
+    # every vector encode_ctx_v4 can emit, and to 0.0 in a zero-padded v3 row.
+    #
+    # NB the invariant is the one-hot's SUM, not any single offset: offset 3 is
+    # the "no attach seen yet" slot and goes cold the moment the opponent
+    # attaches. An earlier version of this check asserted offset 3 == 1.0 and
+    # was contradicted by the first real v4 corpus (3629/5075 rows "failed" a
+    # corpus that is in fact clean). The unit-test fixture had encoded the same
+    # misreading, so the test agreed with the bug — real data caught it.
+    if is_v4:
+        lo = STATE_V2_DIM + N_CONTEXTS + 3
+        padded = []
+        for d in corpus_dirs:
+            for s in sorted(Path(d).glob("*.npz")):
+                arr = np.load(s)["states"]
+                if arr.shape[1] >= lo + 7:
+                    hot = arr[:, lo:lo + 7].sum(axis=1)
+                    n0 = int(np.count_nonzero(~np.isclose(hot, 1.0)))
+                    if n0:
+                        padded.append(f"{s.name}:{n0}")
+        out.append(("6d. v4 corpus has no zero-padded rows", not padded,
+                    "; ".join(padded[:4]) if padded
+                    else "attach-target one-hot sums to 1 on every row"))
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--deck", required=True)
+    # G-14 (M40): REQUIRED, not optional. A skippable serve/train parity check
+    # is not a guardrail — the two regressions it exists to catch both survived
+    # because nothing forced anyone to look. Pass the same --data list that
+    # `plan_iter train` was given for this checkpoint.
+    ap.add_argument("--corpus", required=True, nargs="+", type=Path,
+                    help="shard dirs this checkpoint was trained on")
     args = ap.parse_args()
     fails: list[str] = []
 
@@ -74,7 +224,8 @@ def main() -> int:
     else:
         names = [x for x in m.group(1).split(",") if x]
         known = {v for k, v in vars(rp).items()
-                 if k.startswith(("PLAY_FIX_", "ATTACH_FIX_")) and isinstance(v, str)}
+                 if k.startswith(("PLAY_FIX_", "ATTACH_FIX_", "SERVE_FIX_"))
+                 and isinstance(v, str)}
         unknown = [n for n in names if n not in known]
         check(not unknown, "every fix name resolves",
               f"[{', '.join(names)}]" if not unknown
@@ -161,6 +312,18 @@ def main() -> int:
         else:
             print("  --   no board-triggered rule in the fix string; "
                   "behavioural check skipped")
+
+    # 6. G-14 (M40): SERVE/TRAIN INPUT PARITY.
+    #    Checks 1-5 all pass while the net is fed an input distribution it was
+    #    never trained on — that is not hypothetical, it is the live state of
+    #    Ship A and Ship B, and it has been true since M24. Two independent
+    #    regressions of exactly this shape landed in one milestone (S5's
+    #    encoder-version drift, S6's plan-head mismatch), so the check covers
+    #    the general form: does the bundle SERVE what the corpus TRAINED?
+    #    Static on purpose — numpy + a regex, no engine, no game.
+    for label, ok, detail in input_parity_checks(
+            SUBMISSION / "policy_weights.npz", main_src, args.corpus):
+        check(ok, label, detail)
 
     print(f"\n{'ALL TIER-1 CHECKS PASS' if not fails else 'FAILURES: ' + ', '.join(fails)}")
     return 1 if fails else 0

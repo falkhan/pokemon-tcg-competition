@@ -71,7 +71,7 @@ _IS_V4 = "enc_ver" in WEIGHTS                    # M21 encoder-v4 export
 _OPTION_DIM = WEIGHTS["option_enc.0.weight"].shape[1] - 2 * _EMBED.shape[1]
 if _IS_V3:
     from cg.api import SelectContext
-    from rl.plan import (PLAN_DIM, apply_attach_overrides,
+    from rl.plan import (PLAN_DIM, SERVE_FIX_PLANZERO, apply_attach_overrides,
                          apply_play_overrides, encode_plan, enumerate_plans)
     # M15: hand-aware exports carry 20 state ids — sniff from the weights
     # and pick the matching encoder. M21: v4 exports declare themselves via
@@ -154,6 +154,11 @@ _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
         "PKM_ATTACH_FIXES",
         "conserve,racemode2,racemode4").split(",") if f)
+# M40 S6: `planzero` is a SERVE fix, not a reranker — it changes what the trunk
+# is FED, so it is read out here rather than passed to apply_*_overrides (which
+# ignore it harmlessly). See rl/plan.py O14 for why the plan head is
+# out-of-distribution by construction on every corpus we have trained since M24.
+_PLAN_ZERO = "planzero" in _ATTACH_FIXES
 
 
 def _log_net(rec: dict) -> None:
@@ -232,7 +237,8 @@ def agent(obs_dict: dict) -> list[int]:
         if _IS_V4:
             _MEM.reset()
         if _LOG_NET:
-            _log_net({"ev": "start", "v3": _IS_V3, "v4": _IS_V4})
+            _log_net({"ev": "start", "v3": _IS_V3, "v4": _IS_V4,
+                      "pz": bool(_PLAN_ZERO)})
         return DECK
     if _IS_V4:
         if obs.current.turn < _PSTATE["last_turn"]:   # new game, reused process
@@ -256,15 +262,21 @@ def agent(obs_dict: dict) -> list[int]:
             _PSTATE.update(key=None, vec=None)
         _PSTATE["last_turn"] = t
         key = (t, obs.current.yourIndex)
-        if obs.select.context == SelectContext.MAIN and _PSTATE["key"] != key:
-            cands = enumerate_plans(obs)
-            mat = np.stack([encode_plan(c) for c in cands]).astype(np.float32)
-            plan_scores = score_plans(state_ctx, state_ids, mat)
-            idx = int(np.argmax(plan_scores))
-            _PSTATE.update(key=key, vec=mat[idx].copy())
-            plan_rec = {"p": idx, "psc": _r3(plan_scores)}
-        plan = (_PSTATE["vec"] if _PSTATE["key"] == key and _PSTATE["vec"] is not None
-                else np.zeros(PLAN_DIM, dtype=np.float32))
+        if _PLAN_ZERO:
+            # M40 S6: the plan head never runs, so the trunk sees the zero
+            # vector every training row carries. No plan_rec in the NN| log is
+            # the live tell that the token is acting.
+            plan = np.zeros(PLAN_DIM, dtype=np.float32)
+        else:
+            if obs.select.context == SelectContext.MAIN and _PSTATE["key"] != key:
+                cands = enumerate_plans(obs)
+                mat = np.stack([encode_plan(c) for c in cands]).astype(np.float32)
+                plan_scores = score_plans(state_ctx, state_ids, mat)
+                idx = int(np.argmax(plan_scores))
+                _PSTATE.update(key=key, vec=mat[idx].copy())
+                plan_rec = {"p": idx, "psc": _r3(plan_scores)}
+            plan = (_PSTATE["vec"] if _PSTATE["key"] == key and _PSTATE["vec"] is not None
+                    else np.zeros(PLAN_DIM, dtype=np.float32))
         scores = score_options_v3(state_ctx, plan, state_ids, options, option_ids)
     order = [int(i) for i in np.argsort(scores)[::-1]]
     if _IS_V3 and _ATTACH_FIXES:
@@ -276,5 +288,12 @@ def agent(obs_dict: dict) -> list[int]:
                "c": int(obs.select.context), "a": acts, "sc": _r3(scores)}
         if plan_rec:
             rec.update(plan_rec)
+        elif _PLAN_ZERO:
+            # The live tell that the token is acting: a v3 bundle emitting no
+            # `p`/`psc` on a MAIN prompt would otherwise be indistinguishable
+            # from a submenu. Greppable out of `rl.kaggle_ingest agent-logs`,
+            # so a Kaggle episode can PROVE what the ship actually served —
+            # the class of evidence that was missing from M24 to M40.
+            rec["pz"] = 1
         _log_net(rec)
     return acts

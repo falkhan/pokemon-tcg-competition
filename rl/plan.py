@@ -352,6 +352,23 @@ PLAY_FIX_RACEMODE2 = "racemode2"      # O12c: blanket vs walls, margin vs pressu
 PLAY_FIX_RACEMODE3 = "racemode3"      # O12d: blanket vs walls ONLY (m37 final synthesis)
 PLAY_FIX_RACEMODE4 = "racemode4"      # O13: demote OUR burn sources in a race (m39 P2b)
 PLAY_FIX_RACEASH = "raceash"          # O13b: recycle Sacred Ash EARLY in a race (m39 P2b)
+
+# --- M40 S6: serve-side fixes -----------------------------------------------
+# A THIRD class of fix name, and the prefix says so. PLAY_FIX_*/ATTACH_FIX_* are
+# post-hoc rerankers: the net scores the menu, then a predicate reorders it. A
+# SERVE_FIX_ changes what the net is FED, so it acts upstream of scoring and can
+# never be an apply_*_overrides predicate. Both override functions ignore names
+# they don't know, so a serve fix rides in the same frozenset inertly.
+#
+# O14 `planzero` (m40 S6): serve the plan-conditioned trunk a ZERO plan vector.
+# The plan head has been a train/serve mismatch since M24 — every replay-derived
+# corpus loads with plans=zeros (rl/plan_iter.py BCDatasetV3, the "no plan"
+# shim), while the pilot runs enumerate_plans -> plan_logits argmax at every own
+# MAIN prompt and feeds the winner to the trunk. The conditioned branch is
+# out-of-distribution BY CONSTRUCTION, not by drift. Zeroing at serve makes the
+# served input distribution match the trained one exactly; it is a removal, and
+# removals do not depend on out-playing anyone.
+SERVE_FIX_PLANZERO = "planzero"       # O14: feed plan=0, skip the plan head (m40 S6)
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10

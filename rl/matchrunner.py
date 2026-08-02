@@ -154,6 +154,16 @@ _MODEL_FIX_KINDS = {
     "model-c-pkg": frozenset({"conserve", "racemode2", "racemode4"}),
     "model-c-pkga": frozenset({"conserve", "racemode2", "racemode4",
                                "raceash"}),
+    # M40 S6 — the plan-head train/serve mismatch, as a config token.
+    # `planzero` is a SERVE fix (rl/plan.py O14): it is inert in both
+    # apply_*_overrides and acts upstream, on what the trunk is fed. Two kinds:
+    #   model-pz     isolated — the mechanism cell, nothing else moving
+    #   model-c-pkgz the gate arm — Ship B's live package + planzero, so the
+    #                battery's single variable vs `model-c-pkg` is the plan
+    #                vector and nothing else.
+    "model-pz": frozenset({"planzero"}),
+    "model-c-pkgz": frozenset({"conserve", "racemode2", "racemode4",
+                               "planzero"}),
 }
 
 
@@ -473,8 +483,10 @@ def make_pilot(spec: OpponentSpec, instance: str):
                                      V4_EXTRA_DIM, encode_ctx_v4,
                                      encode_option_v2)
             from rl.memory import OppMemory
-            from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+            from rl.plan import (PLAN_DIM, SERVE_FIX_PLANZERO, encode_plan,
+                                 enumerate_plans)
             from rl.policy import OptionScorerV3, option_dim_of
+            plan_zero = SERVE_FIX_PLANZERO in attach_fixes
             m4 = OptionScorerV3(n_state_ids=N_STATE_IDS_V4,
                                 option_dim=option_dim_of(sd),
                                 extra_dim=V4_EXTRA_DIM)
@@ -499,15 +511,20 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 key = (t, obs.current.yourIndex)
                 memory.observe(obs)                  # once per own prompt
                 sc, sids = encode_ctx_v4(obs, deck_ids, memory)
-                if obs.select.context == SelectContext.MAIN \
-                        and pstate["key"] != key:
-                    cands = enumerate_plans(obs)
-                    mat = np.stack([encode_plan(c) for c in cands]
-                                   ).astype(np.float32)
-                    idx = m4.act_plan(sc, sids, mat)
-                    pstate.update(key=key, vec=mat[idx].copy())
-                plan = (pstate["vec"] if pstate["key"] == key
-                        else np.zeros(PLAN_DIM, np.float32))
+                if plan_zero:
+                    # M40 S6 `planzero`: the plan head never runs, so the trunk
+                    # sees the zero vector every corpus row was trained on.
+                    plan = np.zeros(PLAN_DIM, np.float32)
+                else:
+                    if obs.select.context == SelectContext.MAIN \
+                            and pstate["key"] != key:
+                        cands = enumerate_plans(obs)
+                        mat = np.stack([encode_plan(c) for c in cands]
+                                       ).astype(np.float32)
+                        idx = m4.act_plan(sc, sids, mat)
+                        pstate.update(key=key, vec=mat[idx].copy())
+                    plan = (pstate["vec"] if pstate["key"] == key
+                            else np.zeros(PLAN_DIM, np.float32))
                 pairs = [encode_option_v2(o, obs) for o in obs.select.option]
                 opts = np.stack([n for n, _ in pairs]).astype(np.float32)
                 oids = np.stack([i for _, i in pairs])
@@ -531,9 +548,11 @@ def make_pilot(spec: OpponentSpec, instance: str):
             from rl.encoders import (EMBED_DIM, OPTION_V3_DIM,
                                      encode_option_v2, encode_option_v2_legacy,
                                      encode_state_v2, encode_state_v3)
-            from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+            from rl.plan import (PLAN_DIM, SERVE_FIX_PLANZERO, encode_plan,
+                                 enumerate_plans)
             from rl.policy import OptionScorerV3, option_dim_of
             from rl.encoders import N_CONTEXTS as _NC, STATE_V2_DIM as _SV2
+            plan_zero = SERVE_FIX_PLANZERO in attach_fixes
             n_ids = (sd["state_enc.0.weight"].shape[1] - _SV2 - _NC
                      - PLAN_DIM) // EMBED_DIM
             opt_dim = option_dim_of(sd)
@@ -563,20 +582,25 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 sc = np.concatenate(
                     [num, encode_context(obs.select.context)]
                 ).astype(np.float32)
-                if obs.select.context == SelectContext.MAIN \
-                        and pstate["key"] != key:
-                    # Plan ONCE at the turn's first MAIN and hold it (M11 fix
-                    # 2026-07-17): training plan rows exist only at first-MAIN
-                    # states — replanning every MAIN is off-distribution for
-                    # the head AND flip-flops the plan mid-turn (measured:
-                    # 0.278 vs 0.345 base at Rung 0 before this fix).
-                    cands = enumerate_plans(obs)
-                    mat = np.stack([encode_plan(c) for c in cands]
-                                   ).astype(np.float32)
-                    idx = m3.act_plan(sc, sids, mat)          # argmax at eval
-                    pstate.update(key=key, vec=mat[idx].copy())
-                plan = (pstate["vec"] if pstate["key"] == key
-                        else np.zeros(PLAN_DIM, np.float32))
+                if plan_zero:
+                    # M40 S6 `planzero`: the plan head never runs, so the trunk
+                    # sees the zero vector every corpus row was trained on.
+                    plan = np.zeros(PLAN_DIM, np.float32)
+                else:
+                    if obs.select.context == SelectContext.MAIN \
+                            and pstate["key"] != key:
+                        # Plan ONCE at the turn's first MAIN and hold it (M11 fix
+                        # 2026-07-17): training plan rows exist only at first-MAIN
+                        # states — replanning every MAIN is off-distribution for
+                        # the head AND flip-flops the plan mid-turn (measured:
+                        # 0.278 vs 0.345 base at Rung 0 before this fix).
+                        cands = enumerate_plans(obs)
+                        mat = np.stack([encode_plan(c) for c in cands]
+                                       ).astype(np.float32)
+                        idx = m3.act_plan(sc, sids, mat)      # argmax at eval
+                        pstate.update(key=key, vec=mat[idx].copy())
+                    plan = (pstate["vec"] if pstate["key"] == key
+                            else np.zeros(PLAN_DIM, np.float32))
                 pairs = [enc_opt(o, obs) for o in obs.select.option]
                 opts = np.stack([n for n, _ in pairs]).astype(np.float32)
                 oids = np.stack([i for _, i in pairs])

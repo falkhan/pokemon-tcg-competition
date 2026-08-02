@@ -531,7 +531,7 @@ def wrap_with_solver(inner, deck: list[int], dev: bool = False,
     """ANY inner agent + the within-turn combo solver (M22c).
 
     Why this exists: the shipped neural bundle is a greedy one-action argmax
-    (submission/main.py:185 `argsort`), which is the exact failure this module
+    (submission/main.py `agent`'s `np.argsort(scores)`), which is the exact failure this module
     was written to fix — "a multi-prize lethal that needs item -> attach ->
     attack is never assembled" (docstring above). The solver has only ever
     shipped in the RULES bundle (build_submission.sh --agent rules), so the
