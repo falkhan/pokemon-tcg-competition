@@ -208,8 +208,20 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
     if kind in ("model", *_MODEL_FIX_KINDS) and len(parts) == 3:
         return (kind, parts[1], parts[2])
-    if kind == "solved" and len(parts) == 3:
-        return ("solved", parts[1], parts[2])
+    if kind == "solved" and len(parts) in (3, 4, 5):
+        # M40 S3: optional PER-SPEC search budget —
+        #     solved:<ckpt>:<deck>[:<max_nodes>[:<deadline_ms>]]
+        # The budget has been a per-CALL dict since M11 (wrap_with_solver ->
+        # solve_turn -> solve_turn_line -> _dfs all take it and resolve None to
+        # the module constant), deliberately so data-gen never mutates globals
+        # shared across seats. Only this parser and the `solved` branch pinned
+        # it to the module constants, which meant every `solved:` bed in a run
+        # had to share one budget — unusable for S3, where the whole point is
+        # composites at DIFFERENT strengths in the same battery. Specs are
+        # picklable str/int tuples, so this crosses the spawn-Pool boundary
+        # unchanged.
+        return ("solved", parts[1], parts[2],
+                *(int(p) for p in parts[3:]))
     raise ValueError(f"cannot parse opponent spec {s!r} "
                      "(want kind:deck or rule:agent[:deck] or model:ckpt:deck)")
 
@@ -409,8 +421,12 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # Tightened here rather than globally so make_solver_pilot (the rules
         # bundle, which passes G6 today) keeps its measured behaviour.
         stats = SOLVED_STATS
-        return wrap_with_solver(inner_fn, ids, deadline_s=SOLVED_DEADLINE_S,
-                                max_nodes=SOLVED_MAX_NODES,
+        # M40 S3: per-spec budget override, module constants as the default.
+        max_nodes = int(spec[3]) if len(spec) > 3 else SOLVED_MAX_NODES
+        deadline_s = (int(spec[4]) / 1000.0 if len(spec) > 4
+                      else SOLVED_DEADLINE_S)
+        return wrap_with_solver(inner_fn, ids, deadline_s=deadline_s,
+                                max_nodes=max_nodes,
                                 allow=SOLVED_ALLOW, stats=stats), ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot

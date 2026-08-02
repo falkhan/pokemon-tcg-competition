@@ -43,6 +43,38 @@ def test_parse_spec_rejects_junk(junk):
         mr.parse_spec(junk)
 
 
+def test_solved_spec_carries_an_optional_per_spec_budget():
+    """M40 S3. The solver budget was pinned to module constants at the parser,
+    so every `solved:` bed in a run shared one budget — unusable for composite
+    beds, where the point is several strengths in the SAME battery."""
+    assert mr.parse_spec("solved:ck.pt:grim_live") == ("solved", "ck.pt", "grim_live")
+    assert mr.parse_spec("solved:ck.pt:grim_live:800") == \
+        ("solved", "ck.pt", "grim_live", 800)
+    assert mr.parse_spec("solved:ck.pt:grim_live:800:400") == \
+        ("solved", "ck.pt", "grim_live", 800, 400)
+    # The deck slot must stay readable at every arity, or run_pairs mislabels
+    # the cell and spec_deck resolves the node count as a deck name.
+    for s in ("solved:ck.pt:grim_live", "solved:ck.pt:grim_live:800",
+              "solved:ck.pt:grim_live:800:400"):
+        assert mr.spec_deck(mr.parse_spec(s)) == "grim_live"
+    # Specs cross a spawn-Pool boundary, so they must stay picklable scalars.
+    import pickle
+    assert pickle.loads(pickle.dumps(
+        mr.parse_spec("solved:ck.pt:grim_live:800:400"))) == \
+        ("solved", "ck.pt", "grim_live", 800, 400)
+
+
+def test_solver_kinds_do_not_silently_accept_a_budget():
+    """The hazard: make_solver_pilot (the `solver:`/`solver-dev:` kinds) calls
+    solve_turn with NO budget arguments, so it always runs the 800-node/0.4s
+    module defaults. A budget appended to those specs would be silently
+    ignored — a composite that looks tightened and is not. Parsing must reject
+    it rather than accept and drop it."""
+    for junk in ("solver:grim_live:800", "solver-dev:grim_live:800:400"):
+        with pytest.raises(ValueError, match="spec"):
+            mr.parse_spec(junk)
+
+
 def test_resolve_and_spec_deck_contract():
     assert mr.resolve_deck("lucario") == LUCARIO
     assert mr.resolve_deck(str(DECKS / "lucario.csv")) == LUCARIO
