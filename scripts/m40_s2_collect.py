@@ -78,7 +78,16 @@ BEDS = {
     "comp_grim": "solved:checkpoints/m39_bc_grim.pt:grim_live:800:400",
     "comp_wall": "solved:checkpoints/m38_bc_wall.pt:greattusk_wall:800:400",
 }
-DEFAULT_ARM = "model-c-pkg:checkpoints/m39_retain_b.pt:alakazam_v2_h4"
+# `model-c-pkgz`, not `model-c-pkg`: S6 adopted `planzero`, so the next net
+# ship serves a ZERO plan vector. Two reasons this has to match here.
+# (1) The corpus should be on-distribution for the agent we actually ship —
+#     collecting under a pilot that serves a non-zero plan would manufacture
+#     the same train/serve mismatch S6 spent the milestone removing.
+# (2) The sampler below reads logits at plan=0. With a `model-c-pkg` arm the
+#     BASE action would come from a non-zero-plan ranking while the DEVIATION
+#     came from a zero-plan one, so exploration would be measured against a
+#     distribution the pilot never used.
+DEFAULT_ARM = "model-c-pkgz:checkpoints/m39_retain_b.pt:alakazam_v2_h4"
 DECK_IDX = 9000
 COLUMNS = ("states", "state_ids", "options", "option_ids", "n_options",
            "labels", "game_ids", "results", "deck_idx", "teacher_score",
