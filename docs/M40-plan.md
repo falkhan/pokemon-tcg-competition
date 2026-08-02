@@ -55,8 +55,18 @@ between a real attempt and a rounding error.
 ## 2. What a step change has to come from
 
 If the beds are the ceiling, then anything that *optimizes against the beds*
-inherits the ceiling — which is every lane M37–M39 ran. Three mechanisms do
-not:
+inherits the ceiling — which is every lane M37–M39 ran. The mechanisms that
+do not fall into two groups:
+
+- **missing faculties** (opponent-independent, so no clone ceiling): **S1**
+  the agent cannot assemble a multi-step turn; **S5** the agent cannot see
+  the opponent's bench threat or play history. Both are structural gaps
+  where tested code already exists and the lineage simply never got it.
+- **better opposition / better instruments**: **S2** self-play, **S3**
+  opponents above the clone ceiling, **S4** the live ladder.
+
+The first group is where I would look first: cheaper, lower novelty risk,
+and neither depends on the bed question being resolved.
 
 ### S1 — give the neural line the within-turn combo solver it has never had
 
@@ -109,6 +119,73 @@ replay-BC lineage and was measured on a net that no longer exists.
 Open risks, to be closed before any ship: the **117.9 ms max move** against
 the real per-move limit; whether the gain survives on beds other than wall;
 and whether the solver's own action model is faithful on the current net.
+
+### S5 — adopt the encoder we already built and then abandoned
+
+**We shipped opponent memory in M21, then silently regressed off it in M24
+and have never shipped it since.** Found 2026-08-02 while answering "does the
+pilot see the opponent's card ids / hp / max damage?".
+
+What the **v3** encoder our live net uses gives us about each opposing
+Pokémon (active *and* bench): card id at a learnable embedding site, 36 card
+features, **current hp and maxHp**, energy count and per-type energy counts,
+attached tools. Plus, for the **active only**, `_combat_features`' best
+affordable damage against us after weakness/resistance, KO flags and
+one-attach-from-KO.
+
+What the **v4** encoder adds, and our lineage does not have
+([encoders.py:657](../rl/encoders.py:657), `V4_EXTRA_DIM = 341`):
+
+| block | what it is | why it matters here |
+|---|---|---|
+| `_slot_extras` — 12 slots × 5 | appearThisTurn, evo-stack depth, special-energy count, attack-ready-NOW, **best affordable damage per slot** | **the opponent's BENCH gets a damage projection.** In v3 a benched threat is an id and an energy count; the net has to learn the threat model itself. M39's loss anatomy is 43% sweeps where we set up too slowly — mispricing the incoming attacker is exactly that shape |
+| `OppMemory` — `N_MEM = 51` + 5 id slots | last-4 opponent played card ids, last opponent attacker id, their last energy-attach target (7-way), charging signals | **their charging target is their announced next attacker.** This is the learned, end-to-end version of what E3's classifier would approximate |
+
+**Why the lineage lost it.** M21's B2/B3 ships (54846434 / 54849475) were v4.
+From M24 the campaign switched to replay-BC clones, and
+[replay_bc.py:114](../rl/replay_bc.py:114) encodes with `encode_state_v3` —
+it **never reads `obs.logs` at all** (zero references in the file). So every
+harvest corpus since M24 is v4-blind, and every net trained on one is a v3
+net. The shipped `m38_w9294_cont3` confirms it: no `enc_ver` buffer, input
+1708 = 1361 numeric + 27 plan + 20 ids × 16. This was never a decision — it
+is a side effect of which encoder the corpus builder happened to call.
+
+**And the data is already sitting in the cache.** Probed the cached replays:
+**828 of 844 observations (98.1%) carry a non-empty `obs.logs`**, with real
+entries (`{'cardId': 1225, 'playerIndex': 0, 'serial': 41, 'type': 4}`). So
+this is not a collection campaign — it is a re-encode of a corpus we already
+own.
+
+**Why this is a step-change candidate and not a tidy-up.** It is the same
+class as S1: *structural observability*, not policy quality, and therefore
+**opponent-independent — it does not inherit the clone ceiling** that §1 says
+capped the last five milestones. Together S1 and S5 are the two places where
+the agent is missing a faculty rather than missing training.
+
+**Cost, honestly.** The vehicle is the one that works, not the one that has
+always collapsed: `migrate_v3_to_v4` already exists and is exercised
+(`m38_ft_init.pt`), and the M21 warm-start invariant zero-inits the new
+columns so the migrated net is *bit-identically the old net at init*. So this
+is warm-start + low-dose fine-tune with retention — M39's proven recipe — not
+a from-scratch train (every ≤340k-row fresh train has collapsed).
+
+**The one real technical risk, and it must be probed before this is
+scoped.** `OppMemory`'s contract is locked to the LIVE prompt window:
+*"observe() must be called EXACTLY ONCE per own prompt, before encoding"*,
+with prefix-dedupe because sub-prompt chains re-deliver the previous window
+verbatim. Replaying that offline over `iter_replay_decisions` is only valid
+if the replay log stream is windowed the same way it is live. **If it is not,
+the memory features would be silently wrong — an encoder that lies is worse
+than one that is blind**, and this campaign has lost milestones to instruments
+that lied. First deliverable of S5 is therefore a *fidelity probe*, not a
+corpus: reconstruct memory features offline for a game we also have live and
+assert they match.
+
+**This re-prices E3.** The M40 draft proposed building an n-gram/naive-Bayes
+archetype classifier to feed the racemode trigger. S5 gets the same
+information into the net end-to-end, using tested code, with no new runtime
+component and no BRExIt consumer problem. **E3 should not be scoped until S5
+is priced** — and if S5 lands, E3 may be redundant.
 
 ### S2 — self-play iteration (the only mechanism that exceeds demonstration)
 
@@ -235,6 +312,9 @@ instrument**), and it may be worth more than S2.
   families) → the screen was noise; drop it and S3 still stands on its own.
 - **S1's max move exceeds the live per-move limit and cannot be tuned under
   it without losing the gain** → kill; a timeout is a lost game.
+- **S5's offline memory features do not match the live ones on a shared
+  game** → the replay log window differs from the live one; kill the
+  re-encode rather than train on features that lie.
 - **E0's value net cannot out-rank the outcome proxy on the loss families** →
   S2 dies with it.
 - **S2 collection produces a corpus the net agrees with >90% of the time** →
@@ -262,6 +342,12 @@ to any solver-composite bed).
    different intervention. It is also the cheapest large lever on the table
    and needs no new research. **Recommendation: yes — a panel battery costs a
    day and settles it.**
+1b. **S5 — re-encode the harvest corpus as v4 and warm-start onto it?**
+   No stop-invest line to reopen and no new runtime component; the encoder,
+   the memory module, the migration and the tests all exist and shipped
+   once. **Recommendation: yes, gated on the fidelity probe passing** — and
+   run the probe before anything else in M40, because it is a day of work
+   that decides whether a whole lane exists.
 2. **Does S2 run in M40, or does M40 spend its weeks on S1+S3 and hand S2 to
    M41?** Running both risks the M38 failure mode (a milestone losing its
    cycle to the attractive lane). **Recommendation: E0 yes regardless (cheap,
@@ -301,7 +387,8 @@ to any solver-composite bed).
 | Offline best-response (sweep #2) | **S2**, gated on E0 + a real exploration design |
 | Advantage-filtered BC (sweep #1) | blocked on E0; **retention × α=0.25 is the free untested cross** M39 left behind |
 | Retention (sweep #3) | **no longer an item — it is the default** |
-| Opponent-deck inference (sweep #4) | strong slot-4 candidate if Ship B's wall claim transfers |
+| **Encoder v4 adoption (S5)** — not previously a BACKLOG item; the regression was invisible | **headline candidate alongside S1.** M21 shipped it, M24 silently dropped it via `replay_bc`'s encoder choice, and the logs to rebuild the corpus are already cached (98.1% non-empty) |
+| Opponent-deck inference (sweep #4) | **DO NOT SCOPE until S5 is priced** — S5 delivers the same information end-to-end with tested code and no new runtime component |
 | ROIDA loser replays (sweep #5) | blocked on E0 |
 | Online PPO (sweep #7) | parked — 327M env steps |
 | Architecture inductive bias (sweep #8) | parked — needs a self-play-scale corpus (S2 could make one) |
