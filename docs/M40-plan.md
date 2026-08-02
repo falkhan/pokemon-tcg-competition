@@ -58,10 +58,13 @@ If the beds are the ceiling, then anything that *optimizes against the beds*
 inherits the ceiling — which is every lane M37–M39 ran. The mechanisms that
 do not fall into two groups:
 
-- **missing faculties** (opponent-independent, so no clone ceiling): **S1**
-  the agent cannot assemble a multi-step turn; **S5** the agent cannot see
-  the opponent's bench threat or play history. Both are structural gaps
-  where tested code already exists and the lineage simply never got it.
+- **missing or broken faculties** (opponent-independent, so no clone
+  ceiling): **S1** the agent cannot assemble a multi-step turn; **S5** it
+  cannot see the opponent's bench threat or play history; **S6** it is
+  served a stale plan vector it was never trained on. All three are
+  structural, all three have tested code already in the tree, and **S5 and
+  S6 are the same regression** — the M24 switch to replay-BC corpora,
+  which nothing was checking.
 - **better opposition / better instruments**: **S2** self-play, **S3**
   opponents above the clone ceiling, **S4** the live ladder.
 
@@ -186,6 +189,73 @@ archetype classifier to feed the racemode trigger. S5 gets the same
 information into the net end-to-end, using tested code, with no new runtime
 component and no BRExIt consumer problem. **E3 should not be scoped until S5
 is priced** — and if S5 lands, E3 may be redundant.
+
+### S6 — the plan head is a TRAIN/SERVE MISMATCH, and it has been one since M24
+
+Found 2026-08-02 by asking "what else did we ship and then lose?". This is the
+same regression date as S5 and the same root cause — the switch to replay-BC
+corpora — but it is worse, because S5 is a *missing input* while this is an
+*actively wrong* one.
+
+**The evidence, in three facts:**
+
+1. **The plan head has received no gradient in five milestones.** `plan_head`
+   and `plan_enc` are **byte-identical** across `m28_winners` →
+   `m38_w9294_cont3` → `m39_retain_b` → `m39_vsloss`, while `state_enc` and
+   `option_enc` change with every fine-tune.
+2. **Every corpus in the lineage trains at plan = 0.** Replay shards carry no
+   `plans` column at all (`bc_m38_w9294`, `bc_m39_vsloss`, `bc_m39_br_*` all
+   confirmed), and `BCDatasetV3` fills the default —
+   [plan_iter.py:574](../rl/plan_iter.py:574): *"Old plan-less shards load
+   with shaped defaults: plans=zeros (== 'no plan')"*. So 100% of training
+   rows since M24 have a zero plan vector.
+3. **The shipped pilot serves a NON-zero plan every turn.**
+   [submission/main.py:218](../submission/main.py:218) `score_plans` →
+   argmax → the chosen plan vector conditions the policy trunk at every own
+   MAIN prompt.
+
+**So the net is trained exclusively at plan=0 and served a non-zero plan
+chosen by a head whose last gradient came from a different lineage, a
+different deck, and the solver-teacher corpus M38 proved regresses the
+champion at any dose.** The conditioned branch is out-of-distribution by
+construction.
+
+**Screen (n=200/cell, single-process so it is reproducible, seed 31):**
+
+| bed | plan AS SHIPPED | plan ZEROED | delta |
+|---|---|---|---|
+| **wall** | 0.270 | **0.330** | **+6.0pp** |
+| m28 (mirror) | 0.565 | **0.615** | **+5.0pp** |
+| **top (900+)** | 0.505 | **0.550** | **+4.5pp** |
+| grim | 0.675 | 0.655 | −2.0pp |
+
+Three of four positive, including our worst matchup and the ceiling bed.
+**SCREEN, not a measurement** — n=200 resolves ~14pp per cell (G-12) and no
+single cell clears it. But the direction is consistent, and unlike a bare
+win-rate wobble it has a mechanism established *before* the screen was run.
+
+**Why this may be the best item in the plan.** It is a **removal**: one line
+in the pilot, no retraining, no corpus, no new runtime code, and it applies to
+every net in the lineage including `retain_b`. This campaign's largest live
+gain to date — Ship A, **+115** — was also a removal, and removals transfer
+because they do not depend on out-playing anyone.
+
+**What the fix is not.** The plan machinery was not a mistake; the docstring
+is explicit that plan-less data is meant to regularize *the plan=0 fallback*
+while `plan_iter collect` data trains *the conditioned branch*. The
+regression is that we stopped producing plan-carrying data at M24 and never
+turned the conditioned branch off. Three options, in ascending cost:
+(a) **serve plan=0** — one line, testable today; (b) retrain the head on
+plan-carrying corpora — expensive, and the plan lane's value on this lineage
+is unproven; (c) strip the plan machinery from the pilot entirely — bigger
+diff, only after (a) settles the question.
+
+**Standing check this earns (proposed G-14).** `ship_verify` checks weights,
+deck, twin parity, fix-name resolution and now rule firing — **nothing checks
+that the inputs the net is SERVED match the inputs it was TRAINED on.** A
+one-time assertion comparing serve-time input statistics against the training
+corpus would have caught this at M24 and would have caught S5 too. **Both of
+this milestone's silent regressions are the same missing check.**
 
 ### S2 — self-play iteration (the only mechanism that exceeds demonstration)
 
@@ -315,6 +385,10 @@ instrument**), and it may be worth more than S2.
 - **S5's offline memory features do not match the live ones on a shared
   game** → the replay log window differs from the live one; kill the
   re-encode rather than train on features that lie.
+- **S6 does not replicate on a panel battery** → the plan head is inert
+  rather than harmful; leave it and drop the lane. (Note the asymmetry:
+  a null result here still argues for serving plan=0, because an
+  out-of-distribution input with no measured benefit is pure risk.)
 - **E0's value net cannot out-rank the outcome proxy on the loss families** →
   S2 dies with it.
 - **S2 collection produces a corpus the net agrees with >90% of the time** →
@@ -342,6 +416,11 @@ to any solver-composite bed).
    different intervention. It is also the cheapest large lever on the table
    and needs no new research. **Recommendation: yes — a panel battery costs a
    day and settles it.**
+1a. **S6 — serve plan=0?** The cheapest item in the plan by a wide margin:
+   one line, no retraining, and it applies to every net in the lineage.
+   **Recommendation: run the panel battery immediately** — if it holds it
+   is shippable the same day as a single-lane change, and daily slots
+   mean that costs nothing.
 1b. **S5 — re-encode the harvest corpus as v4 and warm-start onto it?**
    No stop-invest line to reopen and no new runtime component; the encoder,
    the memory module, the migration and the tests all exist and shipped
@@ -387,6 +466,7 @@ to any solver-composite bed).
 | Offline best-response (sweep #2) | **S2**, gated on E0 + a real exploration design |
 | Advantage-filtered BC (sweep #1) | blocked on E0; **retention × α=0.25 is the free untested cross** M39 left behind |
 | Retention (sweep #3) | **no longer an item — it is the default** |
+| **Plan-head train/serve mismatch (S6)** — not a BACKLOG item; nothing was checking for it | **cheapest candidate in the plan.** Same M24 root cause as S5; fix is a one-line removal |
 | **Encoder v4 adoption (S5)** — not previously a BACKLOG item; the regression was invisible | **headline candidate alongside S1.** M21 shipped it, M24 silently dropped it via `replay_bc`'s encoder choice, and the logs to rebuild the corpus are already cached (98.1% non-empty) |
 | Opponent-deck inference (sweep #4) | **DO NOT SCOPE until S5 is priced** — S5 delivers the same information end-to-end with tested code and no new runtime component |
 | ROIDA loser replays (sweep #5) | blocked on E0 |
