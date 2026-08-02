@@ -153,21 +153,81 @@ readings, both decision-relevant:
 
 Either way M40 learns something the last three milestones could not.
 
-## 3. Slot structure — what makes the aggressive bet rational
+## 3. CORRECTION: submission slots are not scarce, and never were
 
-The first draft framed this as "bank +24 or gamble". That was a false choice,
-because **the measured gain does not expire**:
+**Piotr, 2026-08-02: slots reset DAILY to 5.** Four remain today.
 
-| slot | use |
-|---|---|
-| **3** | **the step change** — the best of S1 / S2 by the gate, on a panel roster that S3 has validated |
-| **4 (reserve)** | **the already-gated floor: `m39_retain_b` + `conserve,racemode2,racemode4` = +3.47pp, z=+7.44, G-4 already paid** |
+**This invalidates the premise of the last three planning documents.** The
+M39 plan opens its budget section with *"Slots are the scarce resource;
+calendar is not"* and derives the two-ship cadence, the reserve slot, and
+part of G-7's justification from it. Drafts v1 and v2 of this stub inherited
+it — and v1's recommendation to **bank +24 ELO rather than swing** was
+driven *entirely* by a scarcity that does not exist. That recommendation was
+wrong on a false premise, not on a judgement call, and Piotr's steer landed
+on the right answer before the premise was corrected.
 
-The +3.47pp config is measured, exported-ready, and will still be measured in
-six weeks. Holding it in slot 4 converts the reserve from dead weight into a
-real safety net, and that is precisely what makes spending slot 3 on a swing
-the *conservative* choice rather than a reckless one. **Verify the slot count
-first (decision 3) — the whole structure depends on it.**
+### What the budget actually is
+
+| resource | quantity | binding? |
+|---|---|---|
+| submissions | 5/day × 42 days ≈ **210** | **no** |
+| calendar | **42 days** to 2026-09-13 | yes |
+| **decision-grade live reads** | **~3 / ~8 / ~15** at 10 / 30 / 55 games per day (n=150 per G-10) | **YES — this is the real constraint** |
+
+**Slots were never the scarce resource. READ BANDWIDTH is.** A ship is free;
+*knowing whether it worked* costs 3–15 days depending on accrual, and the
+accrual rate is the one number that decides how many real experiments M40
+gets. M38 accrued 54 games in a day, Ship A ~10 in its first hours — that
+factor-of-five spread is the difference between 3 and 15 experiments and
+should be measured, not assumed (see decision 3).
+
+### What genuinely changes
+
+1. **The "reserve slot" concept is deleted.** There is nothing to protect.
+   The `retain_b × package` floor (+3.47pp, z=+7.44) is a config that can be
+   shipped any day; it is a fallback in *time*, not in *budget*.
+2. **A failed swing costs days of ladder time, not a slot.** The entire
+   downside argument against aggressive attempts evaporates. Ship the swing;
+   if the read is bad, ship the floor the next day.
+3. **Exploratory ships become affordable for the first time in the
+   campaign.** Configs that were never worth "a slot" — `raceash`,
+   single-rule ablations, an S1 variant at a tighter solver budget — are now
+   worth a day of ladder each.
+4. **Live results can be REPLICATED.** G-12's core lesson is "replicate a
+   surprising significant result before it enters a plan", and the campaign
+   has never once been able to afford that live. A config can now be
+   re-shipped for an independent second sample. Given that this campaign has
+   twice misread the same matchup in opposite directions at n≤8, this may be
+   the single most valuable thing the corrected budget buys.
+5. **G-7 (one lane per slot) survives — its justification changes.** It was
+   argued from slot scarcity; it should now be argued from *attribution*,
+   which was always the real reason. With abundant slots it is close to free.
+6. **G-10 (declared dwell) becomes MORE important, not less.** Cheap slots
+   plus continuous reading is a multiple-comparisons machine. Declaring the
+   read-n before the sample is the only thing standing between us and
+   shipping-until-a-number-looks-good.
+
+### And the capability this unlocks — the ladder as the high-band instrument
+
+§1 argues our beds cap at ~700-band and that is why we cannot leave the band.
+**The live ladder does not cap.** It is populated with real 800+ pilots — the
+exact opposition no BC clone can represent. We have never been able to use it
+as an instrument because a read cost a scarce slot; at 5/day it becomes a
+usable, if slow and coarse, measuring device.
+
+It cannot give per-decision gradients, and G-9 still forbids gating on
+per-matchup live cells at any n. What it *can* now do:
+
+- **settle S1 and S2 against real high-band opposition** rather than against
+  clones we suspect are 200 ELO light;
+- **replicate**, which turns a single live result from an anecdote into
+  evidence;
+- **test §1's own thesis directly** — ship a config whose offline gate is
+  strongly positive and see whether the live delta matches the offline delta.
+  Systematic offline-over-live inflation *is* §1, measured.
+
+This deserves its own phase in the real plan (call it **S4 — ladder-as-
+instrument**), and it may be worth more than S2.
 
 ## 4. Pre-registered kills (draft)
 
@@ -181,8 +241,10 @@ first (decision 3) — the whole structure depends on it.**
   the exploration design failed again; kill at collection time, not after
   gating. M39's corpus B announced this as `init val_acc 0.935` and nobody
   read it as a kill signal until the gate agreed.
-- **Nothing beats the slot-4 floor by decision day** → ship the floor from
-  slot 3 and keep 4 in reserve. Not a failure; a correctly-priced bet losing.
+- **Nothing beats the `retain_b × package` floor (+3.47pp, z=+7.44) by
+  decision day** → ship the floor. With daily slots that costs a day of
+  ladder time, not an opportunity — which is the whole reason the swing is
+  the cheap option and not the reckless one.
 
 ## 5. Standing guardrails
 
@@ -205,12 +267,24 @@ to any solver-composite bed).
    cycle to the attractive lane). **Recommendation: E0 yes regardless (cheap,
    and it is the enabler for everything downstream); full S2 only if E0's
    exit criterion passes AND S1 has already been settled.**
-3. **Confirm the slot budget.** "4 remaining" entered at M39 drafting and has
-   never been re-verified. The whole slot-3/slot-4 structure depends on it.
+3. ~~Confirm the slot budget.~~ **ANSWERED — slots reset daily to 5.** See §3.
+   The replacement question is the one that now sets M40's experiment count:
+   **what is the actual game-accrual rate per day?** At 10/day M40 gets ~3
+   decision-grade reads; at 55/day it gets ~15. That is the difference
+   between a one-shot milestone and an iterative one, and it is measurable
+   from the existing listings cache in an hour. **Do this first.**
 4. **The target.** With this framing I am no longer recommending re-pointing
    to 820–850. If §1 is right, the ceiling was never a property of our
    policy, and 1000 stays the honest target. If S3 refutes §1, the target
    question returns with better information than it has now.
+6. **Does the campaign switch to an iterative live cadence?** If accrual
+   supports ~8–15 reads, M40 stops being "one big attempt" and becomes a
+   *sequence* of single-variable ships read at declared dwell — which is what
+   the guardrails were designed for and what the campaign has never been able
+   to afford. **Recommendation: yes, if decision 3 supports it** — with the
+   hard condition that every ship still declares its read-n in advance (G-10),
+   because cheap slots plus continuous reading is exactly the
+   multiple-comparisons trap that discipline exists to prevent.
 5. **Nothing finalises before Ship B's n=150 read** — its wall cell carries a
    falsifiable mechanism prediction (opponent deck-outs ~30% live). It is
    also the cleanest available test of whether *any* bed-derived number
@@ -232,4 +306,5 @@ to any solver-composite bed).
 | Online PPO (sweep #7) | parked — 327M env steps |
 | Architecture inductive bias (sweep #8) | parked — needs a self-play-scale corpus (S2 could make one) |
 | Heavy test-time search / DT / LLM self-improvement / deep equilibrium | **stop-invest, unchanged** — S1 is *not* this, and the plan says why |
-| `rl/`↔`tcg/` duplication, W_COUNTER, `setup_plans_late` | housekeeping, only if slot 3 resolves early |
+| `rl/`↔`tcg/` duplication, W_COUNTER, `setup_plans_late` | housekeeping; calendar, not slots, is what it competes against now |
+| **S4 — ladder-as-instrument** (new, §3) | the corrected slot budget makes the live ladder usable as the high-band opponent set no clone can be. May be worth more than S2. |

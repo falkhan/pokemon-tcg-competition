@@ -134,6 +134,24 @@ them confounded until the post-mortem untangled them).
 
 ## Submission-slot budget (4 remaining)
 
+> **⚠️ CORRECTED 2026-08-02 (Piotr): SUBMISSION SLOTS RESET DAILY TO 5.**
+> The premise of this entire section is false. Slots were never scarce —
+> ~210 remain before the 2026-09-13 deadline. The scarce resource is
+> **decision-grade live reads** (~3–15, set by game-accrual rate against
+> G-10's n=150 dwell), and secondarily calendar.
+>
+> **What this does and does not invalidate.** The *decisions* M39 took —
+> single-variable ships, declared dwell, one lane per slot — were all good
+> practice and are unaffected; G-7's rationale simply moves from "slots are
+> precious" to "attribution is precious", which was always the real reason.
+> What IS invalidated is any argument of the form "we cannot afford to try
+> X". M39 never actually made that argument in a way that changed an
+> outcome, but the first draft of the M40 stub did, recommending banking a
+> +24 ELO gain over a swing purely on scarcity grounds. See
+> [M40-plan.md](M40-plan.md) §3. Kept here rather than rewritten, because the
+> reasoning below is what a future reader would otherwise re-derive from the
+> same wrong premise.
+
 Slots are the scarce resource; **calendar is not** — M38 shipped 07-31 and
 had 54 ladder games by 08-01, so a converged read costs ~1 day. That makes
 sequential single-variable ships nearly free in time, and it is why the plan
