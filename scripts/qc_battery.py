@@ -38,6 +38,10 @@ SAMPLE_AGENTS = {
 # `stall` is deliberately absent: 9 seats at band, unbuildable (docs/M39.md).
 BED_AGENTS = {
     "wall": "dist/qc_beds/wall/main.py",
+    # G-13: the hardest of the three wall panel draws (.188 vs d1's .296
+    # against the live config). QC's job is replays that expose defects, and
+    # the softest draw is the least likely to produce one.
+    "wall_hard": "dist/qc_beds/wall_hard/main.py",
     "grim": "dist/qc_beds/grim/main.py",
     "archaludon": "dist/qc_beds/archaludon/main.py",
     "top900": "dist/qc_beds/top/main.py",

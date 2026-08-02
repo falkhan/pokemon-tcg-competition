@@ -97,6 +97,71 @@ def main() -> int:
     else:
         check(False, f"checkpoint {args.checkpoint} present")
 
+    # 5. the bundled RULES ACTUALLY ACT (M39). "Every fix name resolves" only
+    #    proves the string parses — it does not prove the bundled predicate
+    #    fires, which is the failure the M37 audit was really about. This runs
+    #    the BUNDLE's own fix set through the BUNDLE's own plan module on a
+    #    two-case fixture: a board that should trigger a demote, and one that
+    #    should not. It is deliberately generic — a config with no
+    #    board-triggered rule simply reports "no board-triggered rule in the
+    #    string" rather than failing.
+    #    It runs in a SUBPROCESS with the bundle first on sys.path, because
+    #    this process has already imported the project's own rl.plan (step 3)
+    #    and would otherwise silently test that copy instead of the shipped one.
+    import subprocess
+    import textwrap
+
+    probe = textwrap.dedent("""
+        import importlib.util, json, sys
+        from types import SimpleNamespace
+        sub = sys.argv[1]
+        sys.path.insert(0, sub)
+        import cg.api
+        from cg.api import AreaType, OptionType, SelectContext
+        spec = importlib.util.spec_from_file_location("bmain", sub + "/main.py")
+        bmain = importlib.util.module_from_spec(spec); spec.loader.exec_module(bmain)
+        import rl.plan as bp
+        def fire(opp_id):
+            card = lambda c: SimpleNamespace(id=c)
+            opts = [SimpleNamespace(type=OptionType.ATTACH, index=0,
+                                    area=AreaType.HAND, cardId=None),
+                    SimpleNamespace(type=OptionType.PLAY, index=1,
+                                    area=AreaType.HAND, cardId=None),
+                    SimpleNamespace(type=OptionType.END, index=None,
+                                    area=None, cardId=None)]
+            me = SimpleNamespace(hand=[card(bp.ENRICHING_ENERGY_ID),
+                                       card(bp.POFFIN_ID)],
+                                 bench=[None]*5, benchMax=5, deckCount=20,
+                                 active=[card(741)])
+            op = SimpleNamespace(prize=[0]*6, active=[card(opp_id)], bench=[],
+                                 deckCount=40)
+            obs = SimpleNamespace(
+                current=SimpleNamespace(players=[me, op], yourIndex=0,
+                                        energyAttached=False),
+                select=SimpleNamespace(context=SelectContext.MAIN, option=opts))
+            return bp.apply_play_overrides(obs, [0, 1, 2], bmain._ATTACH_FIXES)
+        print(json.dumps({"plan_file": bp.__file__,
+                          "fixes": sorted(bmain._ATTACH_FIXES),
+                          "wall": fire(345), "mirror": fire(741)}))
+    """)
+    out = subprocess.run([sys.executable, "-c", probe, str(SUBMISSION)],
+                         capture_output=True, text=True, cwd=str(ROOT))
+    if out.returncode != 0:
+        check(False, "bundle behavioural probe ran", out.stderr.strip()[-300:])
+    else:
+        import json as _json
+        r = _json.loads(out.stdout.strip().splitlines()[-1])
+        check(Path(r["plan_file"]).is_relative_to(SUBMISSION),
+              "probe imported the BUNDLE's rl.plan", r["plan_file"])
+        if "racemode4" in r["fixes"]:
+            check(r["wall"] == [1, 2, 0],
+                  "bundled racemode4 DEMOTES vs a wall board", str(r["wall"]))
+            check(r["mirror"] == [0, 1, 2],
+                  "bundled racemode4 INERT vs a mirror board", str(r["mirror"]))
+        else:
+            print("  --   no board-triggered rule in the fix string; "
+                  "behavioural check skipped")
+
     print(f"\n{'ALL TIER-1 CHECKS PASS' if not fails else 'FAILURES: ' + ', '.join(fails)}")
     return 1 if fails else 0
 

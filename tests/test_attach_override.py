@@ -582,6 +582,162 @@ def test_o12_composes_with_gacf():
     assert apply_play_overrides(low, [0, 1, 2], gacfr) == [1, 2, 0]
 
 
+# --- M39 P2 ----------------------------------------------------------------
+
+MEGA_KANGA = 756   # rl.plan._RACEMODE_WALL_IDS (P2a: the kanga blindspot)
+FAN_ROTOM = 174    # rl.plan._RACEMODE_STALL_IDS -> pressure half (P2a)
+ALAKAZAM = 743
+ENRICHING = 13
+POKE_PAD = 1152
+DAWN = 1231
+
+
+def test_p2a_trigger_coverage_is_enumerated():
+    """G-13-adjacent coverage regression: the next stall/wall variant must be
+    a ONE-LINE diff caught by review, not a live 0-2. This test pins the exact
+    id sets, so adding or dropping a trigger id fails here first and the diff
+    states which family it lands in."""
+    from rl.plan import (_RACEMODE_GRIM_IDS, _RACEMODE_PRESSURE_IDS,
+                         _RACEMODE_STALL_IDS, _RACEMODE_WALL_IDS)
+    assert _RACEMODE_WALL_IDS == frozenset({
+        58,          # Great Tusk
+        344, 532,    # Dwebble
+        345, 533,    # Crustle
+        607,         # Terrakion
+        756,         # Mega Kangaskhan ex (M39 P2a)
+    })
+    assert _RACEMODE_STALL_IDS - _RACEMODE_WALL_IDS == frozenset({
+        878, 879,    # Hop's Phantump / Trevenant
+        304,         # Hop's Snorlax
+        379, 380, 381, 341, 342, 387,   # Cynthia's line
+        174,         # Fan Rotom (M39 P2a)
+    })
+    # the two halves partition the trigger, and grim rides with pressure
+    assert _RACEMODE_PRESSURE_IDS == \
+        (_RACEMODE_STALL_IDS - _RACEMODE_WALL_IDS) | _RACEMODE_GRIM_IDS
+    assert not _RACEMODE_WALL_IDS & _RACEMODE_PRESSURE_IDS
+    # ids deliberately EXCLUDED (documented in rl/plan.py): Team Rocket's
+    # Kangaskhan ex and plain Kangaskhan are not wall bodies.
+    assert not {24, 472} & (_RACEMODE_WALL_IDS | _RACEMODE_PRESSURE_IDS)
+
+
+def test_p2a_new_ids_fire_on_their_own_side():
+    from rl.plan import PLAY_FIX_RACEMODE2
+    fixes = frozenset({PLAY_FIX_RACEMODE2})
+    # Mega Kangaskhan is a WALL body -> blanket, no margin needed
+    kanga = _race_obs(my_deck=40, opp_deck=40, opp_active=(MEGA_KANGA,))
+    assert apply_play_overrides(kanga, [0, 1, 2], fixes) == [1, 2, 0]
+    # Fan Rotom is a PRESSURE body -> margin-gated (2 of 83 cached mirror
+    # lists run it, so the blanket half would misfire in the mirror)
+    rotom_even = _race_obs(my_deck=40, opp_deck=40, opp_active=(FAN_ROTOM,))
+    assert apply_play_overrides(rotom_even, [0, 1, 2], fixes) == [0, 1, 2]
+    rotom_behind = _race_obs(my_deck=15, opp_deck=30, opp_active=(FAN_ROTOM,))
+    assert apply_play_overrides(rotom_behind, [0, 1, 2], fixes) == [1, 2, 0]
+
+
+def _burn_obs(hand_ids, my_deck=20, opp_deck=40, opp_active=(345,),
+              own_bench=(None,) * 5, order=None):
+    """MAIN prompt whose top pick is the FIRST hand card (a PLAY, or an
+    ATTACH for energies) — the shape racemode4 acts on."""
+    opts = [_opt(OptionType.ATTACH if cid in (ENRICHING,) else OptionType.PLAY,
+                 i) for i, cid in enumerate(hand_ids)]
+    opts.append(_opt(OptionType.END))
+    return _obs(opts, hand=list(hand_ids), bench=list(own_bench),
+                active=[_card(NON_ENERGY)], deck_count=my_deck,
+                opp_active=opp_active, opp_deck_count=opp_deck)
+
+
+def test_o13_racemode4_demotes_measured_burn_in_a_race():
+    from rl.plan import PLAY_FIX_RACEMODE4
+    fixes = frozenset({PLAY_FIX_RACEMODE4})
+    # Enriching Energy ATTACH (4.0 deck cards/attach) vs a wall board
+    enr = _burn_obs([ENRICHING, POFFIN_ID])
+    assert apply_play_overrides(enr, [0, 1, 2], fixes) == [1, 2, 0]
+    # Poke Pad PLAY, same trigger
+    pad = _burn_obs([POKE_PAD, POFFIN_ID])
+    assert apply_play_overrides(pad, [0, 1, 2], fixes) == [1, 2, 0]
+    # both burn cards demoted together, the non-burn option survives in order
+    both = _burn_obs([ENRICHING, POKE_PAD, POFFIN_ID])
+    assert apply_play_overrides(both, [0, 1, 2, 3], fixes) == [2, 3, 0, 1]
+
+
+def test_o13_racemode4_setup_gate_and_inertness():
+    from rl.plan import PLAY_FIX_RACEMODE4
+    fixes = frozenset({PLAY_FIX_RACEMODE4})
+    built = [_card(ALAKAZAM), None, None, None, None]
+    # Dawn/Hilda are surplus ONLY once Alakazam is on our board...
+    for cid in (DAWN, HILDA_ID):
+        empty_board = _burn_obs([cid, POFFIN_ID])
+        assert apply_play_overrides(empty_board, [0, 1, 2], fixes) == [0, 1, 2]
+        set_up = _burn_obs([cid, POFFIN_ID], own_bench=built)
+        assert apply_play_overrides(set_up, [0, 1, 2], fixes) == [1, 2, 0]
+    # ...while Enriching/Poke Pad do not wait for the board
+    assert apply_play_overrides(_burn_obs([ENRICHING, POFFIN_ID]),
+                                [0, 1, 2], fixes) == [1, 2, 0]
+    # OUT of a race: no trigger id on the opponent board -> fully inert
+    mirror = _burn_obs([ENRICHING, POFFIN_ID], opp_active=(NON_ENERGY,))
+    assert apply_play_overrides(mirror, [0, 1, 2], fixes) == [0, 1, 2]
+    # pressure family without the margin -> inert (the m37 split holds)
+    trev_even = _burn_obs([ENRICHING, POFFIN_ID], my_deck=40, opp_deck=40,
+                          opp_active=(TREVENANT,))
+    assert apply_play_overrides(trev_even, [0, 1, 2], fixes) == [0, 1, 2]
+    # demote-on-top law: burn card not the top pick -> untouched
+    not_top = _burn_obs([ENRICHING, POFFIN_ID])
+    assert apply_play_overrides(not_top, [1, 0, 2], fixes) == [1, 0, 2]
+    # Rare Candy is NOT in the burn set (win condition, excluded by design)
+    candy = _burn_obs([1079, POFFIN_ID])
+    assert apply_play_overrides(candy, [0, 1, 2], fixes) == [0, 1, 2]
+    # off by default
+    assert apply_play_overrides(_burn_obs([ENRICHING]), [0, 1],
+                                frozenset()) == [0, 1]
+
+
+def test_o13b_raceash_raises_the_promote_floor_in_a_race():
+    from rl.plan import PLAY_FIX_RACEASH
+    ash_opts = [_opt(OptionType.ABILITY, area=AreaType.ACTIVE),
+                _opt(OptionType.PLAY, 0),      # Sacred Ash (hand 0)
+                _opt(OptionType.END)]
+
+    def obs(deck, opp_active=(345,), opp_deck=40):
+        return _obs(ash_opts, hand=[SACRED_ASH_ID],
+                    active=[_card(DUDUNSPARCE)], deck_count=deck,
+                    opp_active=opp_active, opp_deck_count=opp_deck)
+
+    # deck 18 is above the plain `ash` floor (10) but inside the race floor
+    assert apply_play_overrides(obs(18), [0, 1, 2],
+                                frozenset({PLAY_FIX_ASH})) == [0, 1, 2]
+    assert apply_play_overrides(obs(18), [0, 1, 2],
+                                frozenset({PLAY_FIX_RACEASH})) == [1, 0, 2]
+    # above the race floor -> still off
+    assert apply_play_overrides(obs(21), [0, 1, 2],
+                                frozenset({PLAY_FIX_RACEASH})) == [0, 1, 2]
+    # out of a race, raceash alone does nothing at all (not even `ash`'s job)
+    assert apply_play_overrides(obs(8, opp_active=(NON_ENERGY,)), [0, 1, 2],
+                                frozenset({PLAY_FIX_RACEASH})) == [0, 1, 2]
+    # composed with `ash`, the plain floor still applies outside a race
+    assert apply_play_overrides(obs(8, opp_active=(NON_ENERGY,)), [0, 1, 2],
+                                frozenset({PLAY_FIX_ASH,
+                                           PLAY_FIX_RACEASH})) == [1, 0, 2]
+
+
+def test_p2_package_leaves_the_ship_a_config_untouched():
+    """Ship A is live as `conserve` alone. Every P2 rule must be provably
+    inert when its own name is absent, so the P2 gate cells differ from the
+    live agent by exactly one rule."""
+    from rl.plan import PLAY_FIX_RACEMODE4
+    conserve_only = frozenset({PLAY_FIX_CONSERVE})
+    # a wall board + a burn card in hand: racemode4 would fire, conserve alone
+    # touches only the Fezandipiti ability at deck <= 6
+    assert apply_play_overrides(_burn_obs([ENRICHING, POFFIN_ID]),
+                                [0, 1, 2], conserve_only) == [0, 1, 2]
+    # and the reverse: racemode4 alone does not take over conserve's job
+    fez = _race_obs(my_deck=5, opp_deck=40, opp_active=(NON_ENERGY,),
+                    me_active_id=FEZANDIPITI_ID)
+    assert apply_play_overrides(fez, [0, 1, 2],
+                                frozenset({PLAY_FIX_RACEMODE4})) == [0, 1, 2]
+    assert apply_play_overrides(fez, [0, 1, 2], conserve_only) == [1, 2, 0]
+
+
 def test_bundle_twins():
     """submission/rl/plan.py is a build-time copy of rl/plan.py — the
     override predicate must never diverge between screen and ship."""

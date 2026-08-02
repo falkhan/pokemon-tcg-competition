@@ -350,6 +350,8 @@ PLAY_FIX_RACEMODE = "racemode"        # O12: conserve vs stall/grim, margin-gate
 PLAY_FIX_RACEMODER = "racemoder"      # O12b: conserve vs stall/grim, blanket (m37)
 PLAY_FIX_RACEMODE2 = "racemode2"      # O12c: blanket vs walls, margin vs pressure-stall (m37)
 PLAY_FIX_RACEMODE3 = "racemode3"      # O12d: blanket vs walls ONLY (m37 final synthesis)
+PLAY_FIX_RACEMODE4 = "racemode4"      # O13: demote OUR burn sources in a race (m39 P2b)
+PLAY_FIX_RACEASH = "raceash"          # O13b: recycle Sacred Ash EARLY in a race (m39 P2b)
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10
@@ -389,6 +391,14 @@ _RACEMODE_STALL_IDS = frozenset({
     379, 380, 381,   # Cynthia's Gible / Gabite / Garchomp ex
     341, 342,        # Cynthia's Roselia / Roserade
     387,             # Cynthia's Spiritomb
+    # --- M39 P2a coverage additions, chosen from the harvest, not guessed.
+    # 174 Fan Rotom sits in 7 of the 16 cached stall lists and is the family's
+    # TURN-1 opener, so it fires the trigger several turns before Trevenant
+    # lands. It also appears in 2 of 83 mirror lists — a real false positive,
+    # which is why it goes in the PRESSURE (margin-gated) half below and not
+    # the blanket wall half: a mirror game where we are >5 cards down on the
+    # deck race is a game where conserving the draw is defensible anyway.
+    174,             # Fan Rotom (stall opener; 2/83 mirror lists — margin-gated)
 })
 _RACEMODE_GRIM_IDS = frozenset({646, 647, 648})  # Marnie's Impidimp/Morgrem/Grimmsnarl ex
 _RACEMODE_OPP_IDS = _RACEMODE_STALL_IDS | _RACEMODE_GRIM_IDS
@@ -397,7 +407,19 @@ _RACEMODE_OPP_IDS = _RACEMODE_STALL_IDS | _RACEMODE_GRIM_IDS
 # — blanket conserve there won the deck-out race outright (+14.8pp z+5.2);
 # hop/garchomp/grim DO attack — blanket starves our setup (-12/-18pp), only
 # the margin-gated conserve is safe. racemode2 splits the sets.
-_RACEMODE_WALL_IDS = frozenset({58, 344, 532, 345, 533, 607})
+_RACEMODE_WALL_IDS = frozenset({
+    58, 344, 532, 345, 533, 607,
+    # M39 P2a: the BACKLOG's "Kanga-only wall blindspot", closed. 756 (Mega
+    # Kangaskhan ex, 300 HP) is in 30 of the 65 cached wall lists — where the
+    # Crustle ids already fire — AND in all 10 lists of the `kanga` family,
+    # which classify as wall-alikes that run no Crustle at all and therefore
+    # never triggered. It belongs in the BLANKET half because those lists
+    # apply no prize pressure, which is the m37 law that splits these sets.
+    # NOT added: 24 Team Rocket's Kangaskhan ex (1 rocket list — rocket
+    # attacks, and it is the one bed where conserve measured negative) and
+    # 472 plain Kangaskhan (zero cached lists).
+    756,             # Mega Kangaskhan ex
+})
 _RACEMODE_PRESSURE_IDS = (_RACEMODE_STALL_IDS - _RACEMODE_WALL_IDS) \
     | _RACEMODE_GRIM_IDS
 # racemode margin gate = the m36 parked raceconserve design (mirror_race_probe:
@@ -406,6 +428,34 @@ _RACEMODE_PRESSURE_IDS = (_RACEMODE_STALL_IDS - _RACEMODE_WALL_IDS) \
 _RACEMODE_MARGIN = 5
 _RACEMODE_DECK_HI = 25
 _RACEMODE_DECK_LO = 6
+# O13 `racemode4` (m39 P2b). racemode/2/3 demote the two DRAW abilities, which
+# the M37 post-mortem's burn audit then showed are not where our cards go:
+# measured per-use deck cost is Enriching Energy 4.0/attach (5 attaches in a
+# wall game = 20 cards), Rare Candy 3.0, Fezandipiti 2.8, Dawn 2.4, Hilda 2.0,
+# Poke Pad 1.0 x19 plays -- against an opponent burning 1.4-1.5/turn while we
+# burn 2.5-2.7. racemode4 extends the SAME trigger to those hand cards.
+#
+# What is deliberately NOT in the set, and why:
+#   Rare Candy (1079) and the Alakazam/Kadabra EVOLVE options are the two
+#   biggest single burns in the audit and they are our win condition. Demoting
+#   them would trade the deck race for the game, which is the failure mode the
+#   m37 blanket racemoder already produced against pressure decks (-12/-18pp).
+#   Dawn/Hilda are demoted ONLY once the board is built, for the same reason.
+ENRICHING_ENERGY_ID = 13    # ACE spec energy: 4.0 deck cards per attach (m37)
+DAWN_ID = 1231              # draw supporter, 2.4 cards/play (m37 burn audit)
+ALAKAZAM_ID = 743           # stage-2 win condition; its presence == "set up"
+_RACEMODE4_ALWAYS_IDS = frozenset({ENRICHING_ENERGY_ID, POKE_PAD_ID})
+_RACEMODE4_SETUP_IDS = frozenset({DAWN_ID, HILDA_ID})
+_RACEMODE4_SETUP_POKEMON = frozenset({ALAKAZAM_ID})
+# O13b `raceash` (m39 P2b, the Sacred Ash half). The audit's finding was the
+# OPPOSITE of a demote: Sacred Ash was played at deck 0 and deck 2 in two M37
+# losses -- "recycle value at the last possible moment" -- and the ranked
+# recommendation is "don't sit on recycle value until deck<=2". So in a race
+# the fix RAISES the existing `ash` promote floor (deck <= 10) to deck <= 20,
+# rather than demoting anything. Kept a separate fix name from racemode4
+# because it is a promote with the opposite sign, and bundling two opposite
+# effects behind one name is how a gate cell stops being attributable.
+_RACEASH_AT = 20
 
 
 def _board_pokemon_id(opt, me):
@@ -431,6 +481,28 @@ def _opp_board_ids(op) -> frozenset:
         if p is not None:
             ids.add(p.id)
     return frozenset(ids)
+
+
+def _own_board_ids(me) -> frozenset:
+    """The same public-board card-id fact as `_opp_board_ids`, read on OUR
+    side. M39 P2b needs it for racemode4's "once the board is built" gate."""
+    return _opp_board_ids(me)
+
+
+def _racemode_engaged(st, me) -> bool:
+    """The m37 `racemode2` trigger, extracted so the M39 P2b rules cannot
+    drift away from it: a WALL-family Pokemon on the opponent's board fires
+    blanket (those lists apply no prize pressure — the m37 law), while a
+    PRESSURE-stall Pokemon fires only when we are losing the deck race by
+    more than _RACEMODE_MARGIN inside the setup window (blanket there starves
+    our own setup: measured −12/−18pp)."""
+    op = st.players[1 - st.yourIndex]
+    opp_ids = _opp_board_ids(op)
+    if opp_ids & _RACEMODE_WALL_IDS:
+        return True
+    return bool(opp_ids & _RACEMODE_PRESSURE_IDS
+                and me.deckCount < op.deckCount - _RACEMODE_MARGIN
+                and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI)
 
 
 def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
@@ -495,6 +567,19 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
       hop (−1.6pp) and garchomp (5-seed z −2.13, pre-registered kill), so
       the rule keeps just the measured win: +15.7pp on the wall bed,
       provably inert against every deck with no wall-family Pokémon.
+    - O13 `racemode4` (m39 P2b): same trigger as racemode2, applied to the
+      burn sources the M37 audit actually measured rather than to the two
+      draw abilities. Demote ATTACH Enriching Energy (4.0 deck cards/attach)
+      and PLAY Poké Pad always while the race is on; demote PLAY Dawn/Hilda
+      as well ONCE ALAKAZAM IS ON OUR BOARD, i.e. once the draw is surplus.
+      Rare Candy and the evolution digs are excluded by design — they are
+      the win condition, and trading them for the deck race is the failure
+      the m37 blanket variant already produced against pressure decks.
+    - O13b `raceash` (m39 P2b, opposite sign, separate name): in a race,
+      raise the `ash` promote floor from deck <= 10 to deck <= 20. Sacred
+      Ash was played at deck 0 and deck 2 in two M37 losses — recycle value
+      sat on until the last possible moment. Independent of `ash`: with
+      neither name present the Sacred Ash promote is off entirely.
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -504,7 +589,10 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
     hand = me.hand or []
     opts = obs.select.option
     pick = None
-    if PLAY_FIX_ASH in fixes and me.deckCount <= _ASH_AT:
+    ash_at = _ASH_AT if PLAY_FIX_ASH in fixes else None
+    if PLAY_FIX_RACEASH in fixes and _racemode_engaged(st, me):
+        ash_at = max(ash_at or 0, _RACEASH_AT)
+    if ash_at is not None and me.deckCount <= ash_at:
         ash = [i for i in ranked
                if opts[i].type == OptionType.PLAY
                and _hand_card_id(opts[i], hand) == SACRED_ASH_ID]
@@ -556,23 +644,28 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                 or (me.deckCount < op.deckCount - _RACEMODE_MARGIN
                     and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI)):
             demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
-    if PLAY_FIX_RACEMODE2 in fixes:
-        op = st.players[1 - st.yourIndex]
-        opp_ids = _opp_board_ids(op)
-        if opp_ids & _RACEMODE_WALL_IDS or (
-                opp_ids & _RACEMODE_PRESSURE_IDS
-                and me.deckCount < op.deckCount - _RACEMODE_MARGIN
-                and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI):
-            demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
+    if PLAY_FIX_RACEMODE2 in fixes and _racemode_engaged(st, me):
+        demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
     if (PLAY_FIX_RACEMODE3 in fixes
             and _opp_board_ids(st.players[1 - st.yourIndex])
             & _RACEMODE_WALL_IDS):
         demote_ids |= DUDUNSPARCE_IDS | _CONSERVE_ABILITY_IDS
-    if (demote_ids and opts[ranked[0]].type == OptionType.ABILITY
-            and _board_pokemon_id(opts[ranked[0]], me) in demote_ids):
-        keep = [i for i in ranked
-                if not (opts[i].type == OptionType.ABILITY
-                        and _board_pokemon_id(opts[i], me) in demote_ids)]
+    demote_hand_ids = frozenset()
+    if PLAY_FIX_RACEMODE4 in fixes and _racemode_engaged(st, me):
+        demote_hand_ids = _RACEMODE4_ALWAYS_IDS
+        if _own_board_ids(me) & _RACEMODE4_SETUP_POKEMON:
+            demote_hand_ids |= _RACEMODE4_SETUP_IDS
+
+    def _demoted(i) -> bool:
+        opt = opts[i]
+        if opt.type == OptionType.ABILITY:
+            return _board_pokemon_id(opt, me) in demote_ids
+        if opt.type in (OptionType.PLAY, OptionType.ATTACH):
+            return _hand_card_id(opt, hand) in demote_hand_ids
+        return False
+
+    if (demote_ids or demote_hand_ids) and _demoted(ranked[0]):
+        keep = [i for i in ranked if not _demoted(i)]
         if keep:
             return keep + [i for i in ranked if i not in keep]
     if (PLAY_FIX_GUSTVETO in fixes

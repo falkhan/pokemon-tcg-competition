@@ -139,6 +139,21 @@ _MODEL_FIX_KINDS = {
     # than settle it by judgement, it becomes a gate cell: strip everything
     # EXCEPT conserve.
     "model-conserve": frozenset({"conserve"}),
+    # M39 P2 — the anti-deck-out package, measured one rule at a time on top
+    # of the SHIPPED Ship A config (`conserve`) so every cell is a single
+    # variable against the live agent rather than against a hypothetical.
+    # r2  = racemode2 (P2a): the m37 wall-blanket/pressure-margin split,
+    #       never shipped live, now carrying the P2a id additions (Mega
+    #       Kangaskhan ex on the wall side, Fan Rotom on the pressure side).
+    # rm4 = racemode4 (P2b): demote OUR measured burn sources in a race.
+    # ash = raceash (P2b): recycle Sacred Ash early in a race (a PROMOTE —
+    #       opposite sign to rm4, which is why it is its own cell).
+    "model-c-r2": frozenset({"conserve", "racemode2"}),
+    "model-c-rm4": frozenset({"conserve", "racemode4"}),
+    "model-c-ash": frozenset({"conserve", "raceash"}),
+    "model-c-pkg": frozenset({"conserve", "racemode2", "racemode4"}),
+    "model-c-pkga": frozenset({"conserve", "racemode2", "racemode4",
+                               "raceash"}),
 }
 
 

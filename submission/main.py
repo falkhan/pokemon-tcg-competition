@@ -101,11 +101,36 @@ _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
 # comma-separated fix names ("telepath", "backstop", "tempo", "deckguard",
 # "ash", "conserve", "poffinfloor", "drawfloor", "benchfloor", "racemode3").
 #
-# M39 SHIP A: default narrowed from gacfr3 to "conserve" alone.
-#   Previous default: "telepath,deckguard,ash,conserve,benchfloor,racemode3"
-#   (gacfr3 = the M35 gacf arm + O12d racemode3).
+# M39 SHIP B: "conserve" + the anti-deck-out package "racemode2,racemode4".
+#   Previous default (Ship A, sub 55172160): "conserve"
+#   Before that (M38, sub 55146658): "telepath,deckguard,ash,conserve,
+#   benchfloor,racemode3" (gacfr3 = the M35 gacf arm + O12d racemode3).
 #
-# Why (docs/M39.md, P0.7 + P1-inv). The M38 G5 matrix already showed the full
+# Why (docs/M39.md, P2). Single-lane rules change on the SHIPPED net, gated on
+# the G-13 panel roster (>=3 independently trained clones per family, so a cell
+# is a panel mean rather than one draw of a training lottery):
+#     conserve,racemode2,racemode4 vs conserve : +2.37pp weighted  z=+5.03
+#     conserve,racemode4           vs conserve : +1.48pp weighted  z=+3.15
+#     conserve,racemode2           vs conserve : +0.24pp weighted  z=+0.51
+# The wall PANEL moves +15.7 / +11.1 / +6.7pp across its three draws (mean
+# +11.2pp) on our worst matchup, and no cell is significantly harmed.
+#
+# The two rules are SYNERGISTIC and neither ships alone: racemode2 closes the
+# draw-ABILITY exits (Fezandipiti/Dudunsparce) and racemode4 the burn
+# PLAY/ATTACH exits (Enriching Energy 4.0 cards/attach, Poke Pad, surplus
+# Dawn/Hilda once Alakazam is on board). Close one and the policy leaves
+# through the other -- which is why racemode2 ALONE is negative on wall
+# (-1.3pp). That is why the M37 racemode lane failed for four milestones: it
+# only ever closed half the door.
+#
+# Mechanism (G-11, scripts/m39_race_probe.py, n=200/leg): against the wall bed
+# the package takes the OPPONENT's deck-out rate from 3% to 31% and their
+# lowest deck count from 23.1 to 7.9, while the mirror bed -- where the rules
+# provably never fire -- moves by <=5.5pp. We do not burn less; we make the
+# game last long enough that the wall's own burn kills it first.
+#
+# Why `conserve` is still in the string (docs/M39.md, P0.7 + P1-inv — the
+# Ship A rationale, unchanged). The M38 G5 matrix already showed the full
 # stack was actively harmful on the wall bed. M39 ran the leave-one-out
 # ablation G5 never had, then a 3-arm gate over the 9-bed live-mix-weighted
 # roster at n=2400/cell:
@@ -128,7 +153,7 @@ _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
 _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
         "PKM_ATTACH_FIXES",
-        "conserve").split(",") if f)
+        "conserve,racemode2,racemode4").split(",") if f)
 
 
 def _log_net(rec: dict) -> None:

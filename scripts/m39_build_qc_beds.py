@@ -36,6 +36,13 @@ OUT_ROOT = ROOT / "dist/qc_beds"
 # name -> (checkpoint under checkpoints/, deck name resolvable by deck_source)
 BEDS = {
     "wall": ("m38_bc_wall.pt", "greattusk_wall"),
+    # G-13 (2026-08-02): the wall panel's three draws score .296 / .188 / .197
+    # against the live config — d1, the bed every wall claim in this campaign
+    # was measured on, is the SOFTEST by ~10pp. QC is a smoke test and not a
+    # measurement, so it does not need the whole panel; it does need the
+    # HARDEST draw, because the replays Piotr reviews should come from the
+    # opponent most likely to expose a defect.
+    "wall_hard": ("m39_bed_wall_d2.pt", "greattusk_wall"),
     "grim": ("m39_bc_grim.pt", "grim_live"),
     "archaludon": ("m39_bc_archaludon.pt", "archaludon"),
     "top": ("m39_bc_top.pt", "clone54618168"),
@@ -45,7 +52,7 @@ BEDS = {
 # below is a deliberate tripwire: when the ship config changes, this script
 # must fail rather than quietly build beds carrying a stale rule stack. It
 # fired as designed on the M39 Ship A change (gacfr3 -> conserve).
-SHIP_FIXES = '"conserve"'
+SHIP_FIXES = '"conserve,racemode2,racemode4"'
 
 
 def build_one(name: str, checkpoint: str, deck: str) -> Path:

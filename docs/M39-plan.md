@@ -2,8 +2,12 @@
 
 Drafted 2026-08-01 from the [M38 post-mortem](m38-post-mortem.md), a critical
 review of the [M38 diary](M38.md) and [BACKLOG](BACKLOG.md).
-**Status: APPROVED 2026-08-01 — all 13 decision points settled, P0 cleared
-to launch.**
+**Status: P0 + P1 + G-13 + P2 COMPLETE. SHIP A SHIPPED (sub 55172160,
+2026-08-01). SHIP B EXPORTED 2026-08-02 and awaiting Piotr's replay review —
+NOT submitted.** Ship B is `m38_w9294_cont3` + fix string
+`conserve,racemode2,racemode4` — a **one-lane rules change** (G-7), +2.37pp
+weighted (z=+5.03) on the G-13 panel roster. P3 (policy lane) is gating; its
+result feeds slot 3, not this ship. Live progress in [M39.md](M39.md).
 
 **Revision 1, 2026-08-01 (BACKLOG pass).** Re-reviewed against the full
 [BACKLOG](BACKLOG.md) including its 2026-08-01 research sweep, which the
@@ -39,6 +43,37 @@ post-ship read schedule); new guardrails G-9/G-10/G-11; "converged"
 redefined from n≥50 to **n≥150**. This does not change the plan's
 direction — that rests on offline gates at n=800 and mechanism forensics —
 but it changes what we may conclude from every live read.
+
+**Revision 5, 2026-08-01 (Ship A shipped).** P0 closed; Ship A submitted as
+**conserve-only, not the full strip decision 1 had settled** — the powered
+3-arm gate inverted it (+1.74pp vs live, z=+3.42) after a mechanism probe
+rescued a rule a significance threshold had discarded. Two new standing
+guardrails from P0's own failures: **G-12** (offline power / matchrunner is
+not run-reproducible) and **G-13** (bed strength is a training lottery;
+beds must be panels). P0.9 instrument extension delivered a negative result.
+
+## Status at a glance (2026-08-01)
+
+| phase | state | outcome |
+|---|---|---|
+| **P0** measurement integrity | ✅ **COMPLETE** | roster was invalid at 77.5% coverage → archaludon bed built; stall bed killed as unbuildable; instrument built and read (**gap ≤10pp = best pre-registered branch**) |
+| **P0.7** strip ablation | ✅ COMPLETE | full-strip verdict — later **overturned** by P1-inv |
+| **P0.8** the instrument | ✅ COMPLETE | `m39_bc_top`, 329 seats, val .682 |
+| **P0.9** instrument extension | ✅ COMPLETE, **negative** | `m39_bc_topgrim` built but no harder than the 750 bed; wall high-band unbuildable |
+| **P1 / Ship A** | 🚀 **SHIPPED — sub 55172160** | cont3 + `conserve`; +1.74pp weighted vs live (z=+3.42); dwell declared n=150. **Live read 2026-08-02: n=10, 5W-5L, implied ELO 741, CI [557, 926] — no verdict permitted (G-9)** |
+| **D1** matchup-filtered bed | ✅ COMPLETE | `--opp-deck-hash` landed (+2 tests); found **G-13: bed strength is a training lottery** |
+| **G-13 bed panels** | ✅ **IMPLEMENTED 2026-08-02** | 7 new draws (2.5 min total); `m39_panel_gate.sh` + panel support in `m39_decide.py`. First run: the wall panel spreads **10.8pp** and `m38_bc_wall` is the SOFTEST draw |
+| **P2** anti-deck-out | ✅ **COMPLETE — SHIPS** | `racemode2` alone KILLED (−1.3pp on wall); `racemode4` +1.48pp; **the pair +2.37pp weighted, z=+5.03, wall panel +11.2pp**. Synergistic — neither ships alone |
+| **P3** targeted fine-tune | ✅ **COMPLETE** | Both corpora LOSE alone (A −3.10pp, B −0.85pp); **both are rescued by champion-shard mixing (P3-C): retain_a +0.80pp, `retain_b` +1.85pp z=+4.01**. The binding constraint was **catastrophic forgetting**, not volume or demonstrator band — a third answer the A/B diagnostic did not enumerate. **α-ladder NOT null**: α=0.25 beats α=0 by +2.28pp, qualifying M28's winners-only law. **Ceiling trigger FIRES — no arm moved the 900+ panel** (all five negative), so per the pre-registered branch **slot 3 is a self-play / enabler-debt milestone, not another corpus iteration** |
+| **P4 / Ship B** | 🚀 **SHIPPED — sub 55182097** | **rules-only, one lane** (G-7): cont3 + `conserve,racemode2,racemode4`; +2.37pp weighted (z=+5.03); dwell declared n=150. **Ship A came back at leaderboard 780.4 vs M38's 664.8 (+115.6)** — M39 meets its own pre-registered success bar ("780 with a clear slot-3 thesis") before Ship B reports |
+
+**Four of my own conclusions were corrected mid-milestone**, all the same
+shape — a small-n measurement read as if it were settled. They produced
+G-12 and G-13 and are recorded in [M39.md](M39.md) rather than quietly
+fixed: the "−5pp rule stack at the top band" (didn't replicate at n=2400),
+"+11.2pp cont3 over champion" (+6.0pp powered, and ≈0 on the weighted mix),
+"BC cloning saturates" (refuted at z=+12.04), and "conserve is inert vs
+grim" (it fires there most of all).
 
 ## Objective
 
@@ -106,7 +141,7 @@ spends a slot on attribution rather than bundling.
 
 | slot | ship | milestone | rationale |
 |---|---|---|---|
-| 1 | **Ship A — strip, alone** | M39 | recovers the regression; recalibrates offline→live transfer |
+| ~~1~~ | ✅ **SPENT — Ship A, sub 55172160** (cont3 + `conserve`) | M39 | shipped 08-01; decision read declared at n=150 |
 | 2 | **Ship B — best P3 net × surviving P2 rules** | M39 | closes the measurable loss mass |
 | 3 | **the 1000 attempt** | M40 | funded by the P0.8 instrument + slots 1–2 attribution |
 | 4 | **untouched reserve** | — | insurance; never spent on a hypothesis |
@@ -407,6 +442,18 @@ the P3 corpus build answers for free:
   "no effect" and never a confirmation. Replicate a surprising significant
   result before it enters a plan or a ship decision, and state how many
   contrasts were tested. See [VALIDATION.md](VALIDATION.md) §2b.
+- **G-13 Bed panels** (added 2026-08-01 from D1). **Bed strength is a
+  training lottery, not a property of a corpus.** Three clones of the same
+  grim list from near-identical data scored .671 / .623 / .546 against the
+  same net at n=2400 each — a **12.5pp spread against a 2.0pp binomial CI**;
+  one fewer training epoch on identical data moved it 4.8pp. Therefore: no
+  gate bed is a single clone. Rosters use **≥3 draws per family**, the panel
+  mean is the cell value, and the spread across draws is reported. The fix
+  costs nothing — it is a *redistribution* of match budget (n=800 against
+  each of three draws rather than n=2400 against one). Gate **deltas** are
+  largely insulated (the same fixed bed serves both arms, so the draw
+  cancels); **absolute** bed numbers are not, and carry ~±6pp until this
+  lands. **NOT YET IMPLEMENTED — see the P2/P3 prerequisite note.**
 - **G-11 Mechanism proof per ship.** Every ship carries a fire /
   behavioral-diff probe for its changed behavior, run pre-ship offline and
   re-run post-ship on live replays. A ship whose mechanism cannot be
@@ -534,10 +581,37 @@ Exit criteria: new beds pinned with 2-seed n=800 champion baselines;
 P0.7 ablation, not from the G5 aggregate**; QC battery runs green
 mechanically; weighted-gate harness smoke-tested.
 
-### P1 — Strip ship (cheap, single-variable, pre-funded by G5)
+### P1 — Ship A ✅ **SHIPPED 2026-08-01 — sub 55172160**
 
-Candidate: **`m38_w9294_cont3` PLAIN** — the exact G5 "plain" config
-(wall .323 vs shipped stack's .254, no significant loss anywhere measured).
+**Shipped config: `m38_w9294_cont3` + fix string `conserve`** (not PLAIN —
+see the overturn below). Deck `alakazam_v2_h4` (md5 `ad014c58`). Single
+variable vs 55146658: the fix string. Tarball
+`dist/submission_neural_20260801_234656.tar.gz`, ship commit `456f640`.
+Diary: [M39.md](M39.md).
+
+**The plan said PLAIN; the measurement said otherwise.** Decision 1 was
+settled as a full strip on the P0.7 ledger (no rule cleared the keep-bar;
+`conserve` missed at z=−1.91, one of 12 contrasts). Piotr called
+investigate-further on the weak Ship A premise, and the powered 3-arm gate
+inverted it:
+
+| comparison (9-bed weighted roster, n=2400/cell) | delta | z |
+|---|---|---|
+| **conserve-only vs gacfr3 (live)** | **+1.74pp ±1.00** | **+3.42** |
+| **conserve-only vs plain (full strip)** | **+1.03pp ±1.00** | **+2.03** |
+| plain vs gacfr3 | +0.71pp ±1.00 | +1.39 (n.s.) |
+
+Positive on 6 of 8 beds at ~+2–3pp, including every big-share one. **A
+mechanism probe, not a significance threshold, is what got this right**:
+`scripts/conserve_probe.py` showed conserve fires in 11–13% of trigger-true
+states on the 900+ and grim beds and 0.2% on wall — active exactly where its
+removal cost win rate. G-11 earned its place as a mandatory gate here.
+
+Expected live effect ≈ **+12 implied ELO**. **G-10 dwell declared before the
+sample: decision read at n=150** (~3 days, ±56 ELO); a 1-day read (±93)
+could not resolve a 12-ELO effect in either direction.
+
+Original P1 specification retained below for the record.
 
 - **CORRECTION (revision 3).** Earlier drafts of this plan said
   "deckguard/conserve is NOT part of the gacfr3 economy stack; it stays."
@@ -583,7 +657,15 @@ Candidate: **`m38_w9294_cont3` PLAIN** — the exact G5 "plain" config
 This ship doubles as the live falsification test of the G5 measurement and
 as a fresh pool-drift control for Ship B.
 
-### P2 — Anti-deck-out package (rules lane, on real beds)
+### P2 — Anti-deck-out package (rules lane, on real beds) — ⏳ NOT STARTED
+
+**PREREQUISITE ADDED 2026-08-01: implement G-13 bed panels first.** P2 and
+P3 are both gated on the M39 beds, and D1 showed a single clone's strength
+is a lottery draw with a ~12.5pp spread. Gate *deltas* are largely
+insulated, but P2's kill gate is phrased as an absolute ("wall+grim+
+archaludon improves ≥5pp"), which is exactly the kind of number the lottery
+corrupts. Panels are free — redistribute the same match budget across ≥3
+draws per family — and they must land before either lane's gate is read.
 
 Targets the 29% deck-race loss mass, 5 of them thrown from winning
 positions. Two independent, separately-measured changes:
@@ -617,7 +699,15 @@ match where the deck-race mass actually is**: a variant ships only if
 and per G-4, the surviving package re-runs the on/off matrix on whatever
 net P3 produces.
 
-### P3 — Targeted fine-tune (policy lane, corrected corpus recipe)
+### P3 — Targeted fine-tune (policy lane, corrected corpus recipe) — ⏳ NOT STARTED
+
+Status note: **corpus A is no longer the thin-corpus risk the plan hedged
+against.** The P0.1 snowball took the loss-family winner-seat census to
+grim 76 / wall 27 / archaludon 24 (≈127 before the loser rows decision 8
+keeps), over the ≥100 target. The `--opp-deck-hash` filter this lane needs
+is **already implemented and tested** (it landed early for D1). Corpus B
+(best-response) remains scheduled as the volume lane and the A/B
+diagnostic. Same G-13 panel prerequisite as P2.
 
 The vehicle that worked (low-dose fine-tune on live winner seats, dose law
 ~1 epoch) aimed at the corpus flaw that kept M38's gains in-family — with
@@ -689,7 +779,7 @@ v1 (both cautioned in the source evidence).
   not the data**, and M40 pays the enabler debt (value net → real
   advantages) instead of harvesting more.
 
-### P4 — Ship B + the sweep-mass design decision
+### P4 — Ship B + the sweep-mass design decision — ⏳ NOT STARTED (slot 2 of 4)
 
 - Ship B candidate: best P3 net × surviving P2 rules, G5-style on/off
   matrix (G-4), weighted gate, expanded QC, Piotr review, submit.
@@ -880,18 +970,16 @@ the id-set trigger never fires.
 
 ## Ship cadence
 
-Two submits, **slots 1 and 2 of 4**: **Ship A (P1 strip)** early — cheap,
-single-variable, live value regardless of outcome; **Ship B (P2×P3)** as the
-milestone headline. Slot 3 is M40's 1000 attempt; slot 4 is untouched
-reserve.
+Two submits, **slots 1 and 2 of 4**. **Slot 1 is SPENT** — Ship A shipped
+2026-08-01 as sub **55172160** (cont3 + `conserve`), and its declared
+decision read is **n=150**. **Ship B (P2×P3)** is the milestone headline and
+takes slot 2. Slot 3 is M40's 1000 attempt; slot 4 is untouched reserve.
 
-Per G-7 + G-10, **Ship B does not go out until Ship A's declared decision
-read lands.** Ship A's dwell target is declared in its ship commit before
-it goes live; **recommended declaration: n = 150** (~3 days, zero slots,
-±56 ELO), because at n=50 a live read only detects a ~200 ELO swing —
-larger than any effect this milestone is designed to produce
-([VALIDATION.md](VALIDATION.md) §0). Piotr's call per ship; the number just
-has to be on the record before submit rather than chosen while watching it.
+Per G-7 + G-10, **Ship B does not go out until Ship A's n=150 read lands**
+(~3 days from 08-01). Earlier reads are permitted for catastrophe detection
+and the G-11 live mechanism probe — does `conserve` fire in live replays at
+the ~11–13% rate the offline probe measured? — but no strength verdict
+before n=150.
 
 Both M39 submits run the **full four-tier pre-ship protocol**
 ([VALIDATION.md](VALIDATION.md) §1) — artifact correctness from the
@@ -902,9 +990,23 @@ row landing in the ship commit.
 
 ## What would kill this milestone (pre-registered)
 
-- P0 harvest can't produce faithful grim/stall beds (insufficient seats at
-  band) → fall back to best-available clones, but G-3's 80%-coverage rule
-  still applies with `m38_bc_wall` + refreshed grim at whatever band exists.
+**Resolved so far (2026-08-01):**
+
+- ~~P0 harvest can't produce faithful grim/stall beds~~ — **PARTIALLY FIRED
+  and handled.** The grim bed built fine (195 seats at band); the **stall bed
+  was unbuildable** (9 seats) and was killed rather than built thin. Coverage
+  was restored above the G-3 floor by the unplanned archaludon bed, not by
+  the fallback this line anticipated.
+- ~~P0.8 can't produce a 903+ bed~~ — **did not fire.** 329 seats.
+- ~~P0.8 reports a >25pp gap~~ — **did not fire.** ≤10pp, the best branch;
+  slot 3 remains a genuine 1000 attempt. Held loosely pending G-13 panels,
+  since absolute bed numbers carry the lottery variance.
+- ~~P1 strip regresses the weighted pool~~ — **did not fire**, but nor did
+  the strip help: plain vs gacfr3 was +0.71pp (n.s.). The lane was rescued
+  by a third config (conserve-only) this line never contemplated.
+
+**Still live:**
+
 - **P0.8 can't produce a 903+ bed** (too few top-band seats even after the
   round-3 snowball) → we cannot instrument the target band by cloning, and
   the 1000 question becomes un-measurable offline. Fall back to the widest
@@ -968,7 +1070,13 @@ legality).
 **Options.** (a) full strip to G5-plain; (b) partial strip, keeping some
 economy rules; (c) keep the stack.
 
-**✅ RESOLVED — (a) full strip, byte-for-byte with G5's `cont3 plain`
+**✅ RESOLVED, THEN OVERTURNED BY MEASUREMENT.** Settled as (a) full strip;
+the powered 3-arm gate then showed **conserve-only beats the full strip by
++1.03pp (z=+2.03)** and the live config by +1.74pp (z=+3.42), so **Ship A
+shipped as `conserve`, not plain**. The reasoning below was sound on the
+evidence available and is retained — what changed it was a mechanism probe,
+not a re-argument. Original recommendation: (a) full strip, byte-for-byte
+with G5's `cont3 plain`
 cell, after the P0.7 ablation confirms no individual rule carries a real
 gain.**
 

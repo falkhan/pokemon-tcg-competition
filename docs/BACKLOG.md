@@ -7,14 +7,23 @@ they're picked up.
 
 ## Deferred from M38 by design
 
-- **Gen-2 collect with a retrained value net.** M38 gen-1 runs with
+- **Gen-2 collect with a retrained value net.** **PROMOTED to the M40
+  headline by M39's ceiling result** (2026-08-02): five policy arms across
+  two independently-failing corpora were ALL negative on the 900+ panel, so
+  the pre-registered branch "imitation is exhausted for the 1000 target"
+  fired. The enabler debt (value net -> real per-decision advantages) is now
+  the blocking item, not a nice-to-have. Original entry: M38 gen-1 runs with
   `value_solve` OFF because the M14 setup-plan tier scores lines with an
   old-lineage value net trained on prize-phobic play. Once a clean-corpus BC
   exists: retrain the value head on the clean corpus, then decide (with a
   measurement) whether the setup-plan tier still earns its keep in a gen-2
   collect. Watch item feeding this: M38 R5 (early-game label quality under
   greedy fallback).
-- **Rule-stack strip.** G5 strips only actively-harmful rules from gacfr3;
+- ~~**Rule-stack strip.**~~ **DONE — M39 P1/Ship A (sub 55172160).** The
+  strip was gated and then INVERTED by measurement: `conserve`-only beat both
+  the full stack (+1.74pp, z=+3.42) and the full strip (+1.03pp, z=+2.03).
+  A mechanism probe, not a threshold, is what rescued the surviving rule.
+  Original entry: G5 strips only actively-harmful rules from gacfr3;
   redundant-but-harmless ones ride one more milestone. A pure-strip submit is
   a cheap single-variable follow-up ship once the retrained net's live
   behavior is known.
@@ -30,10 +39,21 @@ they're picked up.
 
 ## From the M37 audit (logged, not scheduled)
 
-- **Silent fix-name ignore**: an unrecognized name in `_ATTACH_FIXES` is
+- ~~**Silent fix-name ignore**~~ **DONE — M39, as a PRE-SHIP check rather
+  than runtime code** (`scripts/ship_verify.py`): raising inside the agent
+  would trade a silent-typo risk for a live-crash risk. Extended 2026-08-02
+  with a behavioural probe that runs the BUNDLE's own `rl.plan` in a
+  subprocess, because "the name resolves" does not prove the rule fires.
+  Original entry: an unrecognized name in `_ATTACH_FIXES` is
   silently dropped — nothing would catch a typo in a ship config. Minor
   hardening: fail loudly on unknown names.
-- **Kangaskhan-only wall blindspot**: racemode3/4 trigger needs a wall
+- ~~**Kangaskhan-only wall blindspot**~~ **DONE — M39 P2a.** Mega Kangaskhan
+  ex (756) added to `_RACEMODE_WALL_IDS` (blanket half): it is in all 10
+  cached `kanga` lists and 30 of 65 wall lists. **Honest caveat carried into
+  M40: unmeasurable offline** — `kanga` has 19 seats total, far under the
+  100-seat bed floor, so this rides on a coverage test and an inertness
+  proof (`tests/test_race_bed_inertness.py`), not on a gate cell.
+  Original entry: racemode3/4 trigger needs a wall
   Pokémon visible on board (`_RACEMODE_WALL_IDS`); a Kanga-only variant is
   invisible to it. Revisit when a live sample shows one.
 - **`rl/` ↔ `tcg/` duplication** (~200 KB, seven pairs, manual parity tests)
@@ -42,7 +62,9 @@ they're picked up.
 
 ## From the M37 post-mortem (ranked list, below the M38 cut)
 
-- **Band gate refresh**: re-freeze `band_decode.py` weights on the n=63
+- ~~**Band gate refresh**~~ **DONE — M39 P0 ride-along** (re-frozen on the
+  current 700-band sample; the old weights are marked superseded).
+  Original entry: re-freeze `band_decode.py` weights on the n=63
   700–800 sample (the 600-band weights are one milestone stale). Cheap;
   candidate ride-along for any M38/M39 ship commit.
 - **Stop-investing list** (do not resurrect without new evidence): grim
@@ -60,6 +82,29 @@ quality in comparable settings) × (fit to our constraints: 16k–340k-label
 corpora, CPU-only, ~5 games/s engine, dose law).
 
 ### High priority — near-term milestone candidates
+
+**M39 RESULTS (2026-08-02) — read this before re-scoping any of #1–#3.** All
+three ran as M39 P3 arms on the G-13 panel roster; the outcomes reorder this
+list rather than confirm it.
+
+| sweep item | M39 arm | weighted vs live | verdict |
+|---|---|---|---|
+| #1 advantage-filtered BC | `m39_vsloss_a25` (α=0.25) | −0.82pp | **NOT null**: α=0.25 beats winners-only (α=0) by **+2.28pp** — the discarded loser rows carry real signal, qualifying M28's winners-only law. Still ≤ control on its own. |
+| #2 offline best-response | `m39_bestresp` | −0.85pp | did **not** even win its own target beds (−0.4pp there), so the pre-registered exploiter-overfit KILL did not fire — it is simply weak alone. |
+| #3 retention by data mixing | `m39_retain_a` / `m39_retain_b` | **+0.80pp / +1.85pp (z=+4.01)** | **the lane's actual result.** Mixing champion shards back in swung corpus A **+3.90pp** and corpus B **+2.70pp**, turning both losing corpora into wins, with no new loss code. |
+
+**Consequence for future scoping: the binding constraint was catastrophic
+forgetting, not corpus volume and not demonstrator band** — a third answer the
+plan's A/B diagnostic did not enumerate. Retention should be the DEFAULT on
+every future fine-tune, not an arm. Two follow-ups M39 did not run: a
+retention arm at **α=0.25** (both retention arms used the worse α=0), and
+corpus B at a higher exploration rate.
+
+**And the ceiling trigger fired:** no arm moved the 900+ panel (all five
+negative), so per the M39 plan's pre-registered branch, **imitation on this
+corpus quality is exhausted for the 1000 target** and #6 (value net) plus
+self-play become the M40 agenda rather than more harvesting.
+
 
 1. **Advantage-filtered BC on the harvest corpus (upgrade of the queued AWR
    arm).** Evidence: the strongest domain match in the sweep — a Pokemon
