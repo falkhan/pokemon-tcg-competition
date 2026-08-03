@@ -785,12 +785,24 @@ def test_p2_package_leaves_the_ship_a_config_untouched():
 
 
 def test_bundle_twins():
-    """submission/rl/plan.py is a build-time copy of rl/plan.py — the
-    override predicate must never diverge between screen and ship."""
+    """Every bundled rl/ module is a build-time copy — no shipped predicate may
+    diverge between screen and ship.
+
+    M42: this compared ONLY plan.py, which is why the M41 divergence went
+    unnoticed — HEAD carried a new submission/rl/encoders.py against an old
+    rl/encoders.py for a whole milestone. It now walks the same list
+    `ship_verify` does, so the two guards cannot drift apart from each other
+    either."""
+    import sys
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent
-    assert (root / "rl/plan.py").read_bytes() == \
-        (root / "submission/rl/plan.py").read_bytes()
+    sys.path.insert(0, str(root / "scripts"))
+    from ship_verify import TWIN_FILES
+
+    stale = [name for name in TWIN_FILES
+             if (root / "rl" / name).read_bytes()
+             != (root / "submission/rl" / name).read_bytes()]
+    assert not stale, f"submission/rl is stale: {stale} — run the export"
 
 
 def test_matchrunner_spec_kinds_parse():

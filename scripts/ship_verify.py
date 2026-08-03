@@ -25,7 +25,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 SUBMISSION = ROOT / "submission"
-TWIN_FILES = ("encoders.py", "combat.py", "plan.py", "memory.py")
+# M42: scaling.py added. It has been bundled since M41 -- encode_option_v2
+# reaches rl.scaling on every ATTACH option, so without it the agent crashes on
+# Kaggle at the first energy card -- but it was never twin-checked, so the one
+# newly-bundled file could have shipped stale.
+TWIN_FILES = ("encoders.py", "combat.py", "plan.py", "memory.py", "scaling.py")
 
 
 def md5(p: Path) -> str:
