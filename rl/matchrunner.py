@@ -154,7 +154,39 @@ _MODEL_FIX_KINDS = {
     "model-c-pkg": frozenset({"conserve", "racemode2", "racemode4"}),
     "model-c-pkga": frozenset({"conserve", "racemode2", "racemode4",
                                "raceash"}),
+    # M40 S6 — the plan-head train/serve mismatch, as a config token.
+    # `planzero` is a SERVE fix (rl/plan.py O14): it is inert in both
+    # apply_*_overrides and acts upstream, on what the trunk is fed. Two kinds:
+    #   model-pz     isolated — the mechanism cell, nothing else moving
+    #   model-c-pkgz the gate arm — Ship B's live package + planzero, so the
+    #                battery's single variable vs `model-c-pkg` is the plan
+    #                vector and nothing else.
+    "model-pz": frozenset({"planzero"}),
+    "model-c-pkgz": frozenset({"conserve", "racemode2", "racemode4",
+                               "planzero"}),
+    # M40 deep-dive candidates (2026-08-03). Base = conserve+planzero: the
+    # live evidence ranks conserve-only above the racemode package (Ship A
+    # 773.6 > Ship B 726.3 > floor 659.7) and planzero is the adopted S6
+    # serve fix. Each candidate is single-variable vs `model-cz`.
+    "model-cz": frozenset({"conserve", "planzero"}),
+    "model-cz-ashw": frozenset({"conserve", "planzero", "ash", "ashguard"}),
+    "model-cz-ham": frozenset({"conserve", "planzero", "hammer"}),
+    "model-cz-tempo": frozenset({"conserve", "planzero", "tempo"}),
+    # M40b Track C — value-guided veto on top of the cz base.
+    "model-cz-vv": frozenset({"conserve", "planzero", "vveto"}),
 }
+
+# M40b Track C `vveto` knobs (module-level like SOLVED_* so probes can read
+# and tests can monkeypatch). Critic = the ONLY E0-passing value head
+# (m39_retain_b, matched-pair 0.642); cont3's own head FAILED E0 at 0.469.
+# A discredited policy carrying the only validated critic is fine — the
+# critic is frozen and only ranks afterstates.
+VVETO_CRITIC = "checkpoints/m39_retain_b.pt"
+VVETO_TOPK = 3
+VVETO_DELTA = 0.10        # min V-margin to override the policy pick
+VVETO_DEADLINE_S = 0.12   # per-prompt wall cap across all candidate steps
+VVETO_STATS = {"prompts": 0, "opened": 0, "stepped": 0, "vetoes": 0,
+               "time_max": 0.0, "time_sum": 0.0}
 
 
 def resolve_deck(deck) -> list[int]:
@@ -198,8 +230,20 @@ def parse_spec(s: str) -> OpponentSpec:
         return ("rule", parts[1], parts[2] if len(parts) == 3 else parts[1])
     if kind in ("model", *_MODEL_FIX_KINDS) and len(parts) == 3:
         return (kind, parts[1], parts[2])
-    if kind == "solved" and len(parts) == 3:
-        return ("solved", parts[1], parts[2])
+    if kind == "solved" and len(parts) in (3, 4, 5):
+        # M40 S3: optional PER-SPEC search budget —
+        #     solved:<ckpt>:<deck>[:<max_nodes>[:<deadline_ms>]]
+        # The budget has been a per-CALL dict since M11 (wrap_with_solver ->
+        # solve_turn -> solve_turn_line -> _dfs all take it and resolve None to
+        # the module constant), deliberately so data-gen never mutates globals
+        # shared across seats. Only this parser and the `solved` branch pinned
+        # it to the module constants, which meant every `solved:` bed in a run
+        # had to share one budget — unusable for S3, where the whole point is
+        # composites at DIFFERENT strengths in the same battery. Specs are
+        # picklable str/int tuples, so this crosses the spawn-Pool boundary
+        # unchanged.
+        return ("solved", parts[1], parts[2],
+                *(int(p) for p in parts[3:]))
     raise ValueError(f"cannot parse opponent spec {s!r} "
                      "(want kind:deck or rule:agent[:deck] or model:ckpt:deck)")
 
@@ -399,8 +443,12 @@ def make_pilot(spec: OpponentSpec, instance: str):
         # Tightened here rather than globally so make_solver_pilot (the rules
         # bundle, which passes G6 today) keeps its measured behaviour.
         stats = SOLVED_STATS
-        return wrap_with_solver(inner_fn, ids, deadline_s=SOLVED_DEADLINE_S,
-                                max_nodes=SOLVED_MAX_NODES,
+        # M40 S3: per-spec budget override, module constants as the default.
+        max_nodes = int(spec[3]) if len(spec) > 3 else SOLVED_MAX_NODES
+        deadline_s = (int(spec[4]) / 1000.0 if len(spec) > 4
+                      else SOLVED_DEADLINE_S)
+        return wrap_with_solver(inner_fn, ids, deadline_s=deadline_s,
+                                max_nodes=max_nodes,
                                 allow=SOLVED_ALLOW, stats=stats), ids
     if kind == "generic":
         from rl.generic_pilot import make_generic_pilot
@@ -473,8 +521,10 @@ def make_pilot(spec: OpponentSpec, instance: str):
                                      V4_EXTRA_DIM, encode_ctx_v4,
                                      encode_option_v2)
             from rl.memory import OppMemory
-            from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+            from rl.plan import (PLAN_DIM, SERVE_FIX_PLANZERO, encode_plan,
+                                 enumerate_plans)
             from rl.policy import OptionScorerV3, option_dim_of
+            plan_zero = SERVE_FIX_PLANZERO in attach_fixes
             m4 = OptionScorerV3(n_state_ids=N_STATE_IDS_V4,
                                 option_dim=option_dim_of(sd),
                                 extra_dim=V4_EXTRA_DIM)
@@ -499,15 +549,20 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 key = (t, obs.current.yourIndex)
                 memory.observe(obs)                  # once per own prompt
                 sc, sids = encode_ctx_v4(obs, deck_ids, memory)
-                if obs.select.context == SelectContext.MAIN \
-                        and pstate["key"] != key:
-                    cands = enumerate_plans(obs)
-                    mat = np.stack([encode_plan(c) for c in cands]
-                                   ).astype(np.float32)
-                    idx = m4.act_plan(sc, sids, mat)
-                    pstate.update(key=key, vec=mat[idx].copy())
-                plan = (pstate["vec"] if pstate["key"] == key
-                        else np.zeros(PLAN_DIM, np.float32))
+                if plan_zero:
+                    # M40 S6 `planzero`: the plan head never runs, so the trunk
+                    # sees the zero vector every corpus row was trained on.
+                    plan = np.zeros(PLAN_DIM, np.float32)
+                else:
+                    if obs.select.context == SelectContext.MAIN \
+                            and pstate["key"] != key:
+                        cands = enumerate_plans(obs)
+                        mat = np.stack([encode_plan(c) for c in cands]
+                                       ).astype(np.float32)
+                        idx = m4.act_plan(sc, sids, mat)
+                        pstate.update(key=key, vec=mat[idx].copy())
+                    plan = (pstate["vec"] if pstate["key"] == key
+                            else np.zeros(PLAN_DIM, np.float32))
                 pairs = [encode_option_v2(o, obs) for o in obs.select.option]
                 opts = np.stack([n for n, _ in pairs]).astype(np.float32)
                 oids = np.stack([i for _, i in pairs])
@@ -531,9 +586,11 @@ def make_pilot(spec: OpponentSpec, instance: str):
             from rl.encoders import (EMBED_DIM, OPTION_V3_DIM,
                                      encode_option_v2, encode_option_v2_legacy,
                                      encode_state_v2, encode_state_v3)
-            from rl.plan import PLAN_DIM, encode_plan, enumerate_plans
+            from rl.plan import (PLAN_DIM, SERVE_FIX_PLANZERO, encode_plan,
+                                 enumerate_plans)
             from rl.policy import OptionScorerV3, option_dim_of
             from rl.encoders import N_CONTEXTS as _NC, STATE_V2_DIM as _SV2
+            plan_zero = SERVE_FIX_PLANZERO in attach_fixes
             n_ids = (sd["state_enc.0.weight"].shape[1] - _SV2 - _NC
                      - PLAN_DIM) // EMBED_DIM
             opt_dim = option_dim_of(sd)
@@ -549,6 +606,88 @@ def make_pilot(spec: OpponentSpec, instance: str):
             pstate = {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
                       "last_turn": -1}
 
+            vveto = None
+            if "vveto" in attach_fixes:
+                # M40b Track C (O17): 1-ply afterstate veto. score_siblings'
+                # skeleton — open ONE determinized search per prompt, step
+                # each of the policy's top-k picks once, score the child with
+                # the frozen E0-validated critic, override only on a clear
+                # V-margin. Sound within our own turn (the opponent never
+                # acts); skipped whenever search_begin_input is absent
+                # (logged replays) or a child leaves our perspective.
+                from time import perf_counter
+                from cg.api import search_end, search_step
+                from rl.turn_solver import _open_search
+                csd = torch.load(ROOT / VVETO_CRITIC, map_location="cpu")
+                c_ids = (csd["state_enc.0.weight"].shape[1] - _SV2 - _NC
+                         - PLAN_DIM) // EMBED_DIM
+                critic = OptionScorerV3(n_state_ids=c_ids,
+                                        option_dim=option_dim_of(csd))
+                critic.load_state_dict(csd)
+                critic.eval()
+                c_zero_plan = torch.zeros(1, critic.plan_dim)
+
+                def _critic_v(cur, ctx) -> float:
+                    num2, sids2 = enc_state(cur, deck_ids)
+                    sc2 = np.concatenate(
+                        [num2, encode_context(ctx)]).astype(np.float32)
+                    with torch.no_grad():
+                        v = critic.value_head(critic._trunk(
+                            torch.from_numpy(sc2).unsqueeze(0), c_zero_plan,
+                            torch.from_numpy(
+                                sids2.astype(np.int64)).unsqueeze(0)))
+                    return float(v.squeeze())
+
+                def vveto(obs, ranked):
+                    sel = obs.select
+                    if (sel.context != SelectContext.MAIN
+                            or sel.maxCount != 1 or len(sel.option) < 2
+                            or getattr(obs, "search_begin_input", None)
+                            is None):
+                        return ranked
+                    t0 = perf_counter()
+                    VVETO_STATS["prompts"] += 1
+                    me_idx = obs.current.yourIndex
+                    vals = {}
+                    try:
+                        root = _open_search(obs, deck_ids)
+                    except Exception:
+                        return ranked      # odd states can fail determinize
+                    VVETO_STATS["opened"] += 1
+                    try:
+                        for i in ranked[:VVETO_TOPK]:
+                            if perf_counter() - t0 > VVETO_DEADLINE_S:
+                                break
+                            try:
+                                child = search_step(root.searchId, [int(i)])
+                            except Exception:
+                                continue
+                            VVETO_STATS["stepped"] += 1
+                            cur = child.observation.current
+                            if cur.result >= 0:      # action ended the game
+                                vals[i] = (2.0 if cur.result == me_idx
+                                           else -2.0 if cur.result
+                                           == 1 - me_idx else 0.0)
+                                continue
+                            if (cur.yourIndex != me_idx
+                                    or child.observation.select is None):
+                                continue             # turn passed: V is from
+                            vals[i] = _critic_v(     # the wrong side — skip
+                                cur, child.observation.select.context)
+                    finally:
+                        search_end()
+                    dt = perf_counter() - t0
+                    VVETO_STATS["time_sum"] += dt
+                    VVETO_STATS["time_max"] = max(VVETO_STATS["time_max"], dt)
+                    if ranked[0] not in vals or len(vals) < 2:
+                        return ranked    # no comparison basis -> no veto
+                    best = max(vals, key=vals.get)
+                    if best != ranked[0] \
+                            and vals[best] - vals[ranked[0]] >= VVETO_DELTA:
+                        VVETO_STATS["vetoes"] += 1
+                        return [best] + [i for i in ranked if i != best]
+                    return ranked
+
             def fn3(od):
                 obs = to_observation_class(od)
                 if obs.select is None:
@@ -563,20 +702,25 @@ def make_pilot(spec: OpponentSpec, instance: str):
                 sc = np.concatenate(
                     [num, encode_context(obs.select.context)]
                 ).astype(np.float32)
-                if obs.select.context == SelectContext.MAIN \
-                        and pstate["key"] != key:
-                    # Plan ONCE at the turn's first MAIN and hold it (M11 fix
-                    # 2026-07-17): training plan rows exist only at first-MAIN
-                    # states — replanning every MAIN is off-distribution for
-                    # the head AND flip-flops the plan mid-turn (measured:
-                    # 0.278 vs 0.345 base at Rung 0 before this fix).
-                    cands = enumerate_plans(obs)
-                    mat = np.stack([encode_plan(c) for c in cands]
-                                   ).astype(np.float32)
-                    idx = m3.act_plan(sc, sids, mat)          # argmax at eval
-                    pstate.update(key=key, vec=mat[idx].copy())
-                plan = (pstate["vec"] if pstate["key"] == key
-                        else np.zeros(PLAN_DIM, np.float32))
+                if plan_zero:
+                    # M40 S6 `planzero`: the plan head never runs, so the trunk
+                    # sees the zero vector every corpus row was trained on.
+                    plan = np.zeros(PLAN_DIM, np.float32)
+                else:
+                    if obs.select.context == SelectContext.MAIN \
+                            and pstate["key"] != key:
+                        # Plan ONCE at the turn's first MAIN and hold it (M11 fix
+                        # 2026-07-17): training plan rows exist only at first-MAIN
+                        # states — replanning every MAIN is off-distribution for
+                        # the head AND flip-flops the plan mid-turn (measured:
+                        # 0.278 vs 0.345 base at Rung 0 before this fix).
+                        cands = enumerate_plans(obs)
+                        mat = np.stack([encode_plan(c) for c in cands]
+                                       ).astype(np.float32)
+                        idx = m3.act_plan(sc, sids, mat)      # argmax at eval
+                        pstate.update(key=key, vec=mat[idx].copy())
+                    plan = (pstate["vec"] if pstate["key"] == key
+                            else np.zeros(PLAN_DIM, np.float32))
                 pairs = [enc_opt(o, obs) for o in obs.select.option]
                 opts = np.stack([n for n, _ in pairs]).astype(np.float32)
                 oids = np.stack([i for _, i in pairs])
@@ -585,6 +729,8 @@ def make_pilot(spec: OpponentSpec, instance: str):
                                     len(obs.select.option), greedy=True)
                     ranked = apply_attach_overrides(obs, ranked, attach_fixes)
                     ranked = apply_play_overrides(obs, ranked, attach_fixes)
+                    if vveto is not None:
+                        ranked = vveto(obs, ranked)
                     return ranked[:obs.select.maxCount]
                 return m3.act(sc, plan, sids, opts, oids,
                               obs.select.maxCount, greedy=True)

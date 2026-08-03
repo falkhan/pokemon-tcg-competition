@@ -13,6 +13,115 @@ rests on a hypothesis M40 tests rather than assumes.
 
 ---
 
+## 0. STATUS BOARD — updated 2026-08-03 (day 2)
+
+Execution diary: [M40.md](M40.md). Every number below is decoded there with its
+interval; this table is the index, not the evidence.
+
+### Day 2 — the phase-2 plan (forensics-driven; approved 08-03)
+
+| lane | status | result |
+|---|---|---|
+| **Live forensics** (3 subs) | ✅ DONE | floor = **resolved live regression** (0.36, z=2.06); loss mass = grim/dragapult/rocket/garchomp ≈30% of games at 0.15 WR; `retain_b` retired |
+| **P0** collection-time G-14 | ✅ DONE | parity guard in collector, verified both directions (pkg arm fails 35/132) |
+| **P1** harvest+census+exports | ✅ DONE | snowball 800 eps → all 3 families cloneable at 1000+ band; `export_opp_deck.py` |
+| **P2** loss-family beds | ✅ DONE | `m40_bed_{dragapult,garchomp,rocket}_d1-3` (9 ckpts) |
+| **P3** positive control | ❌ **FAILED 4-for-4** | clones read 0.56-0.90 vs live 0.08-0.25; **composite wrap INERT vs us** (comp ≈ plain, grim+dragapult) |
+| **P4** re-pointed gate | ✅ DONE | 27-bed roster, live-mix from last 3 ships (coverage 83.2%), arm-2 rules pre-registered incl. held-outs |
+| **P5** S2 arm 2 | ✅ GATED | **2a KILLED** (−1.58pp z=−3.98); **2b NULL** (−0.63pp z=−1.60); both −6pp on the 900+ mirror (z=−5). Advantage > α on the same corpus, but neither beats control. Round 1 of the exhaustion clock |
+| **P6** ship-or-pivot | ⬜ **PIOTR** | offline levers all null/negative/invalid; recommendation + options in the 08-03 morning summary (diary + chat) |
+
+### M40b — the switch (decided 2026-08-03, plan in the session plan file + diary)
+
+Offline numbers are regression checks and mechanism probes ONLY; the ladder
+selects (read-n 45, replicates). Improvement operators: engineered priors →
+test-time value → live selection; full search-amplified loop deferred to M41.
+
+| track | status | result |
+|---|---|---|
+| **A** grim-clone probe | 🔄 gate running | ship live IFF weighted ≥0.55 (Piotr's bar); `model-pz` + `grim_live` |
+| **B** round-1 candidates | 🔄 battery resuming | ashguard (probe: ash window closed), hammer, tempo, top1000 (mirror-panel aligned) |
+| **C** value-guided veto | ⬜ C0 next | top-k afterstate re-rank by E0 critic; round-2 ship target |
+| round 2 | ⬜ | `gustdev` (needs new target-select override class) + live-favored combos |
+| endgame d9-13 | ⬜ | 3-4 replicates of the live leader; then accrual only |
+
+### Day 1 board (2026-08-02)
+
+| lane | phase | status | result |
+|---|---|---|---|
+| **S4.1 X0** accrual audit | — | ✅ **DONE** | Reads do **not** split (parallel is real), but subs DIE: lifetime min 36 / median 50 / **max 112**. n=150 unreachable |
+| **S4.2** floor ship | — | ❌ **LIVE REGRESSION** | 55185485 read DONE at n=47≥45: **0.36 wr, 659.7**, z=2.06 vs A+B's 0.54 — `retain_b` is live-negative (diary 08-03) |
+| **S4.3** replication ship | — | ⬜ not started | now the *only* route to n≥150 (X0) |
+| **S5** encoder v4 | walker | ✅ done | `iter_replay_prompts`; naive path corrupts 1.02% of rows |
+| | fidelity probe | ✅ **PASS** | **100.0000%** over 3,902 prompts — the pre-registered gate |
+| | re-encode | ✅ done | `bc_m38_w9294_v4`, 17,035 rows; `build --v4` |
+| | fine-tune + gate | ❌ **KILLED** | vs **matched** control **+0.04pp z=0.08**; full panel **+0.18pp z=0.36**. Encoder is NEUTRAL |
+| **S6** plan-head | token | ✅ done | `planzero`, 4 serve sites (plan said 3) |
+| | mechanism | ✅ proven | 0 plan-head runs; defect surface **35% of served prompts** |
+| | battery | ✅ **NULL ×2** | cont3 +0.43pp z=0.91; retain_b +0.80pp z=1.72 |
+| | decision | ✅ **ADOPTED** | pre-registered null branch → serve plan=0. Ships with the next net |
+| **G-14** | check 6 | ✅ **LANDED + GREEN** | failed on the live ship, now `ALL TIER-1 CHECKS PASS` |
+| **S3.1** non-mirror ceiling | panel | ✅ done | topgrim d1/d2/d3 built |
+| **S3.2 X5** compression | — | ✅ **H-A CONFIRMED** | retention **0.20**, CI **[0.07, 0.33]** — plan asserted 0.33–0.50 |
+| **S3.3** composites | budget | ✅ done | per-spec `solved:…:<nodes>:<ms>`, verified by instrumentation |
+| | composite > clone | ✅ **YES** | **+125 ELO** [+90, +163] — **2.6×** the entire band range |
+| | composite panel | ⬜ not run | ~10× cost: 3–4 h/arm, overnight job |
+| **S2.1 E0** value net | — | ✅ **PASS** | loss-family matched-pair **0.642** (bar 0.62); **68%** within-game variance |
+| **S2.2** exploration | — | ✅ done | τ=0.6 → agreement **0.805** vs M39's 0.935. Collector is **resumable** |
+| **S2.3** opponent diversity | — | ⚠️ **too narrow** | gate exposed overfit: pool beds +, non-pool beds − |
+| **S2** arm 1 | gate | ⚪ **NULL** | +0.09pp z=0.19 — but two real effects **cancelling**, not nothing |
+| **S1** solver on the pilot | — | ❌ rejected (unchanged) | and **vindicated**: same solver is the best OPPONENT lever we have |
+
+### §1's question is ANSWERED, and against both hypotheses
+
+**Neither H-A nor H-B survives as stated, and H-A subsumes H-B.** X5 measured
+clone retention at **0.20 [0.07, 0.33]** — the plan asserted 0.33–0.50, so
+compression is *worse* than assumed. Consequences, all evidenced in the diary:
+
+- a "1000+" bed is an **~800-band opponent**; the 900+ mirror bed is dominated
+  by **deck symmetry** (≈0.5 by construction), not band;
+- **the campaign has no working high-band instrument and never has.** Every
+  "we play the N-band to X" claim in the record — including M39's 0.532 that
+  redirected slot 3 — measures one of those two artifacts;
+- **bed ABSOLUTES are formally void as band claims. Gate DELTAS survive**
+  (same fixed draw both arms, so construction cancels), which is why the S5,
+  S6 and S2 verdicts above stand.
+
+### NEXT STEPS, ranked
+
+1. **Widen the S2 pool and re-run arm 2.** The clearest defect on the board and
+   the cheapest fix: add mirror/m28, dragapult, iono and the **composites** so
+   the corpus stops being a wall/grim/arch specialist. Collector is resumable,
+   ~7 min/pass.
+2. **S2 advantage arm off the E0-validated head.** E0 passed *specifically* to
+   unblock this and it is still untouched — arm 1 used α on the outcome proxy.
+   Arm 1's null is a null for outcome-weighted self-play, not for
+   advantage-weighted self-play.
+3. **Composite ceiling panel** (overnight). After X5 this is the only route to
+   an opponent at the target band, and the only instrument that can make §4's
+   S2 kill readable.
+4. **Replication ship.** X0 makes it the sole mechanism for a decision-grade
+   live n; it was scoped as a noise measurement.
+5. **Re-draft §4's S2 kill.** As written it fires on "no arm moves the 900+
+   ceiling panel" — an instrument X5 just voided. It must be re-pointed at a
+   composite panel before it can decide anything.
+6. **Collection-time G-14.** A train/serve mismatch was re-introduced *by this
+   milestone's own new collector* six hours after S6 removed it from the serve
+   path. G-14 catches it at ship time; nothing catches it at collection time.
+
+### Standing caveat carried forward
+
+Four separate times today a brand-new measurement instrument produced a
+confident wrong answer before the code under test did — the S6 mechanism probe
+(counted the opponent's plan head), the S5 fidelity probe (compared four
+interleaved traces against one episode), G-14's v4 check (wrong one-hot offset,
+with a unit test that encoded the same misreading), and E0 (`state_ids=zeros`).
+One of them would have killed a lane outright. **Treat a decisive-looking
+negative from a new instrument as evidence about the instrument until it is
+shown sound on a positive control.**
+
+---
+
 ## 1. Why we are stuck — TWO hypotheses, not one
 
 The campaign's scores: M30/M35 **817**, M37 **736**, M38 **665**, M39 Ship A
@@ -79,7 +188,19 @@ lane from the same screen:
 **Instrument use is NOT rejected** — S3's `solved:` composites are exactly
 the "label/analysis instrument" role the stop-invest line preserves.
 
-### S5 — adopt the v4 encoder (opponent memory + bench threat) — HEADLINE
+### S5 — adopt the v4 encoder — HEADLINE — ❌ **KILLED 2026-08-02**
+
+> **OUTCOME.** Walker, `build --v4`, re-encode and the fidelity probe all
+> landed; the probe PASSED at 100.0000% over 3,902 prompts, so the vehicle
+> works and is permanent. The VALUE HYPOTHESIS is what failed: against a
+> *matched* v3 control (same seats, same recipe, only the encoding differs)
+> the v4 arm is **+0.04pp, z=0.08** in play and **0.664 vs 0.666** in-sample.
+> Full panel confirms: **+0.18pp, z=+0.36**. Bench-threat blindness was a
+> real defect and fixing it changed nothing measurable, so §S5's
+> "43% slow-setup sweep mass" mechanism story is NOT supported.
+> A v4 `retain_b` is not the next step either: corpus B was live-collected
+> at v3 and can only be RE-collected (~3,600 games + an arm redefinition).
+> Handed to M41 with the corpus already built, per the pre-registered kill.
 
 Unchanged in substance from v2: the live net is v3 and therefore blind to
 `OppMemory` (last-4 opponent played ids, last attacker, energy-attach
@@ -119,7 +240,19 @@ inside the `N_MEM` block, not a 5th id slot.
 **E3 (archetype classifier) stays unscoped until S5 is priced** — S5
 delivers the same information end-to-end with tested code.
 
-### S6 — plan-head train/serve mismatch — CHEAPEST LANE, decided end-state
+### S6 — plan-head train/serve mismatch — ✅ **DECIDED + ADOPTED 2026-08-02**
+
+> **OUTCOME.** `planzero` landed as a `SERVE_FIX_` token across **four**
+> serve sites (this plan said three — `rl/collector.py` carries a fourth).
+> Mechanism proven before the battery: 0 plan-head runs in the arm against a
+> control feeding a non-zero plan on **35% of its prompts** — the defect
+> surface, never previously measured. Battery NULL on both lineages
+> (cont3 +0.43pp z=0.91; retain_b +0.80pp z=1.72), firing the
+> **pre-registered null branch: serve plan=0 anyway**. Default fix string is
+> now `conserve,racemode2,racemode4,planzero`; it ships with the next NET
+> ship, not its own slot. NB the live floor 55185485 does NOT carry it.
+> Also: the n=200 screen that motivated the lane did NOT reproduce at
+> n=1200 — wall +6.0/m28 +5.0/top +4.5 all dissolved (G-12).
 
 Unchanged evidence: `plan_head`/`plan_enc` byte-identical since
 `m28_winners`; 100% of training rows since M24 at plan=0
@@ -151,7 +284,19 @@ Battery design: full G-13 panel roster, n=1200/draw + 900+ ceiling panel,
 run on **both** `cont3` and `retain_b` (the floor net — a result that holds
 only on one lineage is not a serving decision).
 
-### S2 — self-play iteration — FULL LANE IN M40 (Piotr, 2026-08-02)
+### S2 — self-play iteration — 🔄 **IN PROGRESS: E0 passed, arm 1 null**
+
+> **STATUS.** Step 1 **E0 PASSED** — and it is an EVALUATION job, not a
+> training one: `plan_iter.py:1066` already trains a value head on `results`
+> incl. loser rows in every BC run. Loss-family matched-pair **0.642**
+> (bar 0.62), **68%** of variance WITHIN games, so there is per-decision
+> signal the outcome proxy cannot represent. Step 2 **done**: the collector
+> is RESUMABLE by chunk and samples from the policy (τ), giving agreement
+> **0.805** vs M39's 0.935 — the collection kill did not fire. Step 3
+> **too narrow**: arm 1's gate is flat overall (+0.09pp z=0.19) because
+> pool beds rose and non-pool beds fell — opponent-distribution overfit,
+> the exact risk this section names. **Arm 1 used α on the OUTCOME proxy,
+> not the value head, so the branch E0 unblocked is still untried.**
 
 Piotr's call: run the whole lane this milestone, in parallel with the
 structural lanes, accepting the split focus. Order inside the lane is
@@ -180,7 +325,17 @@ inside one milestone; the burden it must clear is a corpus that moves the
 **900+ ceiling panel**, which five imitation arms could not. Online PPO
 stays parked (327M env steps).
 
-### S3 — instruments above the clone ceiling + the compression error bar
+### S3 — instruments above the clone ceiling — ✅ **VERDICT DELIVERED**
+
+> **OUTCOME.** X5 measured retention at **0.20, CI [0.07, 0.33]** against
+> this plan's asserted 0.33–0.50, so compression is WORSE than assumed and
+> D1's 0.623 keystone falls OUTSIDE the panel CI (draw variance is 2.8×
+> sampling variance — G-13 applies to compression too). Both ceiling beds
+> are void as band claims: the mirror one is deck SYMMETRY, the non-mirror
+> one is an ~800-band opponent. **Composites work**: +125 ELO [+90, +163]
+> over the clone they wrap, **2.6×** the entire harvestable band range, and
+> the only remaining route to a target-band opponent. Per-spec solver budget
+> shipped. Composite PANEL still to run (~10× cost, overnight).
 
 Prerequisite for reading S2 (and §1) honestly. Three deliverables:
 
@@ -203,7 +358,17 @@ Pre-registered readings (unchanged from v2): gap re-opens vs composites →
 H-A confirmed, every historical bed absolute gets an asterisk; gap holds →
 H-B or honest beds, and the 0-6 needs a different explanation.
 
-### S4 — the ladder as the high-band instrument
+### S4 — the ladder as the high-band instrument — 🔄 **X0 done, floor SHIPPED**
+
+> **OUTCOME.** X0 answered both halves. Accrual does **not** split — an
+> age-controlled day-0 burst test gives ratio 0.95 against 0.20 under a hard
+> split — so parallel reads are real and §4's kill does not fire. But
+> submissions **die**: ~40-game day-0 burst decaying to zero over 2–4 days,
+> lifetime min 36 / median 50 / **max 112**, verified against the LIVE API on
+> four dead subs. **n=150 has never been reached**, so G-10's declared
+> read-n was an unreachable bar; read-n for the floor is **45** (Piotr).
+> The route to a decision-grade n is **replication**, not patience — which
+> re-frames §S4.3 from a noise measurement into the only mechanism there is.
 
 The slot correction (§3) makes the ladder usable: 5 slots/day, ~210 to
 deadline, and **read bandwidth** (games/day toward a declared n) is the

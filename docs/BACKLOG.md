@@ -208,6 +208,58 @@ self-play become the M40 agenda rather than more harvesting.
    run on ≤340k rows collapsed (M38 scratch/fresh both killed) — parked
    until a self-play-scale corpus exists (#2 could generate one).
 
+9. **AlphaZero-style self-learning over a card pool** (scoped 2026-08-03).
+   *The premise is now measured, not assumed.* M40 S3: wrapping the net in
+   the solver is worth **+125 ELO [+90, +163]** over the same net unwrapped —
+   a policy-improvement operator, which is AZ's entire thesis. M40 X5:
+   BC cloning retains only **0.20 [0.07, 0.33]** of demonstrator edge, so
+   imitation provably cannot reach the band. Together: the ceiling is real
+   and search is the lever that clears it.
+   *Blockers, hardest first:*
+   (a) **imperfect information** — hidden hand/prizes/deck order. Naive
+   determinized MCTS suffers strategy fusion (playing around a card it
+   cannot know); the sound fix is belief-state search, which is already
+   stop-invest below on compute grounds.
+   (b) **the engine is ONE global mutable `Battle` per process** — MCTS needs
+   cheap save/restore. `cg.api.search_begin/step/end` is the only hook and
+   is scoped to within-turn search; whether it supports re-descent from an
+   arbitrary node or only forward DFS decides a 10–50× constant.
+   (c) **no batched inference** — one observation per forward call today;
+   batching across workers is the single biggest speed lever (~10×).
+   (d) **the card pool is not AlphaZero at all.** AZ has one game; a pool is
+   a *family* of games indexed by deck pairs plus an outer deckbuilding
+   optimization → **PSRO / double oracle**, not AZ. The bed roster is
+   already a hand-maintained version of that population.
+   *Cost, from measured throughput:* a search-based self-play game costs
+   about a composite game (<0.67 games/s at 8 workers) ⇒ ~58k games/day;
+   small-game AZ convergence is 1e5–1e6 games ⇒ 2 days–1 month, ×
+   determinization count. Consumes a whole campaign; do not start one
+   inside a deadline.
+   *Already in place:* option-menu policy head (a working AZ policy head),
+   value head validated by E0 (0.642 matched-pair, 68% within-game
+   variance), `rl/mcts.py` priors+leaf, determinized search API, resumable
+   collector, trainer, panel gate.
+   *Missing:* batched inference, ISMCTS over prompt nodes, **visit-count
+   policy targets** (AZ trains on the visit distribution, not the argmax —
+   our collectors train on executed actions), replay buffer + iteration
+   loop, population management, and a gate that survives X5.
+
+10. **DISTIL THE SEARCH — the cheap 80% of #9, and the next thing to try.**
+   Collect a corpus whose labels are the **composite's** actions rather than
+   the bare net's, and fine-tune on it. That is AZ's inner loop run once:
+   no MCTS, no belief states, no engine work. `scripts/m40_s2_collect.py`
+   already does resumable collection against `solved:` arms — the change is
+   the arm, not the machinery, so this is hours not weeks.
+   *Why it is the right next probe:* it tests the ONE assumption #9 rests on
+   — that search output is learnable by our net at our scale. If distilling
+   a measured +125 ELO teacher does not move the gate, the full build
+   almost certainly would not either, and that is a day spent instead of a
+   month.
+   *Not in tension with the stop-invest below:* that line forbids SERVING
+   search at inference (latency, and the M22c/G5 evidence). This ships a
+   plain greedy net that was TRAINED on search output — inference cost
+   unchanged.
+
 ### Negative results adopted from the literature (stop-investing, cited)
 
 - **Deep equilibrium search lane (NFSP/CFR/ReBeL/Student of Games):**
@@ -224,6 +276,14 @@ self-play become the M40 agenda rather than more harvesting.
   CPU budgets (Showdown top-10% search-free; Rummy 580k-param net at
   0.33 ms/action beating a 2.4 s/action searcher). The solver stays a
   label/analysis instrument, not a pilot component.
+  **AMENDED 2026-08-03 (M40 S3):** this line is about SERVING search at
+  inference and stands unchanged. It does **not** cover search as a
+  *training signal* or as an *opponent*. Measured since it was written: the
+  solver adds **+125 ELO** to a bed it wraps — 2.6× the entire harvestable
+  demonstrator band range (X5) — and after X5 voided bed absolutes,
+  composites are the only route to a target-band opponent. So the same code
+  is correctly rejected pilot-side and is our strongest lever bed-side; see
+  #9/#10. M40's plan drew that boundary before the measurement existed.
 - **Decision Transformer:** the sweep's one live contradiction — DT-wins
   claims (arXiv 2305.14550) are directly rebutted at sparse rewards (arXiv
   2507.10174: filtered-BC MLPs match or beat DT at lower cost; "no regime

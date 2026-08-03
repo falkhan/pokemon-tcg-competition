@@ -243,7 +243,7 @@ _BOSS_ID = 1182       # Boss's Orders (rl/plan.GUST_IDS)
 def _play_worker(args: tuple) -> tuple:
     (worker_id, n_games, checkpoint, learn_deck_name, learn_decks, specs, weights,
      out_dir, seed, race_shaping, shaping, defect_penalty,
-     plan_tau, plan_dirichlet, plan_ppo, gust_boost) = args
+     plan_tau, plan_dirichlet, plan_ppo, gust_boost, plan_zero) = args
 
     import random
     import torch
@@ -315,7 +315,15 @@ def _play_worker(args: tuple) -> tuple:
                 num, sids = enc_state(obs.current, deck)
                 sc = np.concatenate([num, encode_context(obs.select.context)]).astype(np.float32)
             key = (obs.current.turn, obs.current.yourIndex)
-            if obs.select.context == SelectContext.MAIN and pstate["key"] != key:
+            if plan_zero:
+                # M40 S6: the fourth copy of this state machine. `planzero` is
+                # a SERVE fix (rl/plan.py O14) and the collector is a serve
+                # path too — an arm collected against a plan-conditioned pilot
+                # cannot evaluate a plan-zeroed one. Mutually exclusive with
+                # plan_tau/plan_ppo, which exist to explore and TRAIN the head
+                # (asserted in collect(), not here — this is the hot loop).
+                pass
+            elif obs.select.context == SelectContext.MAIN and pstate["key"] != key:
                 # Plan once at the turn's first MAIN, hold for submenus.
                 # M21: --plan-tau samples the plan (the aligned exploration
                 # axis — per-prompt option noise makes turns incoherent, the
@@ -346,8 +354,9 @@ def _play_worker(args: tuple) -> tuple:
                 else:
                     idx = learner.act_plan(sc, sids, mat)
                 pstate.update(key=key, vec=mat[idx].copy())
-            plan = (pstate["vec"] if pstate["key"] == key and pstate["vec"] is not None
-                    else np.zeros(PLAN_DIM, dtype=np.float32))
+            plan = (np.zeros(PLAN_DIM, dtype=np.float32) if plan_zero else
+                    (pstate["vec"] if pstate["key"] == key and pstate["vec"] is not None
+                     else np.zeros(PLAN_DIM, dtype=np.float32)))
             pairs = [enc_opt(o, obs) for o in obs.select.option]
             opts = np.stack([p[0] for p in pairs]).astype(np.float32)
             oids = np.stack([p[1] for p in pairs])
@@ -560,7 +569,8 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
             shaping: str = "race", defect_penalty: float = 0.0,
             plan_tau: float = 0.0, plan_dirichlet: float = 0.0,
             plan_ppo: bool = False,
-            gust_boost: float = 0.0) -> tuple[list[str], float]:
+            gust_boost: float = 0.0,
+            plan_zero: bool = False) -> tuple[list[str], float]:
     """Collect n_games across n_workers, learning policy vs an opponent pool.
 
     decks_file: population.json — the learner samples a deck per game from it
@@ -571,14 +581,21 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
     exploration (softmax temperature + AZ-style Dirichlet mix at the turn's
     first MAIN). plan_ppo (M21): record plan decisions (candidates, sampled
     index, tau=1 logprob) so rl/ppo.py can train the plan head.
+    plan_zero (M40 S6): serve the trunk a zero plan vector, the collector-side
+    twin of rl/plan.py's `planzero` SERVE fix. Mutually exclusive with
+    plan_tau/plan_ppo, which exist to explore and train the very head this
+    turns off.
     Returns (shard paths, defect rate per game)."""
+    if plan_zero and (plan_tau > 0 or plan_ppo):
+        raise ValueError("plan_zero cannot combine with plan_tau/plan_ppo — "
+                         "they explore and train the plan head this disables")
     out_dir.mkdir(parents=True, exist_ok=True)
     specs, weights = pool if pool is not None else default_pool(checkpoint, learn_deck)
     learn_decks = _load_population(decks_file) if decks_file else None
     per = [n_games // n_workers + (1 if i < n_games % n_workers else 0) for i in range(n_workers)]
     jobs = [(i, per[i], checkpoint, learn_deck, learn_decks, specs, weights,
              str(out_dir), 1000 + i, race_shaping, shaping, defect_penalty,
-             plan_tau, plan_dirichlet, plan_ppo, gust_boost)
+             plan_tau, plan_dirichlet, plan_ppo, gust_boost, plan_zero)
             for i in range(n_workers) if per[i] > 0]
 
     ctx = mp.get_context("spawn")
@@ -621,6 +638,9 @@ if __name__ == "__main__":
     p.add_argument("--gust-boost", type=float, default=0.0,
                    help="M21 B3: guided Boss-play exploration under committed "
                         "gust plans (mix probability; 0 = off)")
+    p.add_argument("--plan-zero", action="store_true",
+                   help="M40 S6: serve the trunk a zero plan vector (the "
+                        "collector twin of the `planzero` serve fix)")
     args = p.parse_args()
 
     pool_arg = (parse_pool(args.opponents, args.checkpoint, args.learn_deck)
@@ -635,6 +655,7 @@ if __name__ == "__main__":
                             plan_tau=args.plan_tau,
                             plan_dirichlet=args.plan_dirichlet,
                             plan_ppo=args.plan_ppo,
-                            gust_boost=args.gust_boost)
+                            gust_boost=args.gust_boost,
+                            plan_zero=args.plan_zero)
     dt = time.time() - t0
     print(f"{args.games} games in {dt:.0f}s ({3600 * args.games / dt:.0f} games/hr) -> {shards}")

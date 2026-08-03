@@ -12,10 +12,13 @@ import pytest
 pytest.importorskip("numpy")
 
 from cg.api import AreaType, OptionType, SelectContext
-from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_TELEPATH, FEZANDIPITI_ID,
-                     HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_BENCHFLOOR,
-                     PLAY_FIX_CONSERVE, PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
-                     PLAY_FIX_GUSTVETO, PLAY_FIX_POFFINFLOOR, PLAY_FIX_RACEMODE,
+from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_TELEPATH,
+                     ENHANCED_HAMMER_ID, FEZANDIPITI_ID,
+                     HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_ASHGUARD,
+                     PLAY_FIX_BENCHFLOOR, PLAY_FIX_CONSERVE,
+                     PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
+                     PLAY_FIX_GUSTVETO, PLAY_FIX_HAMMER,
+                     PLAY_FIX_POFFINFLOOR, PLAY_FIX_RACEMODE,
                      PLAY_FIX_RACEMODER, PLAY_FIX_TEMPO, SACRED_ASH_ID,
                      TELEPATH_ID, apply_attach_overrides, apply_play_overrides)
 
@@ -134,6 +137,46 @@ def test_o3_tempo_fires_only_on_end_pick():
     # model wants ATTACK -> untouched (tempo is an END backstop only)
     assert apply_play_overrides(obs, [2, 0, 1], fixes) == [2, 0, 1]
     # END pick but the playable card is not a tempo item -> untouched
+    obs2 = _obs(opts, hand=[NON_ENERGY])
+    assert apply_play_overrides(obs2, [0, 1, 2], fixes) == [0, 1, 2]
+
+
+def test_o15_ashguard_demotes_early_ash_only():
+    opts = [_opt(OptionType.PLAY, 0), _opt(OptionType.ATTACK),
+            _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_ASHGUARD})
+    # deck fat (>12) and the model wants the Ash play -> demoted below rest
+    fat = _obs(opts, hand=[SACRED_ASH_ID], deck_count=30)
+    assert apply_play_overrides(fat, [0, 1, 2], fixes) == [1, 2, 0]
+    # deck at/below the guard -> untouched (O5 ash owns the low regime)
+    low = _obs(opts, hand=[SACRED_ASH_ID], deck_count=12)
+    assert apply_play_overrides(low, [0, 1, 2], fixes) == [0, 1, 2]
+    # model didn't pick Ash -> untouched (demote only reorders the top pick)
+    assert apply_play_overrides(fat, [1, 0, 2], fixes) == [1, 0, 2]
+
+
+def test_o15_ashguard_composes_with_o5_into_a_window():
+    """ash+ashguard = play Sacred Ash in the deck 4-11 window the top band
+    uses: forced at <=10 (O5), forbidden-first at >12 (O15), free between."""
+    opts = [_opt(OptionType.PLAY, 0), _opt(OptionType.ATTACK),
+            _opt(OptionType.END)]
+    both = frozenset({PLAY_FIX_ASH, PLAY_FIX_ASHGUARD})
+    low = _obs(opts, hand=[SACRED_ASH_ID], deck_count=8)
+    assert apply_play_overrides(low, [1, 0, 2], both) == [0, 1, 2]  # promoted
+    fat = _obs(opts, hand=[SACRED_ASH_ID], deck_count=30)
+    assert apply_play_overrides(fat, [0, 1, 2], both) == [1, 2, 0]  # demoted
+
+
+def test_o16_hammer_fires_only_on_end_pick():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),
+            _opt(OptionType.ATTACK)]
+    obs = _obs(opts, hand=[ENHANCED_HAMMER_ID])
+    fixes = frozenset({PLAY_FIX_HAMMER})
+    # about to END with a hammer play on the menu -> hammer forced first
+    assert apply_play_overrides(obs, [0, 1, 2], fixes) == [1, 0, 2]
+    # model wants ATTACK -> untouched (END backstop only, like tempo)
+    assert apply_play_overrides(obs, [2, 0, 1], fixes) == [2, 0, 1]
+    # END pick but the playable card is not the hammer -> untouched
     obs2 = _obs(opts, hand=[NON_ENERGY])
     assert apply_play_overrides(obs2, [0, 1, 2], fixes) == [0, 1, 2]
 

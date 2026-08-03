@@ -59,29 +59,53 @@ REPLAY_DECK_BASE = 1000
 # ---------------------------------------------------------------------------
 # Decision iteration — the alignment rules, each failure a counted drop-reason
 # ---------------------------------------------------------------------------
-def iter_replay_decisions(steps: list, seat: int, drops: Counter):
-    """Yield (step_idx, obs_dict, action) for every prompt `seat` answered.
+def iter_replay_prompts(steps: list, seat: int, drops: Counter):
+    """Yield (step_idx, obs_dict, action, drop_reason) for EVERY own prompt.
 
-    LABEL_OUT_OF_RANGE is a converter-bug alarm, not a data blemish — the
-    audit gate hard-fails on it (a recorded answer that doesn't index its own
-    menu means our select<->action pairing is wrong).
+    M40 S5. The superset `iter_replay_decisions` filters, and the difference
+    matters for exactly one consumer: `rl.memory.OppMemory`. Its contract is
+    that `observe()` sees each own prompt's log window EXACTLY ONCE, and its
+    prefix-dedupe only cancels RE-DELIVERED events (the sub-prompt chain case)
+    — a window that is never delivered at all is lost permanently, and every
+    later feature for that seat is wrong. So a corpus builder that iterates
+    only labelled decisions cannot reconstruct memory faithfully, no matter
+    how few prompts it skips.
+
+    Measured over the 1972 cached episodes: 300,914 own prompts, 4,889 dropped
+    (3,944 step-0 deck prompts + 945 no_next_action), only 835 of them carrying
+    a non-empty log window — but because a dropped window poisons the rest of
+    that seat's game, **1.26% of encodable rows (3,732 / 296,025) carry a wrong
+    memory vector**, concentrated in 2.79% of episodes. Contamination is an
+    order of magnitude larger than the drop rate. That is the walker's whole
+    justification.
+
+    The ACTIVE-seat boundary is kept and is provably right, not a heuristic:
+    the kaggle interpreter refreshes `observation.logs` only for the ACTIVE
+    seat, so an INACTIVE step repeats a stale select AND stale logs — it is
+    not a prompt, and live never calls the agent there.
+
+    drop_reason is "" for a usable decision and the counted reason otherwise;
+    `action` is the parsed answer on the success path and None otherwise.
     """
     for i, step in enumerate(steps):
         st = step[seat] if seat < len(step) and isinstance(step[seat], dict) else None
         if st is None or st.get("status") != "ACTIVE":
-            continue  # INACTIVE seats repeat the last select — not a decision
+            continue  # INACTIVE seats repeat the last select — not a prompt
         obs = st.get("observation")
         sel = obs.get("select") if isinstance(obs, dict) else None
         cur = obs.get("current") if isinstance(obs, dict) else None
         if not sel or not isinstance(cur, dict) or not cur.get("players"):
             drops["blank_obs"] += 1  # step-0 deck prompt (select is None) lands here
+            yield i, obs, None, "blank_obs"
             continue
         options = sel.get("option") or []
         if not options:
             drops["empty_menu"] += 1
+            yield i, obs, None, "empty_menu"
             continue
         if not 0 <= int(sel.get("context", -1)) < N_CONTEXTS:
             drops["context_overflow"] += 1  # SelectContext beyond the one-hot head-room
+            yield i, obs, None, "context_overflow"
             continue
         nxt = (steps[i + 1][seat] if i + 1 < len(steps)
                and seat < len(steps[i + 1])
@@ -90,14 +114,33 @@ def iter_replay_decisions(steps: list, seat: int, drops: Counter):
         if not (isinstance(action, list) and action
                 and all(isinstance(a, (int, float)) for a in action)):
             drops["no_next_action"] += 1  # terminal select / timed-out answer
+            yield i, obs, None, "no_next_action"
             continue
         if len(action) == DECK_SIZE:
             drops["deck_return"] += 1  # the step-1 deck action
+            yield i, obs, None, "deck_return"
             continue
         if not 0 <= int(action[0]) < len(options):
             drops["LABEL_OUT_OF_RANGE"] += 1
+            yield i, obs, None, "LABEL_OUT_OF_RANGE"
             continue
-        yield i, obs, [int(a) for a in action]
+        yield i, obs, [int(a) for a in action], ""
+
+
+def iter_replay_decisions(steps: list, seat: int, drops: Counter):
+    """Yield (step_idx, obs_dict, action) for every prompt `seat` answered.
+
+    A thin filter over iter_replay_prompts (M40 S5). The drop taxonomy, its
+    evaluation order and the counters are unchanged, so `drops` is bit-identical
+    and all 13 existing call sites keep their exact behaviour.
+
+    LABEL_OUT_OF_RANGE is a converter-bug alarm, not a data blemish — the
+    audit gate hard-fails on it (a recorded answer that doesn't index its own
+    menu means our select<->action pairing is wrong).
+    """
+    for i, obs, action, reason in iter_replay_prompts(steps, seat, drops):
+        if not reason:
+            yield i, obs, action
 
 
 def encode_decisions(steps: list, seat: int, deck_ids: list[int],
@@ -117,6 +160,81 @@ def encode_decisions(steps: list, seat: int, deck_ids: list[int],
         obs = to_observation_class(obs_dict)
         state_num, state_ids = encode_state(obs.current, deck_ids)
         state_ctx = np.concatenate([state_num, encode_context(obs.select.context)])
+        pairs = [encode_option_v2(o, obs) for o in obs.select.option]
+        opts = np.stack([num for num, _ in pairs])
+        opt_ids = np.stack([ids for _, ids in pairs])
+        if contexts is not None:
+            contexts[int(obs.select.context)] += 1
+        rows.append((state_ctx, state_ids, opts, opt_ids, action[0]))
+    return rows
+
+
+def encode_decisions_v4(steps: list, seat: int, deck_ids: list[int],
+                        drops: Counter, contexts: Counter | None = None,
+                        mem_stats: Counter | None = None) -> list[tuple]:
+    """v4 twin of encode_decisions: encode_ctx_v4 over a walker-threaded
+    OppMemory (M40 S5).
+
+    Yields the SAME 5-tuple shape, so build()'s shard writer is untouched —
+    only the widths move (states 1361 -> 1702, state_ids 20 -> 25).
+
+    Two invariants, both transcribed from the live agent rather than invented:
+
+      - memory is observed on EVERY own prompt, including the ones
+        iter_replay_decisions drops, because a missed window is unrecoverable;
+      - the step-0 deck prompt (select is None) RESETS and is NOT observed —
+        submission/main.py returns the deck list before reaching
+        `_MEM.observe(obs)`, so observing it here would diverge from live at
+        prompt zero of every game. `select is None` occurs only at game start
+        and at done, so the rule can never clear a mid-game memory.
+
+    Rows are emitted only for usable decisions, so row counts and ordering
+    match encode_decisions exactly and a v4 rebuild is row-for-row comparable
+    with the v3 corpus it replaces.
+
+    No hand_aware parameter: encode_ctx_v4 always uses the hand-aware state
+    encoder, so v4 implies hand-aware by construction.
+    """
+    from rl.encoders import encode_ctx_v4
+    from rl.memory import OppMemory
+
+    mem = OppMemory()
+    last_turn = -1
+    rows = []
+    for _i, obs_dict, action, reason in iter_replay_prompts(steps, seat, drops):
+        sel = obs_dict.get("select") if isinstance(obs_dict, dict) else None
+        cur = obs_dict.get("current") if isinstance(obs_dict, dict) else None
+        if sel is None:
+            mem.reset()
+            last_turn = -1
+            if mem_stats is not None:
+                mem_stats["reset"] += 1
+            continue
+        if not isinstance(cur, dict) or "yourIndex" not in cur:
+            # Malformed record: OppMemory.observe would fault reading
+            # yourIndex. Never observed in the cached corpus; counted rather
+            # than swallowed so a future format change is visible.
+            if mem_stats is not None:
+                mem_stats["unobservable"] += 1
+            continue
+        turn = cur.get("turn", 0)
+        if turn < last_turn:                 # new game in one steps list
+            mem.reset()
+            if mem_stats is not None:
+                mem_stats["turn_drop_reset"] += 1
+        last_turn = turn
+        # Raw-dict observe: OppMemory._g supports both dicts and cg.api.Log,
+        # and this avoids to_observation_class on dropped prompts whose
+        # `current` may be unusable.
+        mem.observe(obs_dict)
+        if mem_stats is not None:
+            mem_stats["observed"] += 1
+            if reason:
+                mem_stats["observed_but_dropped"] += 1
+        if reason:
+            continue
+        obs = to_observation_class(obs_dict)
+        state_ctx, state_ids = encode_ctx_v4(obs, deck_ids, mem)
         pairs = [encode_option_v2(o, obs) for o in obs.select.option]
         opts = np.stack([num for num, _ in pairs])
         opt_ids = np.stack([ids for _, ids in pairs])
@@ -332,8 +450,13 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
           only_subs: set[int] | None = None,
           only_deck_hash: str | None = None,
           opp_deck_hash: tuple[str, ...] | None = None,
-          hand_aware: bool = False) -> None:
+          hand_aware: bool = False, v4: bool = False) -> None:
     """Encode qualifying replay seats into BC shards.
+
+    v4 (M40 S5): encode with encode_ctx_v4 over the full-prompt log walker
+    instead of encode_state_v* over labelled decisions only. Implies
+    hand-aware (encode_ctx_v4 has no board-only mode), so passing both is a
+    contradiction rather than a redundancy and is rejected.
 
     Shard schema = collect_games_v2 (rl/bc.py) + additive columns the trainer
     treats as optional: teacher_score (leaderboard score of the imitated
@@ -373,6 +496,10 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
     hand_aware (M25): encode state_ids with encode_state_v3 (board + own-hand
     ids) instead of encode_state_v2 (board only) — pair with `plan_iter train
     --init-v3h` to warm-start a hand-aware net from a legacy checkpoint."""
+    if v4 and hand_aware:
+        raise ValueError("--v4 implies hand-aware (encode_ctx_v4 has no "
+                         "board-only mode); passing both asserts a choice "
+                         "that does not exist")
     meta = _episode_meta()
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -384,6 +511,7 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
     registry: dict[str, int] = {}
     drops: Counter = Counter()
     skips: Counter = Counter()
+    mem_stats: Counter = Counter()   # M40 S5: the v4 walker census
     game_id = n_seats = n_decisions = 0
 
     def flush():
@@ -460,8 +588,11 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
                 skips["seat_not_winner"] += 1
                 continue
 
-            rows = encode_decisions(raw["steps"], seat, ep.decks[seat], drops,
-                                    hand_aware=hand_aware)
+            rows = (encode_decisions_v4(raw["steps"], seat, ep.decks[seat],
+                                        drops, mem_stats=mem_stats)
+                    if v4 else
+                    encode_decisions(raw["steps"], seat, ep.decks[seat], drops,
+                                     hand_aware=hand_aware))
             if not rows:
                 skips["seat_no_decisions"] += 1
                 continue
@@ -496,7 +627,12 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
         "params": {"min_score": min_score, "winners_only": winners_only,
                    "include_ours": include_ours, "min_steps": min_steps,
                    "only_subs": sorted(only_subs) if only_subs else None,
-                   "only_deck_hash": only_deck_hash, "hand_aware": hand_aware},
+                   "only_deck_hash": only_deck_hash, "hand_aware": hand_aware,
+                   # M40 S5 / G-14: the ONLY durable record of a shard dir's
+                   # encoder version. Without it, version is inferred from
+                   # states.shape[1], which is exactly what BCDatasetV3's pad
+                   # shim makes ambiguous.
+                   "v4": v4, "enc_ver": 4 if v4 else 3},
         "decks": [{"deck_idx": i, "hash": h}
                   for h, i in sorted(registry.items(), key=lambda kv: kv[1])],
     }, indent=2))
@@ -507,6 +643,13 @@ def build(out_dir: Path = DATA_DIR, min_score: float = 550.0,
         print(f"  skipped {reason:<22} {n}", flush=True)
     for reason, n in drops.most_common():
         print(f"  dropped {reason:<22} {n}", flush=True)
+    if v4:
+        # The walker census. `observed_but_dropped` is the number the whole
+        # lane exists for: prompts whose log window iter_replay_decisions
+        # would never have consumed, each of which poisons the rest of its
+        # seat's memory.
+        for k, n in mem_stats.most_common():
+            print(f"  memory {k:<23} {n}", flush=True)
     if drops["LABEL_OUT_OF_RANGE"]:
         raise SystemExit("LABEL_OUT_OF_RANGE > 0 — converter bug, shards suspect")
 
@@ -656,6 +799,11 @@ def _main() -> None:
     s.add_argument("--hand-aware", action="store_true",
                    help="M25: encode state_ids with encode_state_v3 (board + "
                         "own-hand ids) instead of encode_state_v2 (board only)")
+    s.add_argument("--v4", action="store_true",
+                   help="M40 S5: encode with encode_ctx_v4 (opponent memory + "
+                        "per-bench-slot threat) over the full-prompt log "
+                        "walker. 1702-wide states / 25 state ids. Implies "
+                        "hand-aware.")
 
     s = sub.add_parser("meta-eval", help="G4: candidate vs the frozen meta snapshot")
     s.add_argument("--a", required=True, help="matchrunner spec, e.g. model:<ckpt>:lucario")
@@ -684,7 +832,7 @@ def _main() -> None:
               opp_deck_hash=tuple(a.opp_deck_hash) if a.opp_deck_hash else None,
               shard_size=a.shard_size,
               only_subs=set(a.only_subs) if a.only_subs else None,
-              only_deck_hash=a.deck_hash, hand_aware=a.hand_aware)
+              only_deck_hash=a.deck_hash, hand_aware=a.hand_aware, v4=a.v4)
     elif a.cmd == "meta-eval":
         meta_eval(a.a, snapshot=a.snapshot, n=a.games, workers=a.workers,
                   seed=a.seed, checkpoint=a.checkpoint,
