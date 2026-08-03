@@ -288,6 +288,14 @@ OPTION_M28_DIM = OPTION_M27_DIM + N_OPTION_PHASE
 N_OPTION_ENERGY = 5
 OPTION_M41_DIM = OPTION_M28_DIM + N_OPTION_ENERGY
 MARGINAL_DAMAGE_SCALE = 60.0   # a big per-energy step; 30 is the modal one
+
+# M42 perception block — twin of rl/encoders.py (change BOTH). ATTACK 0-4,
+# ATTACH 5, CARD 6-8, PLAY 9. See that module for the measurements each slot
+# answers to.
+N_OPTION_PERCEPT = 10
+OPTION_M42_DIM = OPTION_M41_DIM + N_OPTION_PERCEPT
+EFFECTIVE_DAMAGE_SCALE = 300.0
+HAND_COST_SCALE = 40.0
 DECK_LOW_AT = 15.0
 _PLAY_KIND: dict[int, str] = {}
 
@@ -553,6 +561,125 @@ def marginal_energy_damage(pokemon, opponent_active) -> int:
     return max(0, best)
 
 
+def board_units(observation) -> dict:
+    """Live counts for rl.scaling.effective_damage — twin of
+    rl/encoders.py _board_units (change BOTH)."""
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    mine = [p for p in list(me.active or []) + list(me.bench or [])
+            if p is not None]
+    return {
+        "hand_size": len(me.hand or ()),
+        "bench_size": len([p for p in (me.bench or ()) if p is not None]),
+        "team_energy": sum(len(p.energies or ()) for p in mine),
+        "opp_bench_size": len([p for p in (opponent.bench or ())
+                               if p is not None]),
+        "opp_hand_size": opponent.handCount or 0,
+        "prizes_taken_us": max(0, 6 - len(opponent.prize or ())),
+        "prizes_taken_opp": max(0, 6 - len(me.prize or ())),
+    }
+
+
+def percept_attack(option, observation) -> np.ndarray:
+    """M42 slots 0-4 for an ATTACK option — twin of rl/encoders.py
+    _percept_attack (change BOTH)."""
+    from rl.scaling import SCALING_ATTACKS, effective_damage
+
+    vector = np.zeros(5, dtype=np.float32)
+    attack_id = getattr(option, "attackId", None)
+    if attack_id is None or attack_id not in ATTACKS:
+        return vector
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    attacker = me.active[0] if me.active and me.active[0] is not None else None
+    defender = (opponent.active[0]
+                if opponent.active and opponent.active[0] is not None else None)
+    if attacker is None or defender is None:
+        return vector
+    printed = ATTACKS[attack_id].damage
+    damage = effective_damage(attack_id, attacker, defender,
+                              **board_units(observation))
+    attack_type = CARDS.get(attacker.id, UNKNOWN_CARD).energy_type
+    defender_card = CARDS.get(defender.id, UNKNOWN_CARD)
+    if defender_card.weakness is not None \
+            and int(defender_card.weakness) == attack_type:
+        damage *= 2
+    elif defender_card.resistance is not None \
+            and int(defender_card.resistance) == attack_type:
+        damage = max(0, damage - 30)
+    entry = SCALING_ATTACKS.get(attack_id)
+    vector[0] = min(damage, EFFECTIVE_DAMAGE_SCALE) / EFFECTIVE_DAMAGE_SCALE
+    vector[1] = min(max(0, damage - printed),
+                    EFFECTIVE_DAMAGE_SCALE) / EFFECTIVE_DAMAGE_SCALE
+    vector[2] = float(entry is not None and entry[0] == "hand")
+    vector[3] = float(entry is not None)
+    vector[4] = float(damage >= (defender.hp or 0) > 0)
+    return vector
+
+
+def percept_attach_hand_cost(observation) -> float:
+    """M42 slot 5 — twin of rl/encoders.py _percept_attach_hand_cost."""
+    from rl.scaling import SCALING_ATTACKS
+
+    state = observation.current
+    me = state.players[state.yourIndex]
+    active = me.active[0] if me.active and me.active[0] is not None else None
+    if active is None:
+        return 0.0
+    per_unit = 0
+    for attack_id in CARDS.get(active.id, UNKNOWN_CARD).attack_ids:
+        entry = SCALING_ATTACKS.get(attack_id)
+        if entry is not None and entry[0] == "hand":
+            per_unit = max(per_unit, entry[1])
+    return min(per_unit, HAND_COST_SCALE) / HAND_COST_SCALE
+
+
+def percept_card(option, observation) -> np.ndarray:
+    """M42 slots 6-8 for a CARD option — twin of rl/encoders.py _percept_card."""
+    vector = np.zeros(3, dtype=np.float32)
+    state = observation.current
+    me = state.players[state.yourIndex]
+    bench = [p for p in (me.bench or ()) if p is not None]
+    hand = [c for c in (me.hand or ()) if c is not None]
+    vector[2] = min(len(bench) + sum(1 for c in hand
+                                     if CARDS.get(c.id, UNKNOWN_CARD).basic),
+                    6) / 6.0
+    if option.index is None:
+        return vector
+    area = option.area if option.area is not None else AreaType.HAND
+    if int(area) in (int(AreaType.ACTIVE), int(AreaType.BENCH)):
+        return vector                             # already in play: never dead
+    player_index = (option.playerIndex if option.playerIndex is not None
+                    else state.yourIndex)
+    card_id = card_id_at(observation, area, option.index, player_index)
+    basis = CARDS.get(card_id, UNKNOWN_CARD).evolves_from if card_id else None
+    if basis is None:
+        return vector
+    names = {CARDS.get(p.id, UNKNOWN_CARD).name
+             for p in ([*(me.active or []), *bench]) if p is not None}
+    names |= {CARDS.get(c.id, UNKNOWN_CARD).name for c in hand}
+    vector[0] = float(basis in names)
+    vector[1] = float(basis not in names)
+    return vector
+
+
+def percept_stadium(card_id, observation) -> float:
+    """M42 slot 9 — twin of rl/encoders.py _percept_stadium."""
+    if not card_id or play_kind().get(card_id) != "STADIUM":
+        return 0.0
+    state = observation.current
+    stadium = state.stadium or ()
+    if not stadium:
+        return 0.0
+    out = stadium[0]
+    owner = getattr(out, "playerIndex", None)
+    if owner is None or int(owner) == int(state.yourIndex):
+        return 0.0
+    return float(getattr(out, "id", None) != card_id)
+
+
 def attach_extra(option, observation) -> np.ndarray:
     """[target attached-energy/5, energy gap/5, saturated flag] — M19 twin of
     rl/encoders.py _attach_extra (change BOTH)."""
@@ -605,7 +732,7 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     identity and NUMBER counts; M19 adds ATTACH energy-sufficiency and
     RETREAT utility in the same 3 slots (mutually exclusive types).
     Pre-M16 checkpoints: encode_option_v2_legacy."""
-    numeric = np.zeros(OPTION_M41_DIM, dtype=np.float32)
+    numeric = np.zeros(OPTION_M42_DIM, dtype=np.float32)
     numeric[:OPTION_DIM] = encode_option(option, observation)
     your_index = observation.current.yourIndex
     card_id = option.cardId
@@ -628,16 +755,23 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     if option.type == OptionType.ATTACK:
         numeric[OPTION_DIM:OPTION_DIM + 3] = attack_extra(option.attackId,
                                                           observation)
+        numeric[OPTION_M41_DIM:OPTION_M41_DIM + 5] = \
+            percept_attack(option, observation)
     elif option.type == OptionType.ATTACH and option.inPlayArea is not None:
         numeric[OPTION_DIM:OPTION_DIM + 3] = attach_extra(option, observation)
         numeric[OPTION_M28_DIM:OPTION_M41_DIM] = \
             attach_energy_ceiling(option, observation)
+        numeric[OPTION_M41_DIM + 5] = percept_attach_hand_cost(observation)
     elif option.type == OptionType.RETREAT:
         numeric[OPTION_DIM:OPTION_DIM + 3] = retreat_extra(observation)
     elif getattr(option, "number", None) is not None:
         numeric[OPTION_DIM + 3] = min(float(option.number), 10.0) / 10.0
+    if option.type == OptionType.CARD:
+        numeric[OPTION_M41_DIM + 6:OPTION_M41_DIM + 9] = \
+            percept_card(option, observation)
     if option.type == OptionType.PLAY:
         numeric[OPTION_V3_DIM:OPTION_M27_DIM] = play_precondition(card_id, observation)
+        numeric[OPTION_M41_DIM + 9] = percept_stadium(card_id, observation)
     # bounded, not open-ended: the M41 energy block now sits after this one
     numeric[OPTION_M27_DIM:OPTION_M28_DIM] = phase_interaction(option, observation)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)

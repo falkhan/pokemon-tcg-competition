@@ -4,6 +4,8 @@ Both modules build their FEAT matrix from the real data/cards_features.parquet
 and their combat tables from the fake engine; every encoding must be
 bit-identical (np.array_equal, no tolerance).
 """
+from types import SimpleNamespace
+
 import pytest
 
 np = pytest.importorskip("numpy")
@@ -236,7 +238,7 @@ def test_encode_option_v2_parity_and_ids():
         a_num, a_ids = old.encode_option_v2(opt, obs)
         b_num, b_ids = new.encode_option_v2(opt, obs)
         assert np.array_equal(a_num, b_num) and np.array_equal(a_ids, b_ids)
-        assert a_num.shape == (old.OPTION_M41_DIM,)
+        assert a_num.shape == (old.OPTION_M42_DIM,)
         # the v1 prefix stays byte-identical (M16 block is additive)
         assert np.array_equal(a_num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.encode_option_v2(attach, obs)[1].tolist() == [0, 1]  # target = active card 1
@@ -475,11 +477,12 @@ def test_m27_block_is_additive_so_narrower_checkpoints_are_unaffected():
                       supporter_played=False)
     opt = option(OptionType.PLAY, area=AreaType.HAND, index=0)
     num, _ = old.encode_option_v2(opt, obs)
-    assert num.shape == (old.OPTION_M41_DIM,)
+    assert num.shape == (old.OPTION_M42_DIM,)
     assert np.array_equal(num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.OPTION_M27_DIM == old.OPTION_V3_DIM + old.N_OPTION_PLAY_PRE
     assert old.OPTION_M28_DIM == old.OPTION_M27_DIM + old.N_OPTION_PHASE
     assert old.OPTION_M41_DIM == old.OPTION_M28_DIM + old.N_OPTION_ENERGY
+    assert old.OPTION_M42_DIM == old.OPTION_M41_DIM + old.N_OPTION_PERCEPT
 
 
 def test_the_m41_energy_block_is_zero_on_every_non_attach_option():
@@ -507,3 +510,133 @@ def test_the_m41_energy_block_fires_on_an_attach():
     assert block[0] == 0.0                       # not dead: {F}{C} still unpaid
     assert block[1] == pytest.approx(1 / 5.0)    # one attach short of the best
     assert block[3] == 0.0                       # not an own-energy scaler
+
+
+# --- M42 perception block (105..114) ----------------------------------------
+# Every slot answers to a measured rate on the Alakazam NEURAL ship where the
+# rule pilot, same deck same opponent, scored 0.0% (docs/M42.md 2026-08-04).
+
+EVOLVED = 12         # fake_cg 'Stub Evolution', evolves from 11 by NAME
+BASIS = 11           # fake_cg 'Stub Basis'
+
+
+def _m42(mod, opt, obs):
+    num, _ = mod.encode_option_v2(opt, obs)
+    return num[mod.OPTION_M41_DIM:mod.OPTION_M42_DIM]
+
+
+def test_m42_block_is_zero_on_option_types_it_does_not_describe():
+    """A stray write would shift what these columns mean for the next corpus."""
+    me = player(active=pokemon(1), hand=[hand_card(7)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    for opt in (option(OptionType.END), option(OptionType.ABILITY),
+                option(OptionType.RETREAT)):
+        for mod in (old, new):
+            assert not _m42(mod, opt, obs).any(), opt.type
+
+
+def test_m42_attack_slots_report_printed_damage_for_a_flat_attacker():
+    """Stub attack 101 prints 50 and does not scale: effective == printed, so
+    the understatement slot is 0 and both scaling flags are off."""
+    me = player(active=pokemon(1, energies=[FIGHTING]))
+    obs = observation(me=me, opponent=player(active=pokemon(4, hp=300)))
+    opt = option(OptionType.ATTACK, attack_id=102)     # 120, no weakness on 4
+    for mod in (old, new):
+        block = _m42(mod, opt, obs)
+        assert block[0] == pytest.approx(120 / 300.0)
+        assert block[1] == 0.0        # printed is the whole story
+        assert block[2] == 0.0 and block[3] == 0.0
+        assert block[4] == 0.0        # 120 does not KO 300
+
+
+def test_m42_attack_slots_see_through_a_printed_zero_scaler(monkeypatch):
+    """The defect the block exists for: stub attack 103 prints 0, and the net
+    measured 330 of 330 prompts where the engine offered an attack our own
+    damage model scored at zero."""
+    import rl.scaling as sc
+    monkeypatch.setitem(sc.SCALING_ATTACKS, 103, ("hand", 20, 0))
+    me = player(active=pokemon(5), hand=[hand_card(7)] * 6)
+    obs = observation(me=me, opponent=player(active=pokemon(4, hp=100)))
+    opt = option(OptionType.ATTACK, attack_id=103)
+    for mod in (old, new):
+        block = _m42(mod, opt, obs)
+        assert block[0] == pytest.approx(120 / 300.0)   # 20 x 6 cards in hand
+        assert block[1] == pytest.approx(120 / 300.0)   # printed says 0
+        assert block[2] == 1.0        # scales on HAND specifically
+        assert block[3] == 1.0
+        assert block[4] == 1.0        # 120 >= 100: a KO the printed model missed
+
+
+def test_m42_attach_slot_prices_a_card_out_of_the_hand(monkeypatch):
+    """Piotr's observation as a number: the energy leaves the hand, so a
+    hand-scaler loses per_unit damage on the same turn. 440 damage forgone
+    across 29 surplus attaches, measured."""
+    import rl.scaling as sc
+    monkeypatch.setitem(sc.SCALING_ATTACKS, 103, ("hand", 20, 0))
+    opt = option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE, in_play_index=0)
+    scaler = observation(me=player(active=pokemon(5)),
+                         opponent=player(active=pokemon(2)))
+    flat = observation(me=player(active=pokemon(1)),
+                       opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        assert _m42(mod, opt, scaler)[5] == pytest.approx(20 / 40.0)
+        assert _m42(mod, opt, flat)[5] == 0.0      # silent on flat attackers
+
+
+def test_m42_card_slots_separate_a_live_evolution_from_a_dead_one():
+    """The search submenu, where the shipped agent has no coverage of any kind
+    (apply_play_overrides returns early off MAIN)."""
+    opt = option(OptionType.CARD, area=AreaType.HAND, index=0)
+    dead = observation(me=player(hand=[hand_card(EVOLVED)], active=pokemon(1)),
+                       opponent=player(active=pokemon(2)))
+    live = observation(me=player(hand=[hand_card(EVOLVED), hand_card(BASIS)],
+                                 active=pokemon(1)),
+                       opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        assert _m42(mod, opt, dead)[6] == 0.0 and _m42(mod, opt, dead)[7] == 1.0
+        assert _m42(mod, opt, live)[6] == 1.0 and _m42(mod, opt, live)[7] == 0.0
+
+
+def test_m42_card_slots_never_call_an_in_play_pokemon_dead():
+    """A benched Kadabra does not need an Abra — it is already evolved. Without
+    this, 14 of 19 measured 'dead evolutions' were false positives and a rule
+    written against them would have refused to promote after a KO."""
+    opt = option(OptionType.CARD, area=AreaType.BENCH, index=0)
+    obs = observation(me=player(active=pokemon(1), bench=[pokemon(EVOLVED)]),
+                      opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        block = _m42(mod, opt, obs)
+        assert block[6] == 0.0 and block[7] == 0.0
+
+
+def test_m42_card_slot_counts_what_we_can_actually_bench():
+    """Piotr's exact trigger is this slot reading 0."""
+    opt = option(OptionType.CARD, area=AreaType.HAND, index=0)
+    bare = observation(me=player(active=pokemon(1), hand=[hand_card(EVOLVED)]),
+                       opponent=player(active=pokemon(2)))
+    stocked = observation(me=player(active=pokemon(1), bench=[pokemon(1)],
+                                    hand=[hand_card(EVOLVED), hand_card(BASIS)]),
+                          opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        assert _m42(mod, opt, bare)[8] == 0.0
+        assert _m42(mod, opt, stocked)[8] == pytest.approx(2 / 6.0)
+
+
+def test_m42_stadium_slot_fires_only_on_the_opponents_stadium(monkeypatch):
+    """M27 column 95 says 'is a stadium AND none is in play', which is exactly
+    0 in the situation that matters. Ownership is readable off Card.playerIndex
+    (verified: 6 of our own plays, 0 wrong-seat)."""
+    opt = option(OptionType.PLAY, area=AreaType.HAND, index=0)
+    ours, theirs = 4, 5
+
+    def _obs(out_id, owner):
+        stadium = [SimpleNamespace(id=out_id, playerIndex=owner)]
+        return observation(me=player(active=pokemon(1), hand=[hand_card(ours)]),
+                           opponent=player(active=pokemon(2)), stadium=stadium)
+
+    for mod in (old, new):
+        _kind_patch(monkeypatch, mod, {ours: "STADIUM", theirs: "STADIUM"})
+        assert _m42(mod, opt, _obs(theirs, 1))[9] == 1.0   # displaces theirs
+        assert _m42(mod, opt, _obs(theirs, 0))[9] == 0.0   # it is ours already
+        # same-name replacement is illegal, so it is never the opportunity
+        assert _m42(mod, opt, _obs(ours, 1))[9] == 0.0

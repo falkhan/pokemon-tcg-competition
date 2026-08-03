@@ -1,0 +1,22 @@
+{
+  "n": 23409,
+  "files": 23,
+  "width": 105,
+  "by_type": {
+    "YES": 67,
+    "NO": 67,
+    "CARD": 8316,
+    "ATTACH": 3506,
+    "PLAY": 4376,
+    "END": 3124,
+    "RETREAT": 1306,
+    "ABILITY": 632,
+    "EVOLVE": 594,
+    "ATTACK": 1097,
+    "ENERGY": 111,
+    "TOOL_CARD": 10,
+    "NUMBER": 203
+  },
+  "digest": "64050ced46a05fc4ed1020170c8f880a",
+  "checksum": 2645967.0
+}
