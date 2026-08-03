@@ -268,7 +268,40 @@ def match_candidate(plan: Plan | None, cands: list) -> int:
 TELEPATH_ID = 19                  # Telepath Psychic Energy — card fact, id-pinned
 ATTACH_FIX_TELEPATH = "telepath"  # O1: prefer Telepath on contested attaches
 ATTACH_FIX_BACKSTOP = "backstop"  # O2: no turn ends with a legal attach unplayed
+# O19 (M42): do not attach onto a target one more energy cannot help. Named
+# and OFF, per the override law above and ARCHITECTURE.md:570 -- five prior
+# override-style arms measured below the 0.500 null, so this is a candidate for
+# the next gate, not a conclusion.
+ATTACH_FIX_DEADENERGY = "deadenergy"
 _TURN_ENDING = frozenset({OptionType.END, OptionType.ATTACK})
+
+
+def _dead_energy_target(opt, obs) -> bool:
+    """Is this ATTACH aimed at a Pokemon `energy_is_dead` already covers?
+
+    The predicate is `rl.combat.energy_is_dead`: every attack already
+    affordable, retreat already paid for, and nothing scaling on its own
+    energy. Deliberately DAMAGE-FREE -- M41 falsified two damage-based drafts
+    against live replays (Fezandipiti ex's Cruel Arrow prints 0 and keeps all
+    its damage in the effect text), and simulated as a hard mask over 316 live
+    games across six ships this version blocked 13-23% of attaches with ZERO
+    cases where an attack or a retreat later needed energy above the cap.
+    """
+    from rl.combat import energy_is_dead
+
+    if opt.inPlayArea is None or opt.inPlayIndex is None:
+        return False
+    st = obs.current
+    me = st.players[st.yourIndex]
+    zone = {int(AreaType.ACTIVE): me.active,
+            int(AreaType.BENCH): me.bench}.get(int(opt.inPlayArea))
+    try:
+        target = zone[opt.inPlayIndex]
+    except (TypeError, IndexError):
+        return False
+    if target is None or getattr(target, "id", None) is None:
+        return False
+    return energy_is_dead(target.id, getattr(target, "energies", ()) or ())
 
 
 def _hand_card_id(opt, hand):
@@ -325,6 +358,17 @@ def apply_attach_overrides(obs, ranked: list, fixes: frozenset) -> list:
             and opts[ranked[0]].type in _TURN_ENDING):
         pick = attach_ranked[0]
     if pick is None or pick == ranked[0]:
+        # O19 `deadenergy` (M42): DEMOTE-only, and only when the model's own
+        # top pick is the dead attach -- the M30 demote pattern. The probe
+        # measured the Alakazam ship doing this on 29 of 297 offers (9.8%),
+        # 440 damage forgone, while the rule pilot on the identical deck and
+        # opponent did it 0.0% of the time (docs/M42.md). A promote is
+        # deliberately NOT offered: which target to feed instead is a
+        # judgement the net is better placed to make than a card-fact rule.
+        if (ATTACH_FIX_DEADENERGY in fixes and ranked
+                and opts[ranked[0]].type == OptionType.ATTACH
+                and _dead_energy_target(opts[ranked[0]], obs)):
+            return ranked[1:] + [ranked[0]]
         return ranked
     return [pick] + [i for i in ranked if i != pick]
 

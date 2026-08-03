@@ -169,6 +169,15 @@ _MODEL_FIX_KINDS = {
     #                battery's single variable vs `model-c-pkg` is the plan
     #                vector and nothing else.
     "model-pz": frozenset({"planzero"}),
+    # M42 O19 `deadenergy`, single-variable over the M40 Ship B package
+    # (conserve,racemode2,racemode4) — that is the Alakazam-lineage config the
+    # probe measured over-attaching 29 of 297 offers (9.8%, 440 damage
+    # forgone) while the rule pilot on the same deck did it 0.0% of the time.
+    # Pairs with `model-c-pkg` as the control.
+    "model-c-pkg-de": frozenset({"conserve", "racemode2", "racemode4",
+                                 "deadenergy"}),
+    # isolated mechanism cell, nothing else moving
+    "model-de": frozenset({"deadenergy"}),
     # M41 O18 `gustsnipe`, single-variable over model-pz — the ogerpon ship
     # candidate's config plus the one new rule, so the battery attributes it.
     "model-pz-snipe": frozenset({"planzero", "gustsnipe"}),

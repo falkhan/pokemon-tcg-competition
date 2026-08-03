@@ -1,0 +1,47 @@
+
+M42 perception probe: 20 games
+  arm model-c-pkg-de:checkpoints/m39_retain_b.pt:decks/alakazam_v2_h4.csv
+  opp model:checkpoints/m39_bc_grim.pt:grim_live
+
+  prompts answered         1377
+  ...MAIN                   852
+  ...fetch/promote          360
+
+  [over_attach]
+       309  (36.3% of prompts)  a dead-energy ATTACH target was offered
+       309                    ...and attaching was optional (declining was legal)
+        13  ( 4.2% of those)  ...and WE ATTACHED ONTO IT ANYWAY
+           damage forgone    200  — hand-scaling actives only: each surplus attach spends a card out of the damage formula
+              13  Alakazam
+
+  [hand_scaler_blind]
+       413  (48.5% of prompts)  our active carries a hand-scaling attack
+       319                    ...and OUR OWN damage model reads it as 0 with an ATTACK on the menu
+       319  (100.0% of those)  ...and the attack really was available — a prompt where 7 features read 0
+           of which we attacked anyway: 90 — the M41 617-of-617 signature (correct play through a dead feature)
+             319  Alakazam
+
+  [retreat_stranded]
+        59  ( 6.9% of prompts)  the active cannot pay its own retreat, a ready bench member waits
+        37                    ...and an ATTACH or RETREAT was on the menu to fix it
+         0  ( 0.0% of those)  ...and WE ENDED THE TURN in that state
+
+  [dead_basis_fetch]
+        52  (14.4% of prompts)  a menu offers an evolution whose basis is nowhere
+        26                    ...and a live (basis-less) Pokemon was on the same menu
+         7  (26.9% of those)  ...and WE TOOK THE DEAD EVOLUTION
+           strict (0 bench AND 0 basics in hand): 2 situations, 0 taken
+           where taken: KEEP 7 (fetch_value RAN and was outbid) / PROMOTE 0 (fetch_value never runs there)
+               7  Kadabra [KEEP]
+               2  Alakazam [KEEP]
+
+  [stadium_ignored]
+        26  (turns)             TURNS where a stadium PLAY was on the menu
+        12                    ...and the OPPONENT'S stadium was in play, so ours would remove it
+         4  (33.3% of those)  ...and THE TURN ENDED with theirs still out
+           our own stadium already out (not a defect): 0
+               4  Spikemuth Gym
+
+  foreign_target_opts         0  — no option addressed a foreign board through inPlayArea, so the encoders.py:207 target-resolution bug is latent, not live, on this pairing.
+
+  counters -> docs/m42/probe_neural_alakazam_de.json

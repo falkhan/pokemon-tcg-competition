@@ -11,8 +11,11 @@ import pytest
 
 pytest.importorskip("numpy")
 
-from cg.api import AreaType, OptionType, SelectContext
-from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_TELEPATH,
+from cg.api import AreaType, EnergyType, OptionType, SelectContext
+
+FIGHTING = EnergyType.FIGHTING
+from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_DEADENERGY,
+                     ATTACH_FIX_TELEPATH,
                      ENHANCED_HAMMER_ID, FEZANDIPITI_ID,
                      HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_ASHGUARD,
                      PLAY_FIX_BENCHFLOOR, PLAY_FIX_CONSERVE,
@@ -796,3 +799,89 @@ def test_matchrunner_spec_kinds_parse():
         spec = parse_spec(f"{kind}:checkpoints/x.pt:clone54618168")
         assert spec == (kind, "checkpoints/x.pt", "clone54618168")
         assert spec_deck(spec) == "clone54618168"
+
+
+# --- M42 O19 `deadenergy` (apply_attach_overrides) --------------------------
+# Measured before it was written: the Alakazam ship attaches onto a target
+# `energy_is_dead` already covers on 29 of 297 offers (9.8%), 440 damage
+# forgone, while the rule pilot on the identical deck and opponent does it
+# 0.0% of the time (docs/M42.md 2026-08-04).
+
+def _attach_opt(in_play_area=AreaType.ACTIVE, in_play_index=0, index=0):
+    o = _opt(OptionType.ATTACH, index=index)
+    o.inPlayArea = in_play_area
+    o.inPlayIndex = in_play_index
+    return o
+
+
+def _dead_obs(active_energies, options=None, **kw):
+    """fake_cg card 1 holds attacks {F} and {F}{C}: at two energies every
+    attack is affordable and the retreat cost is 0, so it is DEAD."""
+    opts = options if options is not None else [_attach_opt(),
+                                                _opt(OptionType.END)]
+    return _obs(opts, hand=[BASIC_P],
+                active=[SimpleNamespace(id=1, energies=list(active_energies))],
+                **kw)
+
+
+def test_o19_demotes_an_attach_onto_a_dead_target():
+    fixes = frozenset({ATTACH_FIX_DEADENERGY})
+    dead = _dead_obs([FIGHTING, FIGHTING])
+    assert apply_attach_overrides(dead, [0, 1], fixes) == [1, 0]
+
+
+def test_o19_guards():
+    fixes = frozenset({ATTACH_FIX_DEADENERGY})
+    # one energy short of paying {F}{C}: NOT dead, so nothing moves
+    assert apply_attach_overrides(_dead_obs([FIGHTING]), [0, 1], fixes) == [0, 1]
+    # the dead attach is not the model's top pick -> demote-only, no action
+    assert apply_attach_overrides(_dead_obs([FIGHTING, FIGHTING]),
+                                  [1, 0], fixes) == [1, 0]
+    # OFF by default: an unnamed arm must never act
+    assert apply_attach_overrides(_dead_obs([FIGHTING, FIGHTING]),
+                                  [0, 1], frozenset()) == [0, 1]
+    # non-MAIN contexts are not ours to touch
+    off_main = _dead_obs([FIGHTING, FIGHTING], context=SelectContext.TO_HAND)
+    assert apply_attach_overrides(off_main, [0, 1], fixes) == [0, 1]
+    # the manual attach is already spent this turn
+    spent = _dead_obs([FIGHTING, FIGHTING], energy_attached=True)
+    assert apply_attach_overrides(spent, [0, 1], fixes) == [0, 1]
+    # a non-ATTACH top pick is never demoted
+    play_first = _dead_obs([FIGHTING, FIGHTING],
+                           options=[_opt(OptionType.PLAY, index=0),
+                                    _attach_opt(index=0)])
+    assert apply_attach_overrides(play_first, [0, 1], fixes) == [0, 1]
+
+
+def test_o19_exempts_own_energy_scalers(monkeypatch):
+    """The M41 exemption, inherited through energy_is_dead: an attacker whose
+    damage grows with its own attached energy has no ceiling, so "charged" is
+    never "saturated". Ogerpon at 7 energy is correct play, not a defect."""
+    import rl.combat as rc
+    monkeypatch.setattr(rc, "OWN_ENERGY_SCALERS", frozenset({101}))
+    fixes = frozenset({ATTACH_FIX_DEADENERGY})
+    assert apply_attach_overrides(_dead_obs([FIGHTING] * 5), [0, 1], fixes) \
+        == [0, 1]
+
+
+def test_o19_composes_with_backstop_without_fighting_it():
+    """O2 promotes an attach when the model is about to end the turn; O19 must
+    not then demote the very option O2 just promoted."""
+    fixes = frozenset({ATTACH_FIX_DEADENERGY, ATTACH_FIX_BACKSTOP})
+    dead = _dead_obs([FIGHTING, FIGHTING],
+                     options=[_opt(OptionType.END), _attach_opt(index=0)])
+    # O2 fires first and wins: the promoted order is returned unchanged
+    assert apply_attach_overrides(dead, [0, 1], fixes) == [1, 0]
+
+
+def test_o19_is_absent_from_every_shipped_config():
+    """Inertness proof: no live fix string names it."""
+    from rl.matchrunner import _MODEL_FIX_KINDS
+    shipped = ("conserve,planzero,ash,ashguard",      # the M41 ogerpon ship
+               "conserve,racemode2,racemode4")        # the M40 Ship B package
+    for cfg in shipped:
+        assert ATTACH_FIX_DEADENERGY not in cfg.split(",")
+    # and it is reachable only through the two arms that name it
+    naming = {k for k, v in _MODEL_FIX_KINDS.items()
+              if ATTACH_FIX_DEADENERGY in v}
+    assert naming == {"model-c-pkg-de", "model-de"}
