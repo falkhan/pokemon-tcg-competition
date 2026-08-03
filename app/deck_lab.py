@@ -91,22 +91,54 @@ def _init_state() -> None:
     ss.setdefault("save_errors", [])
     ss.setdefault("save_ok", None)
     ss.setdefault("overwrite_target", None)   # set when Save hits an existing file
+    ss.setdefault("fill_note", None)
+
+
+def _set_count(cid: int, n: int) -> None:
+    """Write the deck AND the Deck tab's number_input for that card.
+
+    A keyed widget owns its value after first render, so mutating `deck` alone
+    leaves the input showing the old count — add a 14th copy from Browse and the
+    Deck tab still reads 13, then pushes 13 back the next time it is touched.
+    Assigning the widget key is legal here because callbacks run before widgets
+    re-render.
+    """
+    ss = st.session_state
+    if n > 0:
+        ss.deck[cid] = n
+    else:
+        ss.deck.pop(cid, None)
+    key = f"cnt_{cid}"
+    if key in ss:
+        ss[key] = n
+
+
+def _forget_counts() -> None:
+    """Drop every count widget — the next deck's cards are different cards."""
+    for key in [k for k in st.session_state if k.startswith("cnt_")]:
+        del st.session_state[key]
 
 
 def _add(cid: int, n: int = 1) -> None:
     ss = st.session_state
     cap = 60 if cp.cards()[cid]["is_basic_energy"] else dl.MAX_COPIES
-    ss.deck[cid] = min(cap, ss.deck.get(cid, 0) + n)
+    _set_count(cid, min(cap, ss.deck.get(cid, 0) + n))
     ss.active_card = cid
 
 
 def _remove(cid: int, n: int = 1) -> None:
+    _set_count(cid, st.session_state.deck.get(cid, 0) - n)
+
+
+def _fill_energy() -> None:
+    """Top the deck up to 60 with basic energy of its dominant type."""
     ss = st.session_state
-    left = ss.deck.get(cid, 0) - n
-    if left > 0:
-        ss.deck[cid] = left
-    else:
-        ss.deck.pop(cid, None)
+    filled, etype, n = dl.fill_with_energy(ss.deck)
+    if not n:
+        return
+    cid = dl.basic_energy_ids()[etype]
+    _set_count(cid, filled[cid])
+    ss.fill_note = f"added {n}x Basic {etype} Energy"
 
 
 def _sync_count(cid: int) -> None:
@@ -129,6 +161,7 @@ def _load() -> None:
     path = dict(dl.list_deck_files()).get(label)
     if path is None:
         return
+    _forget_counts()
     ss.deck = dl.load_counts(path)
     ss.deck_source = label
     ss.saved_path = None
@@ -143,6 +176,7 @@ def _load() -> None:
 def _new_deck() -> None:
     """Start an empty deck. Nothing touches disk until Save is pressed."""
     ss = st.session_state
+    _forget_counts()
     ss.deck = {}
     ss.deck_source = None
     ss.saved_path = None
@@ -161,6 +195,7 @@ def _on_mode_change() -> None:
 
 
 def _clear() -> None:
+    _forget_counts()
     st.session_state.deck = {}
     st.session_state.deck_source = None
     st.session_state.saved_path = None
@@ -254,6 +289,21 @@ with st.sidebar:
                                       key=lambda kv: -kv[1])[:4]]
         if types:
             st.caption(" ".join(f"{cp.energy_emoji(t)} {t}" for t in types))
+
+    short = dl.DECK_SIZE - n
+    fill_type = dl.dominant_energy(counts) if short > 0 else None
+    if fill_type:
+        st.button(f"🔋 Fill {short} slot{'s' if short != 1 else ''} with "
+                  f"{cp.energy_emoji(fill_type)} {fill_type}",
+                  on_click=_fill_energy, width="stretch",
+                  help="Basic energy of the type this deck's attacks most "
+                       "demand. Basic energy is exempt from the 4-copy rule.")
+    elif short > 0 and counts:
+        st.caption(f"{short} slots free — no basic energy matches this deck's "
+                   "attack costs yet")
+    if ss.fill_note:
+        st.caption(f"✅ {ss.fill_note}")
+        ss.fill_note = None
 
     st.button("💾 Save", on_click=_save, width="stretch", type="primary")
     for msg in ss.save_errors:
@@ -440,9 +490,13 @@ with tab_deck:
                 label = (f"{cp.card_icon(r)} {r['name_norm']} {badge}"
                          + (f"  `#{cid}`" if dup else ""))
                 c1.markdown(label)
+                # The key IS the value: seed it once, then `_set_count` keeps it
+                # in step. Passing `value=` as well makes Streamlit warn that it
+                # will be ignored, which it would be.
+                ss.setdefault(f"cnt_{cid}", counts[cid])
                 c2.number_input(
                     "copies", 0, 60 if r["is_basic_energy"] else dl.MAX_COPIES,
-                    value=counts[cid], key=f"cnt_{cid}", label_visibility="collapsed",
+                    key=f"cnt_{cid}", label_visibility="collapsed",
                     on_change=_sync_count, args=(cid,))
                 c3.button("✕", key=f"del_{cid}", on_click=_remove, args=(cid, 99))
                 if dup:

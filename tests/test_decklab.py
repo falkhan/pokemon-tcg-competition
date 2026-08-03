@@ -154,6 +154,82 @@ def test_empty_deck_summarizes_without_crashing():
     assert s.n_cards == 0 and s.kind_counts == {} and s.top_attackers == []
 
 
+# --- fill with energy ------------------------------------------------------
+
+def test_only_the_eight_printed_basic_energies_exist():
+    """There is no basic Colorless or Dragon energy, so those types can never
+    be the fill target however much the deck demands them."""
+    ids = dl.basic_energy_ids()
+    assert set(ids) == {"Grass", "Fire", "Water", "Lightning", "Psychic",
+                        "Fighting", "Darkness", "Metal"}
+    assert all(cid == cards()[cid]["energy_type_id"] for cid in ids.values())
+
+
+@pytest.mark.parametrize("deck,expected", [
+    ("decks/lucario.csv", "Fighting"),
+    ("decks/grim_live.csv", "Darkness"),
+    ("decks/alakazam_v2_h4.csv", "Psychic"),
+    ("decks/iono.csv", "Lightning"),
+    ("decks/archaludon.csv", "Metal"),
+    ("decks/kyogre.csv", "Water"),
+])
+def test_dominant_energy_recovers_what_the_deck_actually_runs(deck, expected):
+    """Strip a deck's energy entirely and the attack costs alone must lead back
+    to the type its author chose."""
+    ft = cards()
+    counts = {c: n for c, n in dl.load_counts(ROOT / deck).items()
+              if not ft[c]["is_basic_energy"]}
+    assert dl.dominant_energy(counts) == expected
+
+
+def test_fill_with_energy_completes_a_stripped_deck_legally():
+    ft = cards()
+    full = dl.load_counts(ROOT / "decks/lucario.csv")
+    stripped = {c: n for c, n in full.items() if not ft[c]["is_basic_energy"]}
+    filled, etype, added = dl.fill_with_energy(stripped)
+    assert etype == "Fighting"
+    assert added == dl.DECK_SIZE - dl.deck_size(stripped)
+    assert dl.deck_size(filled) == dl.DECK_SIZE
+    assert dl.legality(filled)[0]
+
+
+def test_fill_exceeds_the_four_copy_limit_because_energy_is_exempt():
+    ft = cards()
+    stripped = {c: n for c, n in dl.load_counts(ROOT / "decks/kyogre.csv").items()
+                if not ft[c]["is_basic_energy"]}
+    filled, _etype, added = dl.fill_with_energy(stripped)
+    assert added > dl.MAX_COPIES          # 35 for this deck
+    assert dl.legality(filled)[0]
+
+
+def test_fill_adds_to_an_existing_energy_stack():
+    counts = {_id_for("Mega Lucario ex"): 4, 6: 2}      # 6 = Basic {F} Energy
+    filled, etype, added = dl.fill_with_energy(counts)
+    assert etype == "Fighting"
+    assert filled[6] == 2 + added
+    assert dl.deck_size(filled) == dl.DECK_SIZE
+
+
+def test_fill_is_a_no_op_on_a_full_deck():
+    full = dl.load_counts(ROOT / "decks/lucario.csv")
+    filled, etype, added = dl.fill_with_energy(full)
+    assert (filled, etype, added) == (full, None, 0)
+
+
+def test_fill_is_a_no_op_when_no_type_can_be_inferred():
+    """An empty deck, or one whose attacks are all Colorless, has nothing to
+    infer from — returning silently beats inventing a type."""
+    filled, etype, added = dl.fill_with_energy({})
+    assert (etype, added) == (None, 0) and filled == {}
+
+
+def test_fill_does_not_mutate_the_input():
+    counts = {_id_for("Mega Lucario ex"): 4}
+    before = dict(counts)
+    dl.fill_with_energy(counts)
+    assert counts == before
+
+
 # --- file IO ---------------------------------------------------------------
 
 def test_save_deck_writes_a_loadable_file(tmp_path, monkeypatch):

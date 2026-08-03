@@ -169,6 +169,57 @@ def summarize(counts: DeckCounts) -> DeckSummary:
     )
 
 
+def basic_energy_ids() -> dict[str, int]:
+    """energy type name -> its Basic Energy card id.
+
+    Only the eight printed basic energies exist: there is no basic Colorless or
+    Dragon energy, so a deck whose demand is those types cannot be topped up
+    with a matching basic and `dominant_energy` will skip past them.
+    """
+    return {r["type_name"]: cid for cid, r in cards().items()
+            if r["is_basic_energy"] and r["type_name"]}
+
+
+def dominant_energy(counts: DeckCounts) -> str | None:
+    """The energy type this deck most needs, or None if nothing asks for one.
+
+    Attack DEMAND leads — it is what the deck must actually pay, weighted by
+    copies — and the Pokemon's own types are the fallback for a deck whose
+    attacks are all Colorless. Types with no printed basic energy are skipped
+    rather than silently mis-filled.
+    """
+    have_basic = basic_energy_ids()
+    s = summarize(counts)
+    for source in (s.energy_demand, s.pokemon_energy):
+        ranked = sorted(((t, n) for t, n in source.items() if t in have_basic),
+                        key=lambda kv: (-kv[1], kv[0]))
+        if ranked:
+            return ranked[0][0]
+    return None
+
+
+def fill_with_energy(counts: DeckCounts, *, energy_type: str | None = None,
+                     target: int = DECK_SIZE) -> tuple[DeckCounts, str | None, int]:
+    """Top the deck up to `target` with basic energy of its dominant type.
+
+    Returns (new counts, the type used, how many were added). Basic energy is
+    exempt from the 4-copy rule, so any shortfall can be covered. A no-op
+    returns the counts unchanged with 0 added.
+    """
+    short = target - deck_size(counts)
+    if short <= 0:
+        return dict(counts), None, 0
+    etype = energy_type or dominant_energy(counts)
+    if etype is None:
+        return dict(counts), None, 0
+    cid = basic_energy_ids().get(etype)
+    if cid is None:
+        return dict(counts), None, 0
+    out = dict(counts)
+    out[cid] = out.get(cid, 0) + short
+    return out, etype, short
+
+
 def evolution_notes(counts: DeckCounts) -> list[Note]:
     """Missing / inverted evolution lines, matched by NAME (see module docstring).
 
