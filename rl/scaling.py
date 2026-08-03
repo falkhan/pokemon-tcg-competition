@@ -111,3 +111,40 @@ def effective_damage(attack_id: int, attacker, defender, hand_size: int = 0,
 
 def is_scaling(attack_id: int) -> bool:
     return attack_id in SCALING_ATTACKS
+
+
+# A typical board, per mode, for ranking a card with NO board in hand. The
+# fetch / promote / discard ladders in generic_pilot ask "how good an attacker
+# is this card?" about cards in the DECK, where hand size and bench count are
+# not knowable. These are deliberately mid-game, conservative values: they only
+# have to put a scaling attacker in the right ORDER against flat ones, not
+# predict its damage.
+NOMINAL_UNITS = {
+    "flat": 0,
+    "hand": 8,          # measured mean hand at attack time is 17 (m41_scaling_probe)
+    "opp_nrg": 3,
+    "my_nrg": 3,
+    "both_nrg": 4,
+    "my_bench": 5,      # a full board
+    "bench_only": 4,    # a full bench
+    "team_nrg": 5,
+}
+
+
+def nominal_damage(attack_id: int) -> int:
+    """Context-free effective damage, for ranking cards you cannot see a board for.
+
+    Without this the ladders read PRINTED damage and rank every scaling
+    attacker last: Dipplin's `Do the Wave` at 0 loses to its own bench filler
+    Grookey at 30, and Alakazam at 0 loses to Kadabra at 30 and to a 90-damage
+    Dudunsparce. That is how the rule pilot came to fetch Thwackey over the
+    Applin its win condition evolves from.
+    """
+    printed = _ATK.get(attack_id, (0, ()))[0]
+    entry = SCALING_ATTACKS.get(attack_id)
+    if entry is None:
+        return printed
+    mode, per_unit, base = entry
+    if mode not in NOMINAL_UNITS:
+        raise ValueError(f"unknown scaling mode {mode!r} for attack {attack_id}")
+    return max(printed, base + per_unit * NOMINAL_UNITS[mode])

@@ -37,15 +37,27 @@ _TARGET_CTX  = {SelectContext.DAMAGE, SelectContext.DAMAGE_COUNTER,
                 SelectContext.DAMAGE_COUNTER_ANY, SelectContext.EFFECT_TARGET}  # hit opp
 
 
-def _attacker_quality(cid):
-    """Best raw attack damage a card can deal (0 if not an attacker)."""
+def _attacker_quality(cid, scaling: bool = False):
+    """Best attack damage a card can deal (0 if not an attacker).
+
+    `scaling` (M41, opt-in) reads rl/scaling.nominal_damage instead of the
+    PRINTED number. Every ladder below this one -- fetch, promote, discard,
+    attach-recipient -- ranks by it, and printed damage puts a scaling attacker
+    dead last: Dipplin's `Do the Wave` prints 0 and loses to its own bench
+    filler, Alakazam prints 0 and loses to Kadabra. That is a measured misplay,
+    not a hypothetical (docs/M41.md).
+    """
+    if scaling:
+        from rl.scaling import nominal_damage
+        return max((nominal_damage(a) for a in _CARD[cid][3] if a in _ATK),
+                   default=0)
     return max((_ATK[a][0] for a in _CARD[cid][3] if a in _ATK), default=0)
 
 
-def _card_usefulness(cid):
+def _card_usefulness(cid, scaling: bool = False):
     """How valuable a card is to KEEP / fetch: attackers > energy > other."""
     if cid in _IS_POKEMON:
-        return 300 + min(_attacker_quality(cid), 300)
+        return 300 + min(_attacker_quality(cid, scaling), 300)
     if cid in _IS_ENERGY:
         return 250
     return 120
@@ -63,7 +75,7 @@ def _my_pokemon_names(me, hand_pokemon):
             | {_NAME.get(c.id) for c in hand_pokemon}) - {None}
 
 
-def _hand_holds_keepers(me):
+def _hand_holds_keepers(me, scaling: bool = False):
     """Any hand Pokémon worth protecting from a hand-discard trainer: a basic,
     an evolution whose basis is in play or hand, or a hard hitter even while
     momentarily dead (the deck's win-condition class — kaggle ep 85467275
@@ -76,17 +88,17 @@ def _hand_holds_keepers(me):
         basis = _EVOLVES_FROM.get(c.id)
         if basis is not None and basis in basis_names:
             return True
-        if _attacker_quality(c.id) >= 100:   # HAND_DISCARD_PROTECT_QUALITY
+        if _attacker_quality(c.id, scaling) >= 100:  # HAND_DISCARD_PROTECT_QUALITY
             return True
     return False
 
 
-def _fetch_value(card, me):
+def _fetch_value(card, me, scaling: bool = False):
     """KEEP/fetch value with evolution-line awareness (M7.5): dead evolutions
     sink, basics rise while the bench is empty or their evolution waits in
     hand (kaggle ep 85469339: Poké Pad fetched a basis-less Hariyama twice
     over live basics; the benched-out loss followed)."""
-    base = _card_usefulness(card.id)
+    base = _card_usefulness(card.id, scaling)
     if card.id not in _IS_POKEMON:
         return base
     hand_pokemon = _pokemon_in_hand(me)
@@ -105,7 +117,7 @@ def _fetch_value(card, me):
     return base + bonus
 
 
-def _attach_recipient_value(card, me, op_active):
+def _attach_recipient_value(card, me, op_active, scaling: bool = False):
     """ATTACH_FROM: which of MY (usually benched) Pokémon receives an energy.
 
     Marginal value — the opposite of the promote ladder: a Pokémon whose best
@@ -131,7 +143,7 @@ def _attach_recipient_value(card, me, op_active):
     energy_gap = _turns_to_ready(profile, op_active, board_ids)
     if energy_gap == 0:
         return 50                          # ATTACH_RECIPIENT_CHARGED
-    quality = min(_attacker_quality(profile.id), 300)   # ATTACKER_QUALITY_CAP
+    quality = min(_attacker_quality(profile.id, scaling), 300)  # ATTACKER_QUALITY_CAP
     return 300 + quality - 50 * min(energy_gap - 1, 4)  # BASE - PENALTY*min(gap-1, CAP)
 
 
@@ -181,6 +193,7 @@ def score_option(o, obs, fixes: frozenset = frozenset()):
 
 def score_card(o, obs, fixes: frozenset = frozenset()):
     """Card-selection contexts (SETUP/SWITCH/TO_HAND/DISCARD/...) — no more coin flips."""
+    scaling = "scaling" in fixes
     st = obs.current
     op = st.players[1 - st.yourIndex]
     op_active = op.active[0] if op.active else None
@@ -191,9 +204,10 @@ def score_card(o, obs, fixes: frozenset = frozenset()):
         return 0
 
     if ctx == SelectContext.ATTACH_FROM:          # energy recipient: marginal value
-        return _attach_recipient_value(card, st.players[st.yourIndex], op_active)
+        return _attach_recipient_value(card, st.players[st.yourIndex], op_active,
+                                       scaling)
     if ctx in _PROMOTE_CTX:                       # start / promote / bench MY best attacker
-        q = _attacker_quality(card.id)
+        q = _attacker_quality(card.id, scaling)
         ready = 0                                 # bonus if it can attack right now
         if op_active is not None and hasattr(card, "energies") and _best_damage(card, op_active) > 0:
             ready = 500
@@ -201,9 +215,9 @@ def score_card(o, obs, fixes: frozenset = frozenset()):
         # attacker beats an equal-damage uncharged one, non-attackers sink.
         return q + ready - 50 * min(_turns_to_ready(card, op_active), 4)
     if ctx in _KEEP_CTX:                          # fetch/keep the most useful card
-        return _fetch_value(card, st.players[st.yourIndex])
+        return _fetch_value(card, st.players[st.yourIndex], scaling)
     if ctx in _DISCARD_CTX:                       # discard the LEAST useful
-        return -_card_usefulness(card.id)
+        return -_card_usefulness(card.id, scaling)
     if ctx in _TARGET_CTX:                        # damage the highest-prize opponent Pokémon
         prize_score = 100 * _CARD.get(card.id, (0, 0, 0, [], 1))[4]
         if ("gust" in fixes and ctx == SelectContext.EFFECT_TARGET
@@ -236,13 +250,19 @@ def _gust_has_better_target(me, op):
                for t in bench)
 
 
-def _op_board_harmless(op_active, op_bench=()):
+def _op_board_harmless(op_active, op_bench=(), scaling: bool = False):
     """CLOSE MODE predicate (M7.2b): every opponent board Pokémon has a KNOWN
-    card id and zero printed attack damage — they can never take a prize by KO.
-    Unknown ids count as threats (conservative: the floor-test case only)."""
+    card id and zero attack damage — they can never take a prize by KO.
+    Unknown ids count as threats (conservative: the floor-test case only).
+
+    `scaling` matters MOST here: on printed damage an opposing Alakazam or
+    Dipplin reads as 0 and the whole board is declared harmless, so the pilot
+    enters CLOSE MODE and races against a deck that is about to hit it for
+    200+. Reading nominal damage keeps those boards classified as threats."""
     board = ([op_active] if op_active is not None else [])
     board += [p for p in op_bench if p is not None]
-    return all(p.id in _CARD and _attacker_quality(p.id) == 0 for p in board)
+    return all(p.id in _CARD and _attacker_quality(p.id, scaling) == 0
+               for p in board)
 
 
 def score_attack(o, my_active, op_active, op_bench=(), scaling: bool = False,
@@ -272,7 +292,7 @@ def score_attack(o, my_active, op_active, op_bench=(), scaling: bool = False,
         # bench-attach / draw (<=2400) so we take the prize and end the turn instead of
         # over-developing — which draws cards and races us to deck-out (the self-deck bug).
         return 2500 + 50 * prize
-    if _op_board_harmless(op_active, op_bench):
+    if _op_board_harmless(op_active, op_bench, scaling):
         ## CLOSE MODE (M7.2b): the race is won — attack every turn instead of milling
         ## (the M6 floor-test self-deck fix; chip jumps above trainers <=2200).
         return 2300 + damage / 10
@@ -342,7 +362,7 @@ def score_play(o, obs, fixes: frozenset = frozenset()):
                                           # one return-KO end the game (basics in hand)
         return 2400                       # developing the board is always good
 
-    if card.id in _HAND_DISCARD_IDS and _hand_holds_keepers(me):
+    if card.id in _HAND_DISCARD_IDS and _hand_holds_keepers(me, "scaling" in fixes):
         if "handdiscard" in fixes:
             return -100                   # SCORE_HAND_DISCARD_REFUSED: below END — pass instead
         return 150                        # SCORE_HAND_DISCARD_BLOCKED: below near-deckout

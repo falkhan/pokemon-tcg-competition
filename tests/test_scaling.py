@@ -8,7 +8,8 @@ whole 1267-card pool and are readable without the engine, unlike `rl.combat`'s
 """
 import pytest
 
-from rl.scaling import SCALING_ATTACKS, effective_damage, is_scaling
+from rl.scaling import (NOMINAL_UNITS, SCALING_ATTACKS, effective_damage,
+                        is_scaling, nominal_damage)
 from tcg.cardpool import attacks_by_card, cards
 
 
@@ -168,3 +169,68 @@ def test_scaling_token_changes_the_score_on_the_real_pool():
     me, them = Mon(743, hp=140), Mon(648, energies=[7, 7], hp=320)
     assert score_attack(Opt(), me, them, scaling=True, hand_size=17) > \
         score_attack(Opt(), me, them)
+
+
+# --- the card ladders: fetch / promote / discard / CLOSE MODE ---------------
+
+def test_every_mode_has_a_nominal_unit_count():
+    for _aid, (mode, _per, _base) in SCALING_ATTACKS.items():
+        assert mode in NOMINAL_UNITS, mode
+
+
+def test_nominal_damage_leaves_flat_attacks_alone():
+    from rl.combat import _ATK
+    for aid, (printed, _cost) in _ATK.items():
+        if aid not in SCALING_ATTACKS:
+            assert nominal_damage(aid) == printed
+
+
+def _q(cid, scaling):
+    from rl.generic_pilot import _attacker_quality
+    return _attacker_quality(cid, scaling)
+
+
+def test_fetch_ladder_ranked_the_win_condition_below_its_own_bench_filler():
+    """The measured misplay: menu ['Applin','Thwackey','Dipplin'] -> Thwackey.
+    Dipplin's Do the Wave prints 0, so the deck's win condition scored under
+    Grookey (30) and Thwackey (50)."""
+    from rl.combat import _CARD
+    if 93 not in _CARD:
+        pytest.skip("needs the real card pool")
+    assert _q(93, False) < _q(90, False)      # Dipplin  < Thwackey  (printed)
+    assert _q(93, True) > _q(90, True)        # Dipplin  > Thwackey  (scaling)
+
+
+def test_our_own_win_condition_outranks_its_pre_evolution_only_with_scaling():
+    from rl.combat import _CARD
+    if 743 not in _CARD:
+        pytest.skip("needs the real card pool")
+    kadabra = next(cid for cid, r in cards().items() if r["name_norm"] == "Kadabra")
+    assert _q(743, False) < _q(kadabra, False)
+    assert _q(743, True) > _q(kadabra, True)
+
+
+def test_close_mode_no_longer_calls_a_scaling_board_harmless():
+    """`_op_board_harmless` decides whether to stop developing and race. On
+    printed damage a lone Alakazam or Dipplin reads as harmless."""
+    from rl.combat import _CARD
+    if 743 not in _CARD:
+        pytest.skip("needs the real card pool")
+    from rl.generic_pilot import _op_board_harmless
+
+    class P:
+        def __init__(self, i):
+            self.id = i
+
+    for cid in (743, 93):
+        assert _op_board_harmless(P(cid), []) is True
+        assert _op_board_harmless(P(cid), [], True) is False
+
+
+def test_ladders_are_untouched_when_scaling_is_off():
+    """Default-off is what keeps the shipped pilot byte-identical."""
+    from rl.combat import _ATK, _CARD
+    from rl.generic_pilot import _attacker_quality
+    for cid in list(_CARD)[:120]:
+        printed = max((_ATK[a][0] for a in _CARD[cid][3] if a in _ATK), default=0)
+        assert _attacker_quality(cid) == printed
