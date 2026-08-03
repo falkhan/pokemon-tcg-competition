@@ -37,6 +37,7 @@ import gzip
 import hashlib
 import json
 import re
+import sys
 import time
 from collections import Counter
 from pathlib import Path
@@ -97,6 +98,17 @@ def deck_hash(ids: list[int]) -> str:
 def _write_deck_csv(path: Path, ids: list[int]) -> None:
     """decks/*.csv format: one card id per line, no header."""
     path.write_text("\n".join(str(i) for i in ids) + "\n")
+
+
+def console_safe(text) -> str:
+    """Text that survives `print` on this console.
+
+    Kaggle team names and card names are user-supplied and routinely non-ASCII;
+    Windows defaults stdout to cp1252, where a bare print raises
+    UnicodeEncodeError and kills the run mid-listing.
+    """
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    return str(text).encode(enc, "replace").decode(enc, "replace")
 
 
 # ---------------------------------------------------------------------------
@@ -360,17 +372,45 @@ def targets(top_k: int = 30, min_score: float = 600.0, exclude=()) -> list[int]:
     return subs
 
 
-def leaderboard(top: int = 50) -> list[dict]:
+LEADERBOARD_PAGE = 200  # server caps a page well below this; the loop handles it
+
+
+def leaderboard(top: int = 50, quiet: bool = False) -> list[dict]:
     """Top leaderboard teams via the authenticated Kaggle client (M10 harvest
-    targeting). Returns [{team_id, team_name, score}] best-first and prints a
-    ready-to-paste `refresh --teams ...` line. Field names vary across kaggle
-    package versions — extracted best-effort with a loud failure."""
+    targeting). Returns [{team_id, team_name, score, submission_date}] best-first
+    and prints a ready-to-paste `refresh --teams ...` line. Field names vary across
+    kaggle package versions — extracted best-effort with a loud failure.
+
+    Paginated: `competition_leaderboard_view` defaults to page_size=20 and only
+    PRINTS its next-page token, so this walks the kagglesdk client directly (the
+    same channel `_default_fetcher` uses for replays) and follows the token until
+    `top` rows are collected. Before this, `leaderboard(250)` silently returned 20.
+
+    Leaderboard entries carry NO submission id — map team_id -> submission via the
+    team_id_* columns of episodes.parquet (see scripts/leaderboard_decks.py).
+    """
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi
+        from kagglesdk.competitions.types.competition_api_service import (
+            ApiGetLeaderboardRequest,
+        )
 
         api = KaggleApi()
         api.authenticate()
-        entries = api.competition_leaderboard_view(COMPETITION)
+        entries, token = [], None
+        with api.build_kaggle_client() as kaggle:
+            while len(entries) < top:
+                request = ApiGetLeaderboardRequest()
+                request.competition_name = COMPETITION
+                request.page_size = min(LEADERBOARD_PAGE, top - len(entries))
+                request.page_token = token
+                response = kaggle.competitions.competition_api_client.get_leaderboard(request)
+                page = response.submissions or []
+                entries.extend(page)
+                token = response.next_page_token
+                if not page or not token:
+                    break
+                time.sleep(THROTTLE_S)
     except Exception as e:  # noqa: BLE001 — every failure mode gets the same remedy
         raise RuntimeError(
             f"[NET] Kaggle leaderboard fetch failed ({type(e).__name__}: {e}). Needs "
@@ -389,19 +429,23 @@ def leaderboard(top: int = 50) -> list[dict]:
     rows = []
     for e in entries[:top]:
         team = _attr(e, "teamId", "team_id")
+        date = _attr(e, "submissionDate", "submission_date")
         rows.append({
             "team_id": None if team is None else int(team),
             "team_name": _attr(e, "teamName", "team_name", "teamNameNullable"),
             "score": float(_attr(e, "score") or 0.0),
+            "submission_date": None if date is None else str(date),
         })
     if rows and all(r["team_id"] is None for r in rows):
         raise RuntimeError(
             "leaderboard entries carry no team id in this kaggle package version; "
             f"first entry fields: {sorted(vars(entries[0]))[:20]}")
-    for r in rows:
-        print(f"  {r['team_id']:>10}  {r['score']:8.1f}  {r['team_name']}", flush=True)
-    ids = [str(r["team_id"]) for r in rows if r["team_id"] is not None]
-    print(f"refresh --teams {' '.join(ids)}", flush=True)
+    if not quiet:
+        for r in rows:
+            print(f"  {r['team_id']:>10}  {r['score']:8.1f}  "
+                  f"{console_safe(r['team_name'])}", flush=True)
+        ids = [str(r["team_id"]) for r in rows if r["team_id"] is not None]
+        print(f"refresh --teams {' '.join(ids)}", flush=True)
     return rows
 
 

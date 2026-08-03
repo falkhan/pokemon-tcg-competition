@@ -158,7 +158,15 @@ def score_option(o, obs, fixes: frozenset = frozenset()):
     op_active = op.active[0] if op.active else None
 
     t = o.type
-    if t == OptionType.ATTACK: return score_attack(o, my_active, op_active, op.bench)
+    if t == OptionType.ATTACK:
+        # M41 `scaling`: opt-in effective damage for attacks whose printed
+        # number is only their base (Alakazam's Powerful Hand prints 0). OFF
+        # unless the spec asked for it — the shipped features must not move.
+        hand_n = len(me.hand or []) if "scaling" in fixes else 0
+        bench_n = len([b for b in (me.bench or []) if b]) if "scaling" in fixes else 0
+        return score_attack(o, my_active, op_active, op.bench,
+                            scaling="scaling" in fixes,
+                            hand_size=hand_n, bench_size=bench_n)
     if t == OptionType.ATTACH: return score_attach(o, obs, me)
     if t == OptionType.ABILITY: return 3000
     if t == OptionType.EVOLVE: return 2800
@@ -234,11 +242,16 @@ def _op_board_harmless(op_active, op_bench=()):
     return all(p.id in _CARD and _attacker_quality(p.id) == 0 for p in board)
 
 
-def score_attack(o, my_active, op_active, op_bench=()):
+def score_attack(o, my_active, op_active, op_bench=(), scaling: bool = False,
+                 hand_size: int = 0, bench_size: int = 0):
     if op_active is None:
         return 1000
 
     damage, cost_tuple = _ATK.get(o.attackId, (0, ()))
+    if scaling:
+        from rl.scaling import effective_damage
+        damage = effective_damage(o.attackId, my_active, op_active,
+                                  hand_size=hand_size, bench_size=bench_size)
     attack_type = _CARD[my_active.id][2]
     op_weakness = _CARD[op_active.id][0]
     op_resistance = _CARD[op_active.id][1]

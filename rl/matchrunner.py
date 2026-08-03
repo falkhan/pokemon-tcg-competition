@@ -56,6 +56,13 @@ _FIXED_KINDS = {
     "solver2":   ("solver",  frozenset({"handdiscard", "gust"})),
     "solver2a":  ("solver",  frozenset({"handdiscard"})),
     "solver2b":  ("solver",  frozenset({"gust"})),
+    # M41 deck probe: the rule pilot reads an attack's PRINTED damage, so it
+    # ranks Alakazam's Powerful Hand (prints 0, really 20/card in hand) below a
+    # 90-damage Dudunsparce and plays our own list as a Dudunsparce deck. These
+    # kinds add rl/scaling.py's curated effective damage, so a deck-vs-deck
+    # comparison is not decided by which decks happen to print flat numbers.
+    "generic-scale": ("generic", frozenset({"scaling"})),
+    "solver-scale":  ("solver",  frozenset({"scaling"})),
 }
 
 # M26 attach-override arms on the NEURAL pilot (rl/plan.apply_attach_overrides;
