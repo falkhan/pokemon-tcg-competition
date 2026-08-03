@@ -287,6 +287,30 @@ N_OPTION_PHASE = 3
 OPTION_M28_DIM = OPTION_M27_DIM + N_OPTION_PHASE
 DECK_LOW_AT = 15.0   # remaining-deck count at which "late game" reaches full weight
 
+# --- M41 energy-ceiling block (appended; [:OPTION_M28_DIM] byte-identical, the
+# fourth use of append-and-slice). Every consumer truncates to its own trained
+# width, so the live bundles ignore these columns entirely — this is capability
+# for the next collect, NOT a change to any shipped policy.
+#
+# Why (docs/M41.md, 2026-08-03). The M19 block above is the anti-over-attach
+# feature, and two of its three slots are CONSTANTS on our own win condition:
+# Alakazam #743's only attack prints 0 damage, so _charged_best drops it,
+# _turns_to_ready returns UNREACHABLE at every energy count, and the option
+# vector reports "gap 1.0, not saturated" on every energy card forever. The
+# shipped clone therefore attaches onto an already-charged Alakazam 33.7% of the
+# time while its own BC corpus does it 4.7% and rival ladder pilots 5.4% — a 7x
+# amplification of a defect the training labels do not contain. The labels were
+# never the problem; the net cannot represent a distinction its inputs hold
+# constant.
+#
+# Slot 0 is the load-bearing one and is deliberately damage-FREE (see
+# combat.energy_is_dead — two damage-based drafts were falsified on live
+# replays). Slot 1 is the M19 gap recomputed with scaling damage credited, so
+# the two sit side by side and the net can learn which to trust.
+N_OPTION_ENERGY = 5
+OPTION_M41_DIM = OPTION_M28_DIM + N_OPTION_ENERGY
+MARGINAL_DAMAGE_SCALE = 60.0   # a big per-energy step; 30 is the modal one
+
 
 def _race_features(state) -> np.ndarray:
     """k-turn prize-race block on the M7.2b combat primitives — the M3 combat
@@ -448,6 +472,91 @@ def _attach_extra(opt, obs) -> np.ndarray:
     return v
 
 
+def _attach_energy_ceiling(opt, obs) -> np.ndarray:
+    """M41 [dead, scaling-aware gap/5, retreat slack/5, own-energy-scaling].
+
+    0. `dead` — one more energy on this target buys nothing that exists in the
+       rules: every attack already affordable, retreat cost already covered, no
+       own-energy scaling. The exact predicate, no damage model
+       (`combat.energy_is_dead`).
+    1. the M19 gap, recomputed with `scaling=True` so an attack that prints 0
+       and really does 20 x hand stops reading as UNREACHABLE. On Alakazam the
+       M19 slot is 1.0 forever; this one is 0.0 the moment it holds its {P}.
+    2. retreat slack: attached - retreatCost, clipped. Negative means energy
+       here still buys an escape, which is the ONE legitimate reason to charge
+       past the attack cost — so it is a separate signal, not folded into 0.
+    3. the target's damage grows with its own attached energy, so it has no
+       ceiling at all (Teal Mask Ogerpon ex, Hydrapple ex, 25 attacks pool-wide).
+    4. how much damage ONE more energy actually buys, right now, on this board.
+
+    Slot 4 exists because slot 3 alone is a boolean, and slots 0-1 go flat once
+    the printed cost is paid: on Ogerpon the gap reads 0.6, 0.4, 0.2, 0.0, 0.0,
+    0.0 as energy accumulates, so past 3 the block would say "ready, not dead"
+    and nothing would say "and the next one is worth another 30 damage". The net
+    would have to learn to suppress two saturation signals whenever a third
+    flag is set — the option x state interaction the M28 block above notes is
+    expensive for this two-tower net to form and cheap for us to hand it.
+    It is 0 for every flat attacker, so it only ever speaks about the exception.
+    """
+    v = np.zeros(N_OPTION_ENERGY, dtype=np.float32)
+    poke = _my_poke_at(obs, opt.inPlayArea, opt.inPlayIndex)
+    if poke is None:
+        return v
+    from rl.combat import _RETREAT, energy_is_dead, scales_on_own_energy
+    me = obs.current.players[obs.current.yourIndex]
+    opp = obs.current.players[1 - obs.current.yourIndex]
+    opp_active = opp.active[0] if opp.active and opp.active[0] is not None else None
+    board_ids = {p.id for p in list(me.active or []) + list(me.bench or [])
+                 if p is not None}
+    attached = len(poke.energies or ())
+    v[0] = float(energy_is_dead(poke.id, poke.energies or ()))
+    v[1] = min(_turns_to_ready(poke, opp_active, board_ids, scaling=True), 5) / 5.0
+    v[2] = max(-5, min(5, attached - _RETREAT.get(poke.id, 0))) / 5.0
+    v[3] = float(scales_on_own_energy(poke.id))
+    v[4] = min(_marginal_energy_damage(poke, opp_active),
+               MARGINAL_DAMAGE_SCALE) / MARGINAL_DAMAGE_SCALE
+    return v
+
+
+def _marginal_energy_damage(poke, opp_active) -> int:
+    """Extra damage this Pokémon's best attack gains from ONE more of its own
+    energy, on the CURRENT board. 0 for a flat attacker.
+
+    Only the curated `rl.scaling.SCALING_ATTACKS` magnitudes can answer this —
+    `OWN_ENERGY_SCALERS` knows an attack scales but not by how much, so the 19
+    uncurated scalers report 0 here and rely on slot 3 to announce themselves.
+    That asymmetry is deliberate: a guessed magnitude would be a damage
+    prediction, and every damage guess in this lane has been falsified so far.
+    """
+    from rl.combat import _CARD
+    from rl.scaling import SCALING_ATTACKS, effective_damage
+
+    best = 0
+    attacks = _CARD.get(poke.id, (None, None, 0, (), 1))[3] or ()
+    for aid in attacks:
+        if aid not in SCALING_ATTACKS:
+            continue
+        etype = _CARD[poke.id][2]
+        now = effective_damage(aid, poke, opp_active)
+        more = effective_damage(
+            aid, _WithExtraEnergy(poke, etype), opp_active)
+        best = max(best, more - now)
+    return max(0, best)
+
+
+class _WithExtraEnergy:
+    """`poke` plus one attached energy of `etype` — only `.energies` is read by
+    rl.scaling, so this stays a shim rather than a copy of an engine object."""
+
+    __slots__ = ("id", "energies", "hp", "maxHp", "tools")
+
+    def __init__(self, poke, etype):
+        self.id = poke.id
+        self.energies = list(poke.energies or ()) + [etype]
+        self.hp, self.maxHp = poke.hp, poke.maxHp
+        self.tools = getattr(poke, "tools", ())
+
+
 def _retreat_extra(obs) -> np.ndarray:
     """[active damage fraction, active prizes-on-KO/3, bench-ready flag].
 
@@ -585,8 +694,12 @@ def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
     M27: appends N_OPTION_PLAY_PRE play-precondition slots. The output is now
     OPTION_M27_DIM wide and `[:OPTION_V3_DIM]` is byte-identical to the M19
     encoding, so OPTION_V3_DIM checkpoints stay reproducible by truncation —
-    every consumer slices to its own net.option_dim."""
-    num = np.zeros(OPTION_M28_DIM, dtype=np.float32)
+    every consumer slices to its own net.option_dim.
+
+    M41: appends N_OPTION_ENERGY energy-ceiling slots for ATTACH options; the
+    `[:OPTION_M28_DIM]` prefix stays byte-identical, so every live bundle
+    truncates the new columns away and serves exactly what it served before."""
+    num = np.zeros(OPTION_M41_DIM, dtype=np.float32)
     num[:OPTION_DIM] = encode_option(opt, obs)
     your_index = obs.current.yourIndex
     card_id = opt.cardId
@@ -606,13 +719,15 @@ def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
         num[OPTION_DIM:OPTION_DIM + 3] = _attack_extra(opt.attackId, obs)
     elif int(opt.type) == _OT_ATTACH and opt.inPlayArea is not None:
         num[OPTION_DIM:OPTION_DIM + 3] = _attach_extra(opt, obs)
+        num[OPTION_M28_DIM:OPTION_M41_DIM] = _attach_energy_ceiling(opt, obs)
     elif int(opt.type) == _OT_RETREAT:
         num[OPTION_DIM:OPTION_DIM + 3] = _retreat_extra(obs)
     elif getattr(opt, "number", None) is not None:
         num[OPTION_DIM + 3] = min(float(opt.number), 10.0) / 10.0
     if int(opt.type) == _OT_PLAY:
         num[OPTION_V3_DIM:OPTION_M27_DIM] = _play_precondition(card_id, obs)
-    num[OPTION_M27_DIM:] = _phase_interaction(opt, obs)
+    # bounded, not open-ended: the M41 energy block now sits after this one
+    num[OPTION_M27_DIM:OPTION_M28_DIM] = _phase_interaction(opt, obs)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return num, ids
 

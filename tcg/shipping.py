@@ -143,7 +143,11 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
     # .npy matrix when the training parquet is absent — no polars on Kaggle).
     rl_pkg = SUBMISSION / "rl"
     rl_pkg.mkdir(exist_ok=True)
-    names = ["__init__.py", "combat.py", "encoders.py"]
+    # M41: scaling.py joins the bundle because encode_option_v2's energy-ceiling
+    # block asks combat for scaling-aware damage on every ATTACH option, and
+    # combat resolves that through rl.scaling. Pure Python, imports only
+    # rl.combat — safe for Kaggle (no polars/torch), same as the rest.
+    names = ["__init__.py", "combat.py", "encoders.py", "scaling.py"]
     if isinstance(model, OptionScorerV3):
         names.append("plan.py")                    # v3: plan enumeration ships
     if getattr(model, "extra_dim", 0) > 0:

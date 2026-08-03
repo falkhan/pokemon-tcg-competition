@@ -307,8 +307,9 @@ DECK_LOW_AT = 15.0   # remaining-deck count at which "late game" reaches full we
 # combat.energy_is_dead — two damage-based drafts were falsified on live
 # replays). Slot 1 is the M19 gap recomputed with scaling damage credited, so
 # the two sit side by side and the net can learn which to trust.
-N_OPTION_ENERGY = 4
+N_OPTION_ENERGY = 5
 OPTION_M41_DIM = OPTION_M28_DIM + N_OPTION_ENERGY
+MARGINAL_DAMAGE_SCALE = 60.0   # a big per-energy step; 30 is the modal one
 
 
 def _race_features(state) -> np.ndarray:
@@ -486,6 +487,16 @@ def _attach_energy_ceiling(opt, obs) -> np.ndarray:
        past the attack cost — so it is a separate signal, not folded into 0.
     3. the target's damage grows with its own attached energy, so it has no
        ceiling at all (Teal Mask Ogerpon ex, Hydrapple ex, 25 attacks pool-wide).
+    4. how much damage ONE more energy actually buys, right now, on this board.
+
+    Slot 4 exists because slot 3 alone is a boolean, and slots 0-1 go flat once
+    the printed cost is paid: on Ogerpon the gap reads 0.6, 0.4, 0.2, 0.0, 0.0,
+    0.0 as energy accumulates, so past 3 the block would say "ready, not dead"
+    and nothing would say "and the next one is worth another 30 damage". The net
+    would have to learn to suppress two saturation signals whenever a third
+    flag is set — the option x state interaction the M28 block above notes is
+    expensive for this two-tower net to form and cheap for us to hand it.
+    It is 0 for every flat attacker, so it only ever speaks about the exception.
     """
     v = np.zeros(N_OPTION_ENERGY, dtype=np.float32)
     poke = _my_poke_at(obs, opt.inPlayArea, opt.inPlayIndex)
@@ -502,7 +513,48 @@ def _attach_energy_ceiling(opt, obs) -> np.ndarray:
     v[1] = min(_turns_to_ready(poke, opp_active, board_ids, scaling=True), 5) / 5.0
     v[2] = max(-5, min(5, attached - _RETREAT.get(poke.id, 0))) / 5.0
     v[3] = float(scales_on_own_energy(poke.id))
+    v[4] = min(_marginal_energy_damage(poke, opp_active),
+               MARGINAL_DAMAGE_SCALE) / MARGINAL_DAMAGE_SCALE
     return v
+
+
+def _marginal_energy_damage(poke, opp_active) -> int:
+    """Extra damage this Pokémon's best attack gains from ONE more of its own
+    energy, on the CURRENT board. 0 for a flat attacker.
+
+    Only the curated `rl.scaling.SCALING_ATTACKS` magnitudes can answer this —
+    `OWN_ENERGY_SCALERS` knows an attack scales but not by how much, so the 19
+    uncurated scalers report 0 here and rely on slot 3 to announce themselves.
+    That asymmetry is deliberate: a guessed magnitude would be a damage
+    prediction, and every damage guess in this lane has been falsified so far.
+    """
+    from rl.combat import _CARD
+    from rl.scaling import SCALING_ATTACKS, effective_damage
+
+    best = 0
+    attacks = _CARD.get(poke.id, (None, None, 0, (), 1))[3] or ()
+    for aid in attacks:
+        if aid not in SCALING_ATTACKS:
+            continue
+        etype = _CARD[poke.id][2]
+        now = effective_damage(aid, poke, opp_active)
+        more = effective_damage(
+            aid, _WithExtraEnergy(poke, etype), opp_active)
+        best = max(best, more - now)
+    return max(0, best)
+
+
+class _WithExtraEnergy:
+    """`poke` plus one attached energy of `etype` — only `.energies` is read by
+    rl.scaling, so this stays a shim rather than a copy of an engine object."""
+
+    __slots__ = ("id", "energies", "hp", "maxHp", "tools")
+
+    def __init__(self, poke, etype):
+        self.id = poke.id
+        self.energies = list(poke.energies or ()) + [etype]
+        self.hp, self.maxHp = poke.hp, poke.maxHp
+        self.tools = getattr(poke, "tools", ())
 
 
 def _retreat_extra(obs) -> np.ndarray:

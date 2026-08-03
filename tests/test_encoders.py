@@ -236,7 +236,7 @@ def test_encode_option_v2_parity_and_ids():
         a_num, a_ids = old.encode_option_v2(opt, obs)
         b_num, b_ids = new.encode_option_v2(opt, obs)
         assert np.array_equal(a_num, b_num) and np.array_equal(a_ids, b_ids)
-        assert a_num.shape == (old.OPTION_M28_DIM,)
+        assert a_num.shape == (old.OPTION_M41_DIM,)
         # the v1 prefix stays byte-identical (M16 block is additive)
         assert np.array_equal(a_num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.encode_option_v2(attach, obs)[1].tolist() == [0, 1]  # target = active card 1
@@ -467,14 +467,43 @@ def test_gust_slot_is_off_for_non_gust_supporters(monkeypatch):
 
 
 def test_m27_block_is_additive_so_narrower_checkpoints_are_unaffected():
-    """The whole width-shim contract: [:OPTION_V3_DIM] must be byte-identical
-    to what an OPTION_V3_DIM checkpoint trained on."""
+    """The whole width-shim contract: every earlier width must be a byte-identical
+    PREFIX of the current one, so a checkpoint trained at any of them stays
+    reproducible by truncation. Each appended block extends this chain."""
     me = player(active=pokemon(1), hand=[hand_card(BOSS_ORDERS)])
     obs = observation(me=me, opponent=player(active=pokemon(2)),
                       supporter_played=False)
     opt = option(OptionType.PLAY, area=AreaType.HAND, index=0)
     num, _ = old.encode_option_v2(opt, obs)
-    assert num.shape == (old.OPTION_M28_DIM,)
+    assert num.shape == (old.OPTION_M41_DIM,)
     assert np.array_equal(num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.OPTION_M27_DIM == old.OPTION_V3_DIM + old.N_OPTION_PLAY_PRE
     assert old.OPTION_M28_DIM == old.OPTION_M27_DIM + old.N_OPTION_PHASE
+    assert old.OPTION_M41_DIM == old.OPTION_M28_DIM + old.N_OPTION_ENERGY
+
+
+def test_the_m41_energy_block_is_zero_on_every_non_attach_option():
+    """A PLAY/ATTACK/RETREAT option must not pick up energy-ceiling values —
+    the block is ATTACH-only, and a stray write there would shift the meaning of
+    the columns for the next corpus."""
+    me = player(active=pokemon(1), hand=[hand_card(BOSS_ORDERS)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    for opt in (option(OptionType.PLAY, area=AreaType.HAND, index=0),
+                option(OptionType.RETREAT),
+                option(OptionType.ATTACK, attack_id=101)):
+        num, _ = old.encode_option_v2(opt, obs)
+        assert not num[old.OPTION_M28_DIM:old.OPTION_M41_DIM].any()
+
+
+def test_the_m41_energy_block_fires_on_an_attach():
+    """Stub card 1 holds attacks {F} and {F}{C}: at one Fighting it can pay the
+    cheap one but not the dear one, so the ceiling must read NOT dead, and the
+    scaling-aware gap must be the one remaining attach."""
+    me = player(active=pokemon(1, energies=[FIGHTING]), hand=[hand_card(7)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    opt = option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE, in_play_index=0)
+    num, _ = old.encode_option_v2(opt, obs)
+    block = num[old.OPTION_M28_DIM:old.OPTION_M41_DIM]
+    assert block[0] == 0.0                       # not dead: {F}{C} still unpaid
+    assert block[1] == pytest.approx(1 / 5.0)    # one attach short of the best
+    assert block[3] == 0.0                       # not an own-energy scaler
