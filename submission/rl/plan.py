@@ -352,6 +352,7 @@ PLAY_FIX_RACEMODE2 = "racemode2"      # O12c: blanket vs walls, margin vs pressu
 PLAY_FIX_RACEMODE3 = "racemode3"      # O12d: blanket vs walls ONLY (m37 final synthesis)
 PLAY_FIX_RACEMODE4 = "racemode4"      # O13: demote OUR burn sources in a race (m39 P2b)
 PLAY_FIX_RACEASH = "raceash"          # O13b: recycle Sacred Ash EARLY in a race (m39 P2b)
+PLAY_FIX_GUSTSNIPE = "gustsnipe"      # O18: gust a frail multi-prize benched target (m41)
 
 # --- M40 S6: serve-side fixes -----------------------------------------------
 # A THIRD class of fix name, and the prefix says so. PLAY_FIX_*/ATTACH_FIX_* are
@@ -420,6 +421,16 @@ _DRAWFLOOR_DECK_AT = 10     # ... the full-hand hoarding cases); deck >= 10
 # execution log — NOT what the _make_plan comment below says). Opponent at
 # match point = len(op.prize) <= 1.
 _GUSTVETO_OPP_PRIZES_AT = 1
+
+# O18 `gustsnipe` (m41). Deliberately reads only the OPPONENT'S board, never our
+# damage: the gustveto docstring records why (`_attack_damage` models Powerful
+# Hand as 0, so a KO-gate is blind to our own main attacker — M36 W2). Remaining
+# HP and prizes-on-KO are both directly observable, so this predicate has no
+# damage model to be wrong about.
+_GUSTSNIPE_HP_AT = 120          # remaining HP that counts as "frail enough"
+_GUSTSNIPE_HP_FRACTION = 0.5    # ...or already at/below half of maxHp
+_GUSTSNIPE_MIN_PRIZES = 2       # rule box: ex / Mega ex / Tera give 2-3
+_GUSTSNIPE_OPP_PRIZES_ABOVE = 1  # never at match point — gustveto's own finding
 # O12 (m37): archetype-detected race mode. The 600-band stall/heal-tank lines
 # farm us by deck-out (m36 post-mortem: 9/26 losses; hop/garchomp 0-4 live).
 # Trigger = a stall-family Pokémon visible on the OPPONENT'S BOARD (public obs
@@ -551,6 +562,47 @@ def _racemode_engaged(st, me) -> bool:
                 and _RACEMODE_DECK_LO < me.deckCount <= _RACEMODE_DECK_HI)
 
 
+def _gustsnipe_target(st) -> bool:
+    """Is there a benched opponent Pokemon worth dragging out RIGHT NOW?
+
+    True when the opponent benches a multi-prize (rule box) Pokemon that is
+    frail — low remaining HP outright, or already at/below half its maximum —
+    AND that target is softer than whatever is Active. Piotr's read of the
+    m41 ogerpon QC: Boss's Orders sat unplayed across 8 turns while a damaged
+    2-prize body waited on the bench; taking it would have closed the game
+    several turns sooner.
+
+    Reads ONLY the opponent's board. Remaining HP and prizes-on-KO are
+    observable facts, so unlike a KO-gate this predicate cannot be fooled by a
+    scaling attacker whose printed damage is 0 (the M36 W2 problem that forced
+    `gustveto` to be a blanket demote).
+    """
+    op = st.players[1 - st.yourIndex]
+    if len(op.prize or ()) <= _GUSTSNIPE_OPP_PRIZES_ABOVE:
+        return False                       # match point: gustveto's finding wins
+    active = op.active[0] if op.active else None
+    active_hp = getattr(active, "hp", None) if active is not None else None
+
+    for p in (op.bench or ()):
+        if p is None or p.id not in _CARD:
+            continue
+        if _CARD[p.id][4] < _GUSTSNIPE_MIN_PRIZES:      # prizes on KO
+            continue
+        hp = getattr(p, "hp", None)
+        if hp is None:
+            continue
+        max_hp = getattr(p, "maxHp", None) or 0
+        frail = hp <= _GUSTSNIPE_HP_AT or (
+            max_hp and hp <= _GUSTSNIPE_HP_FRACTION * max_hp)
+        if not frail:
+            continue
+        # Only worth the supporter if the bench body is softer than the active.
+        if active_hp is not None and hp >= active_hp:
+            continue
+        return True
+    return False
+
+
 def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
     """Reorder MAIN-select preference per the M30/M31 economy arms.
 
@@ -652,6 +704,12 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                and _hand_card_id(opts[i], hand) == SACRED_ASH_ID]
         if ash:
             pick = ash[0]
+    if pick is None and PLAY_FIX_GUSTSNIPE in fixes and _gustsnipe_target(st):
+        gust = [i for i in ranked
+                if opts[i].type == OptionType.PLAY
+                and _hand_card_id(opts[i], hand) in GUST_IDS]
+        if gust:
+            pick = gust[0]
     if (pick is None and PLAY_FIX_BENCHFLOOR in fixes
             and sum(p is not None for p in (me.bench or []))
             <= _BENCHFLOOR_BENCH_AT):
