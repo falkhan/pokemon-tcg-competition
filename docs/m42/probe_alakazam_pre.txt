@@ -1,0 +1,46 @@
+
+M42 perception probe: 20 games
+  arm generic:alakazam_v2_h4
+  opp generic:grim_live
+
+  prompts answered         1734
+  ...MAIN                  1075
+  ...fetch/promote          464
+
+  [over_attach]
+        72  ( 6.7% of prompts)  a dead-energy ATTACH target was offered
+        72                    ...and attaching was optional (declining was legal)
+         0  ( 0.0% of those)  ...and WE ATTACHED ONTO IT ANYWAY
+
+  [hand_scaler_blind]
+       156  (14.5% of prompts)  our active carries a hand-scaling attack
+        41                    ...and OUR OWN damage model reads it as 0 with an ATTACK on the menu
+        41  (100.0% of those)  ...and the attack really was available — a prompt where 7 features read 0
+           of which we attacked anyway: 4 — the M41 617-of-617 signature (correct play through a dead feature)
+              41  Alakazam
+
+  [retreat_stranded]
+        33  ( 3.1% of prompts)  the active cannot pay its own retreat, a ready bench member waits
+         3                    ...and an ATTACH or RETREAT was on the menu to fix it
+         0  ( 0.0% of those)  ...and WE ENDED THE TURN in that state
+
+  [dead_basis_fetch]
+       115  (24.8% of prompts)  a menu offers an evolution whose basis is nowhere
+        81                    ...and a live (basis-less) Pokemon was on the same menu
+        37  (45.7% of those)  ...and WE TOOK THE DEAD EVOLUTION
+           strict (0 bench AND 0 basics in hand): 6 situations, 0 taken
+           where taken: KEEP 11 (fetch_value RAN and was outbid) / PROMOTE 26 (fetch_value never runs there)
+              25  Kadabra [PROMOTE]
+               7  Alakazam [KEEP]
+               4  Kadabra [KEEP]
+               1  Dudunsparce [PROMOTE]
+
+  [stadium_ignored]
+        78  ( 7.3% of prompts)  a stadium PLAY is on the menu
+        48                    ...and a DIFFERENT stadium is already in play, so playing ours removes theirs
+        41  (85.4% of those)  ...and WE DECLINED — the pilot has no read on the stadium at all
+              41  Spikemuth Gym
+
+  foreign_target_opts         0  — no option addressed a foreign board through inPlayArea, so the encoders.py:207 target-resolution bug is latent, not live, on this pairing.
+
+  counters -> docs/m42/probe_alakazam_pre.json

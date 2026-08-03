@@ -1,0 +1,43 @@
+{
+  "arm": "generic:alakazam_v2_h4",
+  "opp": "generic:grim_live",
+  "games": 20,
+  "counters": {
+    "prompts": 1734,
+    "fetch_prompts": 464,
+    "main_prompts": 1075,
+    "dead_basis_fetch.situation": 115,
+    "dead_basis_fetch.strict_situation": 6,
+    "dead_basis_fetch.offered": 81,
+    "retreat_stranded.situation": 33,
+    "dead_basis_fetch.chose_bad": 37,
+    "dead_basis_fetch.in_KEEP": 11,
+    "stadium_ignored.situation": 78,
+    "stadium_ignored.offered": 48,
+    "stadium_ignored.chose_bad": 41,
+    "dead_basis_fetch.in_PROMOTE": 26,
+    "hand_scaler_blind.situation": 156,
+    "over_attach.situation": 72,
+    "over_attach.offered": 72,
+    "hand_scaler_blind.offered": 41,
+    "hand_scaler_blind.chose_bad": 41,
+    "hand_scaler_blind.attacked_anyway": 4,
+    "retreat_stranded.offered": 3
+  },
+  "detail": {
+    "over_attach": {},
+    "hand_scaler_blind": {
+      "Alakazam": 41
+    },
+    "retreat_stranded": {},
+    "dead_basis_fetch": {
+      "Alakazam [KEEP]": 7,
+      "Kadabra [KEEP]": 4,
+      "Kadabra [PROMOTE]": 25,
+      "Dudunsparce [PROMOTE]": 1
+    },
+    "stadium_ignored": {
+      "Spikemuth Gym": 41
+    }
+  }
+}

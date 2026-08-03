@@ -1,0 +1,38 @@
+{
+  "arm": "generic:lucario_evolved",
+  "opp": "generic:festival_dipplin",
+  "games": 20,
+  "counters": {
+    "prompts": 1031,
+    "fetch_prompts": 261,
+    "main_prompts": 585,
+    "over_attach.situation": 93,
+    "over_attach.offered": 93,
+    "stadium_ignored.situation": 61,
+    "stadium_ignored.offered": 53,
+    "stadium_ignored.chose_bad": 46,
+    "retreat_stranded.situation": 156,
+    "dead_basis_fetch.situation": 31,
+    "dead_basis_fetch.offered": 31,
+    "dead_basis_fetch.chose_bad": 10,
+    "dead_basis_fetch.in_PROMOTE": 10,
+    "retreat_stranded.offered": 43,
+    "dead_basis_fetch.strict_situation": 3,
+    "over_attach.chose_bad": 2,
+    "over_attach.damage_forgone": 0
+  },
+  "detail": {
+    "over_attach": {
+      "Makuhita": 2
+    },
+    "hand_scaler_blind": {},
+    "retreat_stranded": {},
+    "dead_basis_fetch": {
+      "Hariyama [PROMOTE]": 8,
+      "Mega Lucario ex [PROMOTE]": 2
+    },
+    "stadium_ignored": {
+      "Festival Grounds": 46
+    }
+  }
+}
