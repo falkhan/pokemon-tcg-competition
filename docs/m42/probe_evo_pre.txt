@@ -3,14 +3,15 @@ M42 perception probe: 20 games
   arm generic:lucario_evolved
   opp generic:festival_dipplin
 
-  prompts answered         1018
-  ...MAIN                   584
-  ...fetch/promote          270
+  prompts answered          883
+  ...MAIN                   502
+  ...fetch/promote          236
 
   [over_attach]
-        70  (12.0% of prompts)  a dead-energy ATTACH target was offered
-        70                    ...and attaching was optional (declining was legal)
-         0  ( 0.0% of those)  ...and WE ATTACHED ONTO IT ANYWAY
+        90  (17.9% of prompts)  a dead-energy ATTACH target was offered
+        90                    ...and attaching was optional (declining was legal)
+         1  ( 1.1% of those)  ...and WE ATTACHED ONTO IT ANYWAY
+               1  Mega Lucario ex
 
   [hand_scaler_blind]
          0  ( 0.0% of prompts)  our active carries a hand-scaling attack
@@ -19,25 +20,23 @@ M42 perception probe: 20 games
            of which we attacked anyway: 0 — the M41 617-of-617 signature (correct play through a dead feature)
 
   [retreat_stranded]
-       127  (21.7% of prompts)  the active cannot pay its own retreat, a ready bench member waits
-        29                    ...and an ATTACH or RETREAT was on the menu to fix it
+       159  (31.7% of prompts)  the active cannot pay its own retreat, a ready bench member waits
+        53                    ...and an ATTACH or RETREAT was on the menu to fix it
          0  ( 0.0% of those)  ...and WE ENDED THE TURN in that state
 
   [dead_basis_fetch]
-        34  (12.6% of prompts)  a menu offers an evolution whose basis is nowhere
-        34                    ...and a live (basis-less) Pokemon was on the same menu
-        13  (38.2% of those)  ...and WE TOOK THE DEAD EVOLUTION
-           strict (0 bench AND 0 basics in hand): 0 situations, 0 taken
-           where taken: KEEP 0 (fetch_value RAN and was outbid) / PROMOTE 13 (fetch_value never runs there)
-              11  Mega Lucario ex [PROMOTE]
-               2  Hariyama [PROMOTE]
+         9  ( 3.8% of prompts)  a menu offers an evolution whose basis is nowhere
+         9                    ...and a live (basis-less) Pokemon was on the same menu
+         0  ( 0.0% of those)  ...and WE TOOK THE DEAD EVOLUTION
+           strict (0 bench AND 0 basics in hand): 3 situations, 0 taken
+           where taken: KEEP 0 (fetch_value RAN and was outbid) / PROMOTE 0 (fetch_value never runs there)
 
   [stadium_ignored]
-        18  (turns)             TURNS where a stadium PLAY was on the menu
-        16                    ...and the OPPONENT'S stadium was in play, so ours would remove it
-        10  (62.5% of those)  ...and THE TURN ENDED with theirs still out
+         9  (turns)             TURNS where a stadium PLAY was on the menu
+         5                    ...and the OPPONENT'S stadium was in play, so ours would remove it
+         2  (40.0% of those)  ...and THE TURN ENDED with theirs still out
            our own stadium already out (not a defect): 0
-              10  Festival Grounds
+               2  Festival Grounds
 
   foreign_target_opts         0  — no option addressed a foreign board through inPlayArea, so the encoders.py:207 target-resolution bug is latent, not live, on this pairing.
 

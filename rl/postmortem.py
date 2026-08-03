@@ -482,6 +482,19 @@ def _attach_saturated(opt: dict, cur: dict, us: int, i: int, turn) -> str | None
 _STADIUM_TYPE = getattr(CardType, "STADIUM", None)   # absent in stripped stubs
 
 
+def _already_in_play(opt: dict) -> bool:
+    """Does this option point at a Pokemon that is ALREADY on our board?
+
+    A benched Kadabra does not need an Abra anywhere — it is already evolved.
+    Without this guard, widening the dead-evolution check to PROMOTE contexts
+    turns every TO_ACTIVE / SWITCH promotion of a benched evolution into a
+    false positive: measured 2026-08-04, 14 of 19 were exactly that.
+    """
+    area = opt.get("area")
+    return area is not None and int(area) in (int(AreaType.ACTIVE),
+                                              int(AreaType.BENCH))
+
+
 def _is_stadium_name(name: str) -> bool:
     c = _CARDS_BY_NAME.get(name)
     return bool(_STADIUM_TYPE is not None and c is not None
@@ -573,6 +586,8 @@ def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
             where = "fetched" if ctx in _KEEP_CONTEXTS else "promoted"
             for j in chosen:
                 if not isinstance(j, int) or j >= len(options):
+                    continue
+                if _already_in_play(options[j]):
                     continue
                 cid = _option_card_id(options[j], sel, cur, us)
                 card = _CARDS.get(cid)

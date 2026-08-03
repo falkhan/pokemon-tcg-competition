@@ -3,41 +3,30 @@
   "opp": "generic:grim_live",
   "games": 20,
   "counters": {
-    "prompts": 1726,
-    "fetch_prompts": 469,
-    "main_prompts": 1068,
-    "dead_basis_fetch.situation": 107,
-    "dead_basis_fetch.offered": 74,
-    "over_attach.situation": 123,
-    "over_attach.offered": 123,
-    "dead_basis_fetch.chose_bad": 30,
-    "dead_basis_fetch.in_KEEP": 10,
-    "retreat_stranded.situation": 58,
-    "hand_scaler_blind.situation": 239,
-    "dead_basis_fetch.in_PROMOTE": 20,
-    "stadium_ignored.situation": 21,
+    "prompts": 1825,
+    "fetch_prompts": 487,
+    "main_prompts": 1132,
+    "dead_basis_fetch.situation": 65,
+    "dead_basis_fetch.offered": 29,
+    "hand_scaler_blind.situation": 287,
+    "stadium_ignored.situation": 15,
     "stadium_ignored.offered": 10,
-    "dead_basis_fetch.strict_situation": 5,
-    "retreat_stranded.offered": 9,
-    "hand_scaler_blind.offered": 41,
-    "hand_scaler_blind.chose_bad": 41,
-    "hand_scaler_blind.attacked_anyway": 7,
-    "stadium_ignored.chose_bad": 1
+    "dead_basis_fetch.strict_situation": 7,
+    "over_attach.situation": 118,
+    "over_attach.offered": 118,
+    "retreat_stranded.situation": 64,
+    "retreat_stranded.offered": 10,
+    "hand_scaler_blind.offered": 68,
+    "hand_scaler_blind.chose_bad": 68,
+    "hand_scaler_blind.attacked_anyway": 10
   },
   "detail": {
     "over_attach": {},
     "hand_scaler_blind": {
-      "Alakazam": 41
+      "Alakazam": 68
     },
     "retreat_stranded": {},
-    "dead_basis_fetch": {
-      "Alakazam [KEEP]": 6,
-      "Kadabra [PROMOTE]": 16,
-      "Kadabra [KEEP]": 4,
-      "Alakazam [PROMOTE]": 4
-    },
-    "stadium_ignored": {
-      "Spikemuth Gym": 1
-    }
+    "dead_basis_fetch": {},
+    "stadium_ignored": {}
   }
 }

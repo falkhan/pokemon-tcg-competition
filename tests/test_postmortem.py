@@ -289,6 +289,23 @@ def test_promote_guards():
                      action=(1,)), us=1) == []
 
 
+def test_promoting_an_already_benched_evolution_is_never_a_dead_fetch():
+    """The false positive that nearly produced a harmful rule: a benched
+    Kadabra does not need an Abra anywhere, it is already evolved. 14 of 19
+    measured "dead evolutions" were exactly this, and a guard written against
+    them would have refused to promote a benched attacker after a KO."""
+    from tests.fake_cg import AreaType, SelectContext
+    cur = {"turn": 3, "players": [
+        _player(),
+        _player(hand_ids=(), bench=(EVO.cardId,)),
+    ]}
+    steps = [[{}, {"observation": {"current": cur, "select": {
+        "context": int(SelectContext.TO_ACTIVE),
+        "option": [{"type": 3, "area": int(AreaType.BENCH), "index": 0}]}}}],
+             [{}, {"action": [0]}]]
+    assert pm.audit_flags(steps, us=1) == []
+
+
 def test_flag_discard_live_basic_over_a_dead_evolution():
     from tests.fake_cg import SelectContext
     steps = _fetch_steps(SelectContext.DISCARD, [BASIC.cardId, EVO.cardId],

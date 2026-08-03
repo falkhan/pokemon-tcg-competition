@@ -150,6 +150,19 @@ def _in_play_target(me, opt):
         return None
 
 
+def _already_in_play(opt) -> bool:
+    """Does this option point at a Pokemon that is ALREADY on our board?
+
+    A benched Kadabra does not need an Abra anywhere — it is already evolved.
+    Without this, every TO_ACTIVE / SWITCH promotion of a benched evolution
+    reads as a basis-less fetch: measured 2026-08-04, 14 of 19 "dead
+    evolutions" were `area=BENCH` promotions, i.e. pure false positives, and a
+    rule written against them would have refused to promote a benched attacker
+    after a KO — bench-out risk in exchange for nothing.
+    """
+    return opt.area is not None and int(opt.area) in (_AREA_ACTIVE, _AREA_BENCH)
+
+
 def _basis_pool(me):
     """Names of my Pokemon in play and in hand — the evolution-basis pool.
     By NAME, never by id: evolves_from points at one printing and real decks
@@ -274,6 +287,8 @@ class Ladders:
         pool = _basis_pool(me)
         dead = []
         for j, o in enumerate(opts):
+            if _already_in_play(o):
+                continue
             cid = _option_card_id(obs, o, me)
             if cid is None or cid not in _IS_POKEMON:
                 continue
@@ -290,14 +305,21 @@ class Ladders:
                             for c in (me.hand or [])))
         if bare:
             self.c["dead_basis_fetch.strict_situation"] += 1
+        # The alternative must be one we LEFT ON THE TABLE. A multi-select that
+        # takes the live basic AND a dead evolution has declined nothing, and
+        # counting it made the rate look like 40% when the pilot was choosing
+        # correctly (measured 2026-08-04: every "bad" pick had
+        # best_unpicked == FETCH_DEAD_EVOLUTION, i.e. every alternative was
+        # equally dead, or the menu held exactly one option).
         alive = [j for j, o in enumerate(opts)
-                 if (cid := _option_card_id(obs, o, me)) is not None
+                 if j not in chosen and not _already_in_play(o)
+                 and (cid := _option_card_id(obs, o, me)) is not None
                  and cid in _IS_POKEMON and _EVOLVES_FROM.get(cid) is None]
         if alive:
-            self.c["dead_basis_fetch.offered"] += 1     # a live basic was there
+            self.c["dead_basis_fetch.offered"] += 1     # a live basic was left
         picked = [(j, cid) for j, cid in dead if j in chosen]
-        if not picked:
-            return
+        if not picked or not alive:
+            return          # nothing better was declined: not a defect
         self.c["dead_basis_fetch.chose_bad"] += 1
         if bare:
             self.c["dead_basis_fetch.strict_chose_bad"] += 1
