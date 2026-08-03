@@ -32,7 +32,9 @@ the mode against the board:
     "opp_nrg"    per_unit x energy attached to the DEFENDER
     "my_nrg"     per_unit x energy attached to the ATTACKER
     "both_nrg"   per_unit x energy on BOTH actives
-    "my_bench"   per_unit x our benched Pokemon
+    "my_bench"   per_unit x our Pokemon IN PLAY (bench + active)
+    "bench_only" per_unit x our BENCHED Pokemon (active excluded)
+    "team_nrg"   per_unit x energy attached across ALL our Pokemon
 
 Every id below was read off the engine's own rules text, not guessed — a first
 draft of this table guessed two of three ids and pointed at Trapinch and
@@ -54,6 +56,14 @@ SCALING_ATTACKS: dict[int, tuple[str, int, int]] = {
     # Team Rocket's Mewtwo ex "Erasure Ball" — +60 per Energy discarded from our
     # bench (optional, up to 2). Modelled at the 1-discard middle case, +60.
     608: ("flat", 0, 220),
+    # Dipplin #93 "Do the Wave" — 20 per BENCHED Pokemon (bench only, unlike
+    # Spidops which counts everything in play). Its ability `Festival Lead` lets
+    # it attack TWICE while Festival Grounds is out, so a full bench is 100 x2
+    # per turn off a single {G}. 3.7% of the top 250 and climbing.
+    115: ("bench_only", 20, 0),
+    # Hydrapple ex #150 "Syrup Storm" — +30 per {G} Energy attached to ALL of
+    # your Pokemon, not just the attacker. The Dipplin line's Stage 2.
+    195: ("team_nrg", 30, 30),
 }
 
 # Damage assumed for a scaling attack we have NOT curated. Enough to beat the
@@ -67,7 +77,7 @@ def _count_energy(pokemon) -> int:
 
 
 def effective_damage(attack_id: int, attacker, defender, hand_size: int = 0,
-                     bench_size: int = 0) -> int:
+                     bench_size: int = 0, team_energy: int = 0) -> int:
     """Printed damage, or the curated scaling estimate when we have one.
 
     Returns the PRE-weakness number, exactly like `_ATK[id][0]`, so callers keep
@@ -89,7 +99,11 @@ def effective_damage(attack_id: int, attacker, defender, hand_size: int = 0,
     elif mode == "both_nrg":
         units = _count_energy(attacker) + _count_energy(defender)
     elif mode == "my_bench":
-        units = bench_size + 1                # the active counts too
+        units = bench_size + 1                # "in play" — the active counts too
+    elif mode == "bench_only":
+        units = bench_size                    # "your Benched Pokemon" — it does not
+    elif mode == "team_nrg":
+        units = team_energy
     else:
         raise ValueError(f"unknown scaling mode {mode!r} for attack {attack_id}")
     return max(printed, base + per_unit * units)

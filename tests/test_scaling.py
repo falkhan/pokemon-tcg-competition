@@ -26,6 +26,8 @@ EXPECTED_OWNER = {
     120: "Teal Mask Ogerpon ex",
     560: "Team Rocket's Spidops",
     608: "Team Rocket's Mewtwo ex",
+    115: "Dipplin",
+    195: "Hydrapple ex",
 }
 
 _OWNER_BY_ATTACK = {a["attackId"]: cid
@@ -62,7 +64,8 @@ def test_curated_attacks_really_do_scale():
 
 
 def test_modes_are_all_known():
-    valid = {"flat", "hand", "opp_nrg", "my_nrg", "both_nrg", "my_bench"}
+    valid = {"flat", "hand", "opp_nrg", "my_nrg", "both_nrg", "my_bench",
+             "bench_only", "team_nrg"}
     for aid, (mode, _per, _base) in SCALING_ATTACKS.items():
         assert mode in valid, f"attack {aid} has unknown mode {mode!r}"
 
@@ -89,6 +92,23 @@ def test_spidops_scales_with_our_board():
     assert _PRINTED[560] == 0
     me, them = Mon(), Mon()
     assert effective_damage(560, me, them, bench_size=4) == 150   # 5 in play
+
+
+def test_dipplin_counts_the_bench_only_not_the_active():
+    """`Do the Wave` reads "for each of your BENCHED Pokemon", unlike Spidops'
+    "in play" — off by one is a whole extra 20 damage, doubled by Festival
+    Grounds."""
+    assert _PRINTED[115] == 0
+    me, them = Mon(), Mon()
+    assert effective_damage(115, me, them, bench_size=5) == 100
+    assert effective_damage(115, me, them, bench_size=0) == 0
+    # Spidops counts the active too, so the same board gives it one more unit.
+    assert effective_damage(560, me, them, bench_size=5) == 180
+
+
+def test_hydrapple_counts_energy_across_the_whole_team():
+    assert _PRINTED[195] == 30
+    assert effective_damage(195, Mon(), Mon(), team_energy=8) == 30 + 30 * 8
 
 
 def test_uncurated_attacks_return_printed_damage_untouched():

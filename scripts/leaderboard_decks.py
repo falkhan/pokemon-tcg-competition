@@ -8,7 +8,7 @@ one row per leaderboard team, each labelled with the deck it is piloting.
 Channel (three joins, only the first needs the network):
 
     leaderboard(top)            -> team_id, team_name, score   [rl.kaggle_ingest]
-    episodes.parquet            -> team_id  -> submission_id (latest by end_time)
+    episodes.parquet            -> team_id  -> submission_id (NEWEST, by max id)
     opp_decks.parquet           -> submission_id -> the 60-card decklist
     cards_features.parquet      -> decklist -> energy / theme / main attacker
 
@@ -220,9 +220,18 @@ def describe_deck(ids: list[int]) -> dict:
 def team_submissions() -> pl.DataFrame:
     """(team_id, submission_id, end_time, score) — both seats of every episode.
 
-    A team's CURRENT agent is its most recent submission by end_time; older rows
-    are kept so a team whose newest submission has no cached replay can still
-    fall back to one that does.
+    A team's CURRENT agent is its HIGHEST submission id, not the submission that
+    most recently played. Kaggle gives every top team `SubmissionCount = 2`
+    concurrently, and an older submission keeps playing after a newer one lands:
+    team 16374395 (rank #1) had sub 55186239 (lucario, submitted 08-02 12:57,
+    last episode 13:23) and sub 55147326 (ogerpon, older, last episode 22:44).
+    Picking by end_time chose the OLD one and labelled the #1 team "ogerpon"
+    while the live board showed Mega Lucario ex. Submission ids increase with
+    submission time, so max(id) is the newest agent.
+
+    Note the deeper limit this exposes: with two live submissions a team may be
+    piloting two different decks at once, so "this team's deck" is not always a
+    well-formed question. `build_census` flags those teams rather than pretending.
     """
     ep = pl.read_parquet(EPISODES_PQ)
     seats = [
@@ -327,6 +336,7 @@ CENSUS_SCHEMA = {
     "primary_energy": pl.Utf8, "energy_types": pl.Utf8, "n_special_energy": pl.Int64,
     "attacker": pl.Utf8, "attacker_tier": pl.Utf8, "attacker_energy": pl.Utf8,
     "ex_lines": pl.Utf8, "played_attacker": pl.Utf8, "evidence_agrees": pl.Boolean,
+    "n_decks_seen": pl.Int64,
 }
 
 _UNKNOWN = {
@@ -351,9 +361,10 @@ def build_census(top: int = 250, evidence: bool = True, offline: bool = False,
     seats = team_submissions()
     decks = decks_by_submission()
 
-    # Per team: submissions newest-first, plus episode count and last-seen.
+    # Per team: submissions NEWEST-SUBMITTED first (max id), then episode count
+    # and last-seen. See team_submissions() for why end_time is the wrong key.
     by_team: dict[int, list] = defaultdict(list)
-    for r in seats.sort("end_time", descending=True).iter_rows(named=True):
+    for r in seats.sort("submission_id", descending=True).iter_rows(named=True):
         by_team[r["team_id"]].append(r)
 
     # (episode_id, seat) per submission, newest first, for the evidence walk.
@@ -372,7 +383,8 @@ def build_census(top: int = 250, evidence: bool = True, offline: bool = False,
             "rank": rank, "team_id": entry["team_id"], "team_name": entry["team_name"],
             "score": entry["score"], "submission_id": None, "last_seen": None,
             "n_episodes": 0, "deck_hash": None, "coverage": "never_seen",
-            "played_attacker": None, "evidence_agrees": None, **_UNKNOWN,
+            "played_attacker": None, "evidence_agrees": None,
+            "n_decks_seen": 0, **_UNKNOWN,
         }
         history = by_team.get(entry["team_id"])
         if history:
@@ -393,6 +405,12 @@ def build_census(top: int = 250, evidence: bool = True, offline: bool = False,
                 deck = decks[pick]
                 row["deck_hash"] = deck["deck_hash"]
                 row.update(describe_deck(deck["deck"]))
+            # Two concurrent submissions may run two different decks, so record
+            # how many distinct archetypes this team has ever been seen on. A
+            # value > 1 means the single label below is a guess, not a fact.
+            seen = {decks[h["submission_id"]]["deck_hash"] for h in history
+                    if h["submission_id"] in decks}
+            row["n_decks_seen"] = len(seen)
         rows.append(row)
 
     if evidence:
