@@ -12,11 +12,21 @@ BASIC = SimpleNamespace(cardId=1, name="Riolu", basic=True, evolvesFrom=None)
 EVO = SimpleNamespace(cardId=2, name="Mega Lucario ex", basic=False,
                       evolvesFrom="Riolu")
 CARMINE = SimpleNamespace(cardId=3, name="Carmine", basic=False, evolvesFrom=None)
-POOL = (BASIC, EVO, CARMINE)
+# M42: two distinct stadiums. Same-name replacement is illegal by the rules
+# (measured: 0 same-id offers in 20 chances), so the flag must key on a
+# DIFFERENT stadium and on who owns the one in play.
+STADIUM_A = SimpleNamespace(cardId=4, name="Festival Grounds", basic=False,
+                            evolvesFrom=None, cardType=None)
+STADIUM_B = SimpleNamespace(cardId=5, name="Lively Stadium", basic=False,
+                            evolvesFrom=None, cardType=None)
+POOL = (BASIC, EVO, CARMINE, STADIUM_A, STADIUM_B)
 
 
 @pytest.fixture(autouse=True)
 def _patch_cards(monkeypatch):
+    from tests.fake_cg import CardType
+    STADIUM_A.cardType = CardType.STADIUM
+    STADIUM_B.cardType = CardType.STADIUM
     monkeypatch.setattr(pm, "_CARDS", {c.cardId: c for c in POOL})
     monkeypatch.setattr(pm, "_CARDS_BY_NAME", {c.name: c for c in POOL})
 
@@ -222,6 +232,129 @@ def test_parse_net_log_tolerates_err_lines_and_empty(capsys):
         "NN|ERR|ValueError('boom')", 'NN|{"s":1,"sc":[0.0]}', "NN|not json"))
     assert set(recs) == {1}
     assert "unparseable" in capsys.readouterr().out          # warned, not hidden
+
+
+# ---------------------------------------------------------------------------
+# M42: the fetch guard's PROMOTE half, its discard mirror, and the stadium
+# flag. Every one of these was measured before it was written
+# (scripts/m42_perception_probe.py) -- see docs/M42.md.
+# ---------------------------------------------------------------------------
+def _fetch_steps(context, deck_ids, hand_ids=(), bench_ids=(), action=(0,)):
+    cur = {"turn": 3, "players": [
+        _player(),
+        _player(hand_ids=hand_ids, bench=bench_ids),
+    ]}
+    return [[{}, {"observation": {"current": cur, "select": {
+        "context": int(context), "deck": [{"id": i} for i in deck_ids],
+        "option": [{"type": 6, "area": 1, "index": k}
+                   for k in range(len(deck_ids))]}}}],
+            [{}, {"action": list(action)}]]
+
+
+def test_flag_dead_evolution_in_a_promote_context():
+    """36 of the 47 measured misses are PROMOTE picks, which the KEEP-only
+    scope could not see at all."""
+    from tests.fake_cg import SelectContext
+    steps = _fetch_steps(SelectContext.TO_BENCH, [EVO.cardId, BASIC.cardId])
+    flags = pm.audit_flags(steps, us=1)
+    assert len(flags) == 1
+    assert flags[0].startswith("[fetch-dead-evolution]")
+    assert "promoted" in flags[0] and "Mega Lucario ex" in flags[0]
+
+
+def test_promote_flag_notes_piotrs_strict_trigger():
+    """0 bench AND 0 basics in hand: nothing it evolves from can ever land."""
+    from tests.fake_cg import SelectContext
+    bare = pm.audit_flags(_fetch_steps(SelectContext.TO_BENCH, [EVO.cardId]), us=1)
+    assert "bench is EMPTY with no basic in hand" in bare[0]
+    # a basic in hand is not the strict case, though the basis is still absent
+    held = pm.audit_flags(
+        _fetch_steps(SelectContext.TO_BENCH, [EVO.cardId], hand_ids=(CARMINE.cardId,),
+                     bench_ids=(CARMINE.cardId,)), us=1)
+    assert held and "bench is EMPTY" not in held[0]
+
+
+def test_promote_guards():
+    from tests.fake_cg import SelectContext
+    # basis on the bench -> live, no flag
+    assert pm.audit_flags(
+        _fetch_steps(SelectContext.TO_BENCH, [EVO.cardId],
+                     bench_ids=(BASIC.cardId,)), us=1) == []
+    # a basic promoted -> no flag
+    assert pm.audit_flags(
+        _fetch_steps(SelectContext.TO_BENCH, [BASIC.cardId]), us=1) == []
+    # declined rather than taken -> no flag
+    assert pm.audit_flags(
+        _fetch_steps(SelectContext.TO_BENCH, [EVO.cardId, BASIC.cardId],
+                     action=(1,)), us=1) == []
+
+
+def test_flag_discard_live_basic_over_a_dead_evolution():
+    from tests.fake_cg import SelectContext
+    steps = _fetch_steps(SelectContext.DISCARD, [BASIC.cardId, EVO.cardId],
+                         action=(0,))
+    flags = pm.audit_flags(steps, us=1)
+    assert len(flags) == 1
+    assert flags[0].startswith("[discard-live-basic]")
+    assert "Riolu" in flags[0] and "Mega Lucario ex" in flags[0]
+
+
+def test_discard_guards():
+    from tests.fake_cg import SelectContext
+    # pitching the dead evolution instead is correct -> no flag
+    assert pm.audit_flags(
+        _fetch_steps(SelectContext.DISCARD, [BASIC.cardId, EVO.cardId],
+                     action=(1,)), us=1) == []
+    # no dead alternative on the menu -> nothing better was available
+    assert pm.audit_flags(
+        _fetch_steps(SelectContext.DISCARD, [BASIC.cardId], action=(0,)), us=1) == []
+    # the evolution is LIVE (basis benched), so pitching the basic is a
+    # judgement call, not a mechanical defect
+    assert pm.audit_flags(
+        _fetch_steps(SelectContext.DISCARD, [BASIC.cardId, EVO.cardId],
+                     bench_ids=(BASIC.cardId,), action=(0,)), us=1) == []
+
+
+def _stadium_steps(their_stadium, hand_ids, action, turn=2, owner=0):
+    cur = {"turn": turn,
+           "stadium": [{"id": their_stadium, "playerIndex": owner}],
+           "players": [_player(), _player(hand_ids=hand_ids,
+                                          bench=(BASIC.cardId,))]}
+    return [[{}, {"observation": {"current": cur, "select": {
+        "context": 0,
+        "option": [{"type": 7, "index": k} for k in range(len(hand_ids))]
+                  + [{"type": 14}]}}}],
+            [{}, {"action": list(action)}]]
+
+
+def test_flag_stadium_ignored_when_theirs_stays_out():
+    """58-97% across three pairings, and the only perception defect that fires
+    on the shipped agent."""
+    steps = _stadium_steps(STADIUM_A.cardId, (STADIUM_B.cardId,), action=(1,))
+    flags = pm.audit_flags(steps, us=1)
+    assert len(flags) == 1
+    assert flags[0].startswith("[stadium-ignored]")
+    assert "Festival Grounds" in flags[0] and "Lively Stadium" in flags[0]
+
+
+def test_stadium_guards():
+    # played it -> no flag
+    assert pm.audit_flags(
+        _stadium_steps(STADIUM_A.cardId, (STADIUM_B.cardId,), action=(0,)),
+        us=1) == []
+    # the stadium in play is OURS -> displacing it is not the defect
+    assert pm.audit_flags(
+        _stadium_steps(STADIUM_A.cardId, (STADIUM_B.cardId,), action=(1,),
+                       owner=1), us=1) == []
+    # we hold no stadium -> nothing was declined
+    assert pm.audit_flags(
+        _stadium_steps(STADIUM_A.cardId, (CARMINE.cardId,), action=(1,)),
+        us=1) == []
+    # same-name replacement is ILLEGAL by the rules (0 same-id offers in 20
+    # measured chances), so it must never be read as a miss
+    assert pm.audit_flags(
+        _stadium_steps(STADIUM_A.cardId, (STADIUM_A.cardId,), action=(1,)),
+        us=1) == []
 
 
 def test_flag_over_attach_onto_a_charged_target():

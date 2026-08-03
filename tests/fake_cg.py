@@ -66,6 +66,14 @@ class CardType(IntEnum):
     TRAINER = 1
     BASIC_ENERGY = 2
     SPECIAL_ENERGY = 3
+    # M42: STADIUM at its REAL value (4) so the stadium forensics run in CI.
+    # The members above do NOT match the engine — the real enum is POKEMON 0,
+    # ITEM 1, TOOL 2, SUPPORTER 3, STADIUM 4, BASIC_ENERGY 5, SPECIAL_ENERGY 6,
+    # so this stub's BASIC_ENERGY/SPECIAL_ENERGY collide with the engine's
+    # TOOL/SUPPORTER. Nothing compares these across the boundary today, and
+    # renumbering would touch every test that names them, so only the
+    # non-colliding member is added here. Recorded in docs/M42.md.
+    STADIUM = 4
 
 
 class SelectContext(IntEnum):

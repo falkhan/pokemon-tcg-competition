@@ -3,20 +3,17 @@
   "opp": "model:checkpoints/m39_bc_grim.pt:grim_live",
   "games": 20,
   "counters": {
-    "prompts": 1621,
-    "fetch_prompts": 313,
-    "main_prompts": 979,
-    "stadium_ignored.situation": 79,
-    "stadium_ignored.offered": 65,
-    "stadium_ignored.chose_bad": 42
+    "prompts": 1613,
+    "fetch_prompts": 310,
+    "main_prompts": 996,
+    "stadium_ignored.situation": 32,
+    "stadium_ignored.offered": 23
   },
   "detail": {
     "over_attach": {},
     "hand_scaler_blind": {},
     "retreat_stranded": {},
     "dead_basis_fetch": {},
-    "stadium_ignored": {
-      "Spikemuth Gym": 42
-    }
+    "stadium_ignored": {}
   }
 }

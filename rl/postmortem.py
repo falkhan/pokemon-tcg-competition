@@ -299,6 +299,18 @@ def _is_basic_pokemon(opt_str: str) -> bool:
 # ---------------------------------------------------------------------------
 _KEEP_CONTEXTS = {int(SelectContext.TO_HAND), int(SelectContext.LOOK),
                   int(SelectContext.NOT_MOVE)}
+# M42: the fetch guard's blind half. `scripts/m42_perception_probe.py` measured
+# 47 basis-less evolutions taken across two rule decks, and 36 of them were in
+# PROMOTE contexts, where the pilot's own `fetch_value` never runs at all. The
+# forensics shared that scope, so four milestones of post-mortems could only
+# ever see the smaller half of the defect.
+_PROMOTE_CONTEXTS = {int(SelectContext.SETUP_ACTIVE_POKEMON),
+                     int(SelectContext.SETUP_BENCH_POKEMON),
+                     int(SelectContext.TO_ACTIVE), int(SelectContext.SWITCH),
+                     int(SelectContext.TO_FIELD), int(SelectContext.TO_BENCH)}
+_DISCARD_CONTEXTS = {int(SelectContext.DISCARD), int(SelectContext.TO_DECK),
+                     int(SelectContext.TO_DECK_BOTTOM),
+                     int(SelectContext.DISCARD_CARD_OR_ATTACHED_CARD)}
 HOARD_MIN_TURNS = 4   # a playable trainer ignored across this many turns = hoarded
 
 
@@ -447,11 +459,50 @@ def _attach_saturated(opt: dict, cur: dict, us: int, i: int, turn) -> str | None
     if any(SCALING_ATTACKS.get(a, ("", 0, 0))[0] in _SELF_SCALING
            for a in _CARD.get(shim.id, (None, None, 0, [], 1))[3]):
         return None
-    if energy_is_dead(shim.id, shim.energies):
-        return (f"[over-attach] s{i} t{turn}: energy attached to "
-                f"{card_name(shim.id)} which could already pay for every attack "
-                f"it has and its retreat ({len(shim.energies)} energy attached)")
-    return None
+    if not energy_is_dead(shim.id, shim.energies):
+        return None
+    # M42: what the surplus attach COSTS, when our active's damage formula is
+    # its own hand size. The energy leaves the hand, so a hand-scaler loses
+    # exactly per_unit damage on the same turn -- M41 measured 268 dealt where
+    # 288 was available across 22 turns and had no way to say so in the flag.
+    active = _active(cur["players"][us])
+    per = 0
+    if active.get("id"):
+        per = max((p for a in _CARD.get(active["id"], (None, None, 0, [], 1))[3]
+                   if (e := SCALING_ATTACKS.get(a)) and e[0] == "hand"
+                   for p in (e[1],)), default=0)
+    cost = (f", costing {per} damage this turn "
+            f"({card_name(active['id'])} scales on hand size)") if per else ""
+    return (f"[over-attach] s{i} t{turn}: energy attached to "
+            f"{card_name(shim.id)} which could already pay for every attack "
+            f"it has and its retreat ({len(shim.energies)} energy attached)"
+            f"{cost}")
+
+
+_STADIUM_TYPE = getattr(CardType, "STADIUM", None)   # absent in stripped stubs
+
+
+def _is_stadium_name(name: str) -> bool:
+    c = _CARDS_BY_NAME.get(name)
+    return bool(_STADIUM_TYPE is not None and c is not None
+                and getattr(c, "cardType", None) == _STADIUM_TYPE)
+
+
+def _opponent_stadium(cur: dict, us: int):
+    """The stadium in play iff the OPPONENT put it there, else None.
+
+    Ownership is readable: `cg.api.Card` carries `playerIndex`, and every
+    stadium our own seat played was verified to land with our index (M42
+    2026-08-04, 6 plays, 0 wrong-seat). `rl/determinize.py:56` calls stadium
+    ownership ambiguous and skips it; that does not hold for this read.
+    """
+    stadium = cur.get("stadium") or []
+    if not stadium or not isinstance(stadium[0], dict):
+        return None
+    owner = stadium[0].get("playerIndex")
+    if owner is None or int(owner) == us:
+        return None
+    return stadium[0]
 
 
 def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
@@ -459,10 +510,33 @@ def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
     turn_evolve_left: dict = {}                    # turn -> declined EVOLVE names
     trainer_offer_turns: dict[str, set] = {}       # trainer name -> turns playable
     trainers_played: set = set()
+    turn_stadium_miss: dict = {}                   # turn -> (theirs, ours declined)
+    stadium_turns_played: set = set()
 
     for i, turn, ctx, sel, chosen, cur in _iter_selects(steps, us):
         options = sel.get("option") or []
         if ctx == int(SelectContext.MAIN):
+            # (7) M42: their stadium is in play, we hold one that would
+            # displace it, and the turn ends with it still theirs. Measured at
+            # 58-97% across three pairings and the ONLY perception defect that
+            # fires on the shipped agent -- Festival Grounds, the top case,
+            # is what lets the Dipplin line attack twice per turn.
+            theirs = _opponent_stadium(cur, us)
+            if theirs is not None:
+                held = []
+                for j, o in enumerate(options):
+                    if o.get("type") != int(OptionType.PLAY):
+                        continue
+                    cid = _option_card_id(o, sel, cur, us)
+                    name = card_name(cid) if cid else None
+                    # A same-name stadium is not playable by the rules, so it
+                    # can never be the miss (verified: 0 same-id offers in 20).
+                    if name and _is_stadium_name(name) and cid != theirs.get("id"):
+                        held.append(name)
+                        if j in chosen:
+                            stadium_turns_played.add(turn)
+                if held:
+                    turn_stadium_miss[turn] = (card_name(theirs.get("id")), held)
             # (3) evolutions offered but left in hand at turn end (per turn,
             # latest-prompt state — same pattern as the empty-bench check)
             declined = [card_name(cid) for j, o in enumerate(options)
@@ -491,9 +565,12 @@ def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
                         trainer_offer_turns.setdefault(name, set()).add(turn)
                         if j in chosen:
                             trainers_played.add(name)
-        elif ctx in _KEEP_CONTEXTS:
-            # (5) fetch/keep chose an evolution whose basis is nowhere
+        elif ctx in _KEEP_CONTEXTS or ctx in _PROMOTE_CONTEXTS:
+            # (5) fetch/keep/PROMOTE chose an evolution whose basis is nowhere.
+            # M42 widened this from KEEP-only: 36 of the 47 measured misses are
+            # PROMOTE picks, and the old scope could not see any of them.
             available = _my_board_and_hand_names(cur, us)
+            where = "fetched" if ctx in _KEEP_CONTEXTS else "promoted"
             for j in chosen:
                 if not isinstance(j, int) or j >= len(options):
                     continue
@@ -501,9 +578,46 @@ def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
                 card = _CARDS.get(cid)
                 basis = getattr(card, "evolvesFrom", None) if card else None
                 if basis and basis not in available:
-                    flags.append(f"[fetch-dead-evolution] s{i} t{turn}: fetched "
+                    me = cur["players"][us]
+                    bare = (not (me.get("bench") or [])
+                            and not any(_CARDS.get(c.get("id")) is not None
+                                        and getattr(_CARDS[c["id"]], "basic", False)
+                                        for c in (me.get("hand") or [])
+                                        if isinstance(c, dict)))
+                    note = (" — and the bench is EMPTY with no basic in hand, "
+                            "so nothing it evolves from can ever land") if bare else ""
+                    flags.append(f"[fetch-dead-evolution] s{i} t{turn}: {where} "
                                  f"{card_name(cid)} whose basis {basis} is "
-                                 f"nowhere in play or hand")
+                                 f"nowhere in play or hand{note}")
+        elif ctx in _DISCARD_CONTEXTS:
+            # (8) M42, the mirror of (5): the discard ladder is basis-blind
+            # (`-card_usefulness` never asks), so a LIVE Pokemon can be pitched
+            # while a basis-less evolution sits on the same menu as a free
+            # alternative.
+            available = _my_board_and_hand_names(cur, us)
+
+            def _dead(cid) -> bool:
+                card = _CARDS.get(cid)
+                basis = getattr(card, "evolvesFrom", None) if card else None
+                return bool(basis and basis not in available)
+
+            dead_offered = [card_name(cid) for j, o in enumerate(options)
+                            if j not in chosen
+                            and (cid := _option_card_id(o, sel, cur, us))
+                            and _dead(cid)]
+            for j in chosen:
+                if not isinstance(j, int) or j >= len(options):
+                    continue
+                cid = _option_card_id(options[j], sel, cur, us)
+                card = _CARDS.get(cid)
+                if card is None or _dead(cid) or not (
+                        getattr(card, "basic", False)
+                        or getattr(card, "evolvesFrom", None)):
+                    continue
+                if dead_offered:
+                    flags.append(f"[discard-live-basic] s{i} t{turn}: discarded "
+                                 f"{card_name(cid)}, which is live, while the "
+                                 f"basis-less {dead_offered} sat on the same menu")
 
     for turn, declined in sorted(turn_evolve_left.items()):
         if declined:
@@ -513,6 +627,11 @@ def _setup_taxonomy_flags(steps: list, us: int) -> list[str]:
         if len(turns) >= HOARD_MIN_TURNS and name not in trainers_played:
             flags.append(f"[trainer-hoarded] {name} was playable across "
                          f"{len(turns)} turns and never played")
+    for turn, (theirs, held) in sorted(turn_stadium_miss.items()):
+        if turn not in stadium_turns_played:
+            flags.append(f"[stadium-ignored] t{turn}: turn ENDED with the "
+                         f"opponent's {theirs} still in play while {held} sat "
+                         "in hand and would have displaced it")
     return flags
 
 
@@ -539,6 +658,7 @@ def batch(dir_path: str, seat: str = "a") -> None:
     end_counts, kind_counts = Counter(), Counter()
     example: dict[str, str] = {}
     n_games = 0
+    n_prompts = 0                      # M42: the denominator an A/B needs
     for f in files:
         if f.suffix == ".gz":
             with gzip.open(f, "rt") as fh:
@@ -560,6 +680,7 @@ def batch(dir_path: str, seat: str = "a") -> None:
         if last_cur is None:
             continue
         n_games += 1
+        n_prompts += sum(1 for _ in _iter_selects(steps, us))
         rewards = raw.get("rewards") or [None, None]
         verdict = classify_end(last_cur, us, rewards[us])
         end_counts[verdict.split(" — ")[0].split(" (")[0]] += 1
@@ -568,13 +689,19 @@ def batch(dir_path: str, seat: str = "a") -> None:
             kind_counts[kind] += 1
             example.setdefault(kind, f"{f.name}: {flag}")
 
-    print(f"=== batch post-mortem: {n_games} games from {dir_path} ===")
+    print(f"=== batch post-mortem: {n_games} games, {n_prompts} prompts "
+          f"from {dir_path} ===")
     print("\n-- endings --")
     for name, count in end_counts.most_common():
         print(f"  {count:>4}  {name}")
-    print("\n-- agent-error flags (kind: count across games) --")
+    # M42: per-game and per-100-prompt RATES alongside the raw count. Two
+    # batches never hold the same number of games or the same number of
+    # decisions per game, so a raw count cannot answer "did the fix help" --
+    # which is the only question an A/B asks of this table.
+    print("\n-- agent-error flags (count | per game | per 100 prompts) --")
     for name, count in kind_counts.most_common():
-        print(f"  {count:>4}  {name}")
+        print(f"  {count:>4}  {count / (n_games or 1):6.2f}  "
+              f"{100 * count / (n_prompts or 1):6.2f}  {name}")
         print(f"        e.g. {example[name]}")
     if not kind_counts:
         print("  (none)")

@@ -98,11 +98,12 @@ RUNGS = {
         "a menu offers an evolution whose basis is nowhere",
         "...and a live (basis-less) Pokemon was on the same menu",
         "...and WE TOOK THE DEAD EVOLUTION"),
+    # PER TURN, unlike the four above: playing the stadium at prompt 5 of a
+    # turn is not a defect at prompts 1-4. See Ladders.end_game.
     "stadium_ignored": (
-        "a stadium PLAY is on the menu",
-        "...and a DIFFERENT stadium is already in play, so playing ours "
-        "removes theirs",
-        "...and WE DECLINED — the pilot has no read on the stadium at all"),
+        "TURNS where a stadium PLAY was on the menu",
+        "...and the OPPONENT'S stadium was in play, so ours would remove it",
+        "...and THE TURN ENDED with theirs still out"),
 }
 
 
@@ -172,6 +173,32 @@ class Ladders:
     def __init__(self):
         self.c = Counter()
         self.detail = {k: Counter() for k in LADDERS}
+        self.turn_stadium: dict = {}     # turn -> their stadium name
+        self.turn_stadium_offer: set = set()
+        self.stadium_played: set = set()
+
+    def end_game(self):
+        """Resolve the per-TURN ladders and reset for the next game.
+
+        `stadium_ignored` is per-turn, not per-prompt, and the distinction is
+        not cosmetic: a turn has many MAIN prompts, so playing the stadium at
+        prompt 5 leaves prompts 1-4 looking like declines. The first version of
+        this ladder counted per prompt and read 58.5% on the Ogerpon ship --
+        while `rl/postmortem.py` on that ship's own QC replays showed it played
+        the stadium on EVERY turn the option existed (turns 7/11 and 5/11, 4
+        for 4). The per-turn view is the one `rl/postmortem.py:250` already
+        commits to: "fixing it later in the same turn is fine; ending the turn
+        in the bad state is the failure."
+        """
+        self.c["stadium_ignored.situation"] += len(self.turn_stadium_offer)
+        for turn, theirs in self.turn_stadium.items():
+            self.c["stadium_ignored.offered"] += 1
+            if turn not in self.stadium_played:
+                self.c["stadium_ignored.chose_bad"] += 1
+                self.detail["stadium_ignored"][theirs] += 1
+        self.turn_stadium.clear()
+        self.turn_stadium_offer.clear()
+        self.stadium_played.clear()
 
     # -- ladder 1 -----------------------------------------------------------
     def over_attach(self, obs, me, opts, chosen, hand_scalers):
@@ -284,7 +311,7 @@ class Ladders:
                 f"{_NAME.get(cid) or f'id{cid}'} [{where}]"] += 1
 
     # -- ladder 5 -----------------------------------------------------------
-    def stadium_ignored(self, obs, me, opts, chosen):
+    def stadium_ignored(self, obs, me, opts, chosen, turn):
         """The first framing of this ladder — "we replaced the stadium in play
         with the same card" — was RULE-IMPOSSIBLE and had to be thrown away.
         Measured 2026-08-04 over 20 prompts where a stadium was out AND a
@@ -300,7 +327,7 @@ class Ladders:
                  and cid in _IS_STADIUM]
         if not plays:
             return
-        self.c["stadium_ignored.situation"] += 1
+        self.turn_stadium_offer.add(turn)
         in_play = obs.current.stadium or []
         if not in_play:
             return                      # nothing to displace: declining is fine
@@ -308,11 +335,19 @@ class Ladders:
         if any(_option_card_id(obs, opts[j], me) == out_id for j in plays):
             self.c["same_id_offered"] += 1
             return
-        self.c["stadium_ignored.offered"] += 1
-        if not any(j in chosen for j in plays):
-            self.c["stadium_ignored.chose_bad"] += 1
-            self.detail["stadium_ignored"][_NAME.get(out_id)
-                                           or f"id{out_id}"] += 1
+        # Ownership IS readable: cg.api.Card carries playerIndex, and it was
+        # verified 2026-08-04 that every stadium we played landed with our own
+        # seat index (landed_ok 6, wrong-seat 0). rl/determinize.py:56's
+        # "stadium ownership is ambiguous" does not hold for this read.
+        owner = getattr(in_play[0], "playerIndex", None)
+        if owner is not None and int(owner) == int(obs.current.yourIndex):
+            self.c["stadium_ignored.ours_already_out"] += 1
+            return                      # displacing our own is not the defect
+        # Banked per TURN; end_game() resolves it. See end_game's docstring for
+        # why per-prompt counting was wrong by a factor of ~5 here.
+        self.turn_stadium[turn] = _NAME.get(out_id) or f"id{out_id}"
+        if any(j in chosen for j in plays):
+            self.stadium_played.add(turn)
 
 
 def instrument(fn, lad: Ladders):
@@ -349,7 +384,7 @@ def instrument(fn, lad: Ladders):
                 lad.hand_scaler_blind(obs, me, op_active, opts, chosen,
                                       hand_scalers)
                 lad.retreat_stranded(obs, me, op_active, opts, chosen)
-                lad.stadium_ignored(obs, me, opts, chosen)
+                lad.stadium_ignored(obs, me, opts, chosen, st.turn)
             elif ctx in _KEEP_CTX or ctx in _PROMOTE_CTX:
                 lad.c["fetch_prompts"] += 1
                 lad.dead_basis_fetch(obs, me, opts, chosen, ctx)
@@ -380,7 +415,11 @@ def report(lad: Ladders, args) -> int:
                          c[f"{name}.chose_bad"])
         r1, r2, r3 = RUNGS[name]
         print(f"\n  [{name}]")
-        print(f"    {sit:6d}  ({sit / base:5.1%} of prompts)  {r1}")
+        if name == "stadium_ignored":
+            # per TURN, not per prompt — see Ladders.end_game
+            print(f"    {sit:6d}  (turns)             {r1}")
+        else:
+            print(f"    {sit:6d}  ({sit / base:5.1%} of prompts)  {r1}")
         print(f"    {off:6d}                    {r2}")
         # Rate over rung 2: rung 1 counts situations we may have had no
         # alternative to, which would flatter or damn the pilot for the board's
@@ -394,6 +433,9 @@ def report(lad: Ladders, args) -> int:
             print(f"           of which we attacked anyway: "
                   f"{c['hand_scaler_blind.attacked_anyway']} — the M41 "
                   "617-of-617 signature (correct play through a dead feature)")
+        if name == "stadium_ignored":
+            print(f"           our own stadium already out (not a defect): "
+                  f"{c['stadium_ignored.ours_already_out']}")
         if name == "dead_basis_fetch":
             print(f"           strict (0 bench AND 0 basics in hand): "
                   f"{c['dead_basis_fetch.strict_situation']} situations, "
@@ -452,6 +494,7 @@ def main() -> int:
             _engine_game(fn_a, fn_b, deck_a, deck_b)
         else:
             _engine_game(fn_b, fn_a, deck_b, deck_a)
+        lad.end_game()                       # resolve the per-TURN ladders
 
     rc = report(lad, args)
     if args.json:
