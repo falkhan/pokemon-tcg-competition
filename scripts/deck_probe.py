@@ -63,7 +63,13 @@ OPPONENTS = {
     "ogerpon": "data/kaggle/ogerpon_356c16bd_deck.csv",
     "dragapult": "data/kaggle/dragapult_3631d393_deck.csv",
     "garchomp": "data/kaggle/garchomp_c7b3253f_deck.csv",
+    "festival": "decks/festival_dipplin.csv",
 }
+
+# `classify()` has no Dipplin/Festival signature, so the census files these
+# seats under `other`. Alias the share rather than editing FAMILY_SIGNATURES,
+# which is gate-critical and triplicated across the decide scripts.
+SHARE_ALIAS = {"festival": "other"}
 
 DEFAULT_CANDIDATES = {
     "ours(alakazam)": "decks/alakazam_v2_h4.csv",
@@ -152,7 +158,7 @@ def main() -> None:
         resolve(rel)
 
     shares = ladder_shares()
-    covered = sum(shares.get(f, 0.0) for f in opps)
+    covered = sum(shares.get(SHARE_ALIAS.get(f, f), 0.0) for f in opps)
     print(f"deck probe — pilot `{a.pilot}` on BOTH sides, n={a.n}/cell, "
           f"seed {a.seed}, {a.workers} workers", flush=True)
     print(f"opponents cover {covered:.1%} of the identified top-250 field\n", flush=True)
@@ -168,7 +174,7 @@ def main() -> None:
             rows.append({"candidate": cname, "opponent": oname, "n": res["n"],
                          "wr": wr, "ci": ci95(wr, res["n"]),
                          "w": res["w"], "l": res["l"], "d": res["d"],
-                         "share": shares.get(oname, 0.0),
+                         "share": shares.get(SHARE_ALIAS.get(oname, oname), 0.0),
                          "mirror": crel == orel})
             tag = "  (mirror)" if crel == orel else ""
             print(f"  {cname:16s} vs {oname:10s}  {wr:.3f} ±{ci95(wr, res['n']):.3f}"
