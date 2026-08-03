@@ -64,6 +64,10 @@ import rl.matchrunner as mr  # noqa: E402
 # (+125 ELO over the clone they wrap, measured), and the one legitimate place
 # solver strength enters training data — as an OPPONENT, never as a teacher.
 BEDS = {
+    # mirror family — 19.4% of the live mix, and arm 1's decode showed it
+    # FALLING when left out of the pool (m28 −3.0 z−2.11, mirror −2.2).
+    "mirror":   "model:checkpoints/m28_winners.pt:alakazam_v2_h4",
+    "m28":      "model:checkpoints/m28_winners.pt:clone54618168",
     "wall_d1":  "model:checkpoints/m38_bc_wall.pt:greattusk_wall",
     "wall_d2":  "model:checkpoints/m39_bed_wall_d2.pt:greattusk_wall",
     "wall_d3":  "model:checkpoints/m39_bed_wall_d3.pt:greattusk_wall",
@@ -74,7 +78,22 @@ BEDS = {
     "arch_d2":  "model:checkpoints/m39_bed_arch_d2.pt:archaludon",
     "arch_d3":  "model:checkpoints/m39_bed_arch_d3.pt:archaludon",
     "topgrim":  "model:checkpoints/m39_bc_topgrim.pt:grim_live",
-    # composites — budget is per-spec since M40 S3
+    "topgrim_d2": "model:checkpoints/m40_bed_topgrim_d2.pt:grim_live",
+    "topgrim_d3": "model:checkpoints/m40_bed_topgrim_d3.pt:grim_live",
+    # M40 phase 2 — the live LOSS FAMILIES, cloned from 900-1150 seats
+    # (2026-08-03). NOT live-faithful (positive control failed: they read
+    # 0.56-0.90 vs live truth 0.08-0.25) but real, diverse opponents that
+    # widen the pool beyond wall/grim/arch. d3 draws are the pre-registered
+    # HELD-OUTS — keep them out of --beds so the gate can see overfit.
+    "dragapult_d1": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv",
+    "dragapult_d2": "model:checkpoints/m40_bed_dragapult_d2.pt:data/kaggle/dragapult_3631d393_deck.csv",
+    "garchomp_d1": "model:checkpoints/m40_bed_garchomp_d1.pt:data/kaggle/garchomp_c7b3253f_deck.csv",
+    "garchomp_d2": "model:checkpoints/m40_bed_garchomp_d2.pt:data/kaggle/garchomp_c7b3253f_deck.csv",
+    "rocket_d1": "model:checkpoints/m40_bed_rocket_d1.pt:data/kaggle/rocket_59e27a5e_deck.csv",
+    "rocket_d2": "model:checkpoints/m40_bed_rocket_d2.pt:data/kaggle/rocket_59e27a5e_deck.csv",
+    # composites — budget is per-spec since M40 S3. Phase 3 measured the wrap
+    # INERT against our pilot (comp ≈ plain on the grim grid), so composites
+    # earn no place in the pool; kept only as specs for instrument work.
     "comp_grim": "solved:checkpoints/m39_bc_grim.pt:grim_live:800:400",
     "comp_wall": "solved:checkpoints/m38_bc_wall.pt:greattusk_wall:800:400",
 }
@@ -87,8 +106,17 @@ BEDS = {
 #     BASE action would come from a non-zero-plan ranking while the DEVIATION
 #     came from a zero-plan one, so exploration would be measured against a
 #     distribution the pilot never used.
-DEFAULT_ARM = "model-c-pkgz:checkpoints/m39_retain_b.pt:alakazam_v2_h4"
+DEFAULT_ARM = "model-c-pkgz:checkpoints/m38_w9294_cont3.pt:alakazam_v2_h4"
 DECK_IDX = 9000
+# The plan vector the SAMPLER reads logits at. The startup parity guard
+# asserts the ARM serves exactly this at every prompt, so the two policies
+# the collector compares (base action vs deviation) are the same policy.
+# Single source: if the sampler ever changes, the guard follows automatically.
+SAMPLER_PLAN = np.zeros(27, dtype=np.float32)
+ENC_VER = 3  # encode_state_v3 below; bump WITH the encoder calls, G-14 6b reads it
+# Cheap, always-on-disk opponent for the parity probe — independent of --beds
+# so a composite-only pool does not make the probe pay solver latency.
+PROBE_BED = "model:checkpoints/m28_winners.pt:alakazam_v2_h4"
 COLUMNS = ("states", "state_ids", "options", "option_ids", "n_options",
            "labels", "game_ids", "results", "deck_idx", "teacher_score",
            "seat_won", "episode_ids")
@@ -158,6 +186,77 @@ def make_sampler(a, rng):
 
 
 # --------------------------------------------------------------------------
+# collection-time parity guard
+# --------------------------------------------------------------------------
+def parity_verdict(rec: dict) -> tuple[bool, str]:
+    """Decide the guard from a probe census. Pure so the decision boundary is
+    testable without engine games.
+
+    Fails on a plan mismatch, and fails on a probe that observed nothing —
+    a guard that can pass vacuously is the S6-mechanism-probe mistake again.
+    """
+    if rec.get("prompts", 0) == 0:
+        return False, ("probe observed 0 prompts — harness defect, not a "
+                       "pass (the instrumented pilot never acted)")
+    if rec.get("plan_mismatch_prompts", 0):
+        return False, (f"arm served a plan != SAMPLER_PLAN on "
+                       f"{rec['plan_mismatch_prompts']}/{rec['prompts']} "
+                       f"prompts — the base action and the sampled deviation "
+                       f"would come from two different policies")
+    return True, "arm serves SAMPLER_PLAN at every prompt"
+
+
+def verify_plan_parity(a, n_games: int = 2) -> dict:
+    """Collection-time G-14. This collector's first outing manufactured the
+    exact train/serve mismatch S6 had removed that morning (diary 2026-08-02):
+    the default arm served a NON-ZERO plan while the sampler read logits at
+    plan=0. G-14 catches that class at ship time; nothing caught it at
+    collection time — this does, before a single chunk is spent.
+
+    Behavioural, not static: plays n_games of the ARM vs a cheap fixed bed
+    with the arm's OptionScorerV3 subclassed to record the literal plan vector
+    it is fed (the m40_planzero_probe pattern — patch around ONE make_pilot
+    call so the bed side stays pristine).
+    """
+    import rl.plan as rp
+    import rl.policy as rl_policy
+
+    rec = {"prompts": 0, "plan_mismatch_prompts": 0, "plan_enumerations": 0,
+           "games": n_games}
+    real_enum = rp.enumerate_plans
+    real_cls = rl_policy.OptionScorerV3
+
+    def counting_enum(obs):
+        rec["plan_enumerations"] += 1
+        return real_enum(obs)
+
+    class _Recording(real_cls):
+        def act(self, state_ctx, plan, state_ids, options, option_ids, k,
+                greedy=True):
+            rec["prompts"] += 1
+            served = np.asarray(plan, dtype=np.float32).ravel()
+            if not np.array_equal(served, SAMPLER_PLAN):
+                rec["plan_mismatch_prompts"] += 1
+            return super().act(state_ctx, plan, state_ids, options,
+                               option_ids, k, greedy=greedy)
+
+    rp.enumerate_plans = counting_enum
+    rl_policy.OptionScorerV3 = _Recording
+    try:
+        fn_a, deck_a = mr.make_pilot(mr.parse_spec(a.arm), instance="parity_a")
+    finally:
+        rp.enumerate_plans = real_enum
+        rl_policy.OptionScorerV3 = real_cls
+    fn_b, deck_b = mr.make_pilot(mr.parse_spec(PROBE_BED), instance="parity_b")
+
+    for g in range(n_games):
+        fns = (fn_a, fn_b) if g % 2 == 0 else (fn_b, fn_a)
+        decks = (deck_a, deck_b) if g % 2 == 0 else (deck_b, deck_a)
+        mr._engine_game(fns[0], fns[1], decks[0], decks[1])
+    return rec
+
+
+# --------------------------------------------------------------------------
 # one chunk
 # --------------------------------------------------------------------------
 def run_chunk(a, bed: str, seed: int, n_games: int, game_id0: int,
@@ -213,7 +312,7 @@ def run_chunk(a, bed: str, seed: int, n_games: int, game_id0: int,
                 with torch.no_grad():
                     logits = net(
                         torch.from_numpy(state_ctx).unsqueeze(0),
-                        torch.zeros(1, 27),          # M40 S6: serve plan=0
+                        torch.from_numpy(SAMPLER_PLAN).unsqueeze(0),
                         torch.from_numpy(state_ids.astype(np.int64)).unsqueeze(0),
                         torch.from_numpy(opts).unsqueeze(0),
                         torch.from_numpy(oids.astype(np.int64)).unsqueeze(0),
@@ -347,6 +446,23 @@ def main() -> int:
     if not todo:
         print("nothing to do — collection complete")
         return 0
+
+    # Collection-time G-14: verified on EVERY invocation that will collect —
+    # the arm's serve path can change between resumes, and the probe is a few
+    # seconds against hours of collection. Informational record goes to the
+    # manifest but NOT into config_fingerprint (that would refuse to resume
+    # every pre-guard dir for a check that changes no row's meaning).
+    rec = verify_plan_parity(a)
+    ok, reason = parity_verdict(rec)
+    man["parity"] = {**rec, "enc_ver": ENC_VER, "ok": ok,
+                     "checked": time.strftime("%Y-%m-%d %H:%M:%S")}
+    save_manifest(a.out, man)
+    print(f"[parity] {reason}  "
+          f"(prompts {rec['prompts']}, plan_enum {rec['plan_enumerations']})")
+    if not ok:
+        print("PARITY GUARD: refusing to collect — fix the arm spec (or the "
+              "sampler) so both sides read the same plan distribution.")
+        return 4
 
     for bed, start, n in todo:
         tag = f"{bed}_{a.seed}_{start:05d}"

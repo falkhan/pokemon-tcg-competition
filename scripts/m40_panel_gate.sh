@@ -70,13 +70,32 @@ declare -A BED=(
   [topgrim_d1]="model:checkpoints/m39_bc_topgrim.pt:grim_live"
   [topgrim_d2]="model:checkpoints/m40_bed_topgrim_d2.pt:grim_live"
   [topgrim_d3]="model:checkpoints/m40_bed_topgrim_d3.pt:grim_live"
+
+  # M40 phase 4 (2026-08-03) — loss-family panels replacing the weak proxies
+  # (rule:dragapult sample agent, M30-era rocket clone). Cloned from 900-1150
+  # seats; positive control FAILED (0.56-0.90 vs live 0.08-0.25) so these
+  # cells measure RELATIVE deltas only, never live-faithful absolutes.
+  [dragapult_d1]="model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  [dragapult_d2]="model:checkpoints/m40_bed_dragapult_d2.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  [dragapult_d3]="model:checkpoints/m40_bed_dragapult_d3.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  [garchomp_d1]="model:checkpoints/m40_bed_garchomp_d1.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  [garchomp_d2]="model:checkpoints/m40_bed_garchomp_d2.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  [garchomp_d3]="model:checkpoints/m40_bed_garchomp_d3.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  [rocket_d1]="model:checkpoints/m40_bed_rocket_d1.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  [rocket_d2]="model:checkpoints/m40_bed_rocket_d2.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  [rocket_d3]="model:checkpoints/m40_bed_rocket_d3.pt:data/kaggle/rocket_59e27a5e_deck.csv"
 )
 # Order = descending live share, so a battery killed part-way still covers
 # the mass that decides the verdict. Panel draws are interleaved d1/d2/d3 so
 # a partial family is still a partial PANEL rather than one draw.
-SOLO_ORDER=(tuned mirror m28 dragapult rocket iono)
+# dragapult (rule agent) and rocket (M30 clone) retired from SOLO_ORDER
+# 2026-08-03 — replaced by the trained panels below.
+SOLO_ORDER=(tuned mirror m28 iono)
 PANEL_ORDER=(wall_d1 wall_d2 wall_d3 arch_d1 arch_d2 arch_d3
-             grim_d1 grim_d2 grim_d3)
+             grim_d1 grim_d2 grim_d3
+             dragapult_d1 dragapult_d2 dragapult_d3
+             garchomp_d1 garchomp_d2 garchomp_d3
+             rocket_d1 rocket_d2 rocket_d3)
 TOP_ORDER=(top_d1 top_d2 top_d3)
 TOPGRIM_ORDER=(topgrim_d1 topgrim_d2 topgrim_d3)
 

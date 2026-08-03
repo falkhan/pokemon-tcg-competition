@@ -164,7 +164,29 @@ _MODEL_FIX_KINDS = {
     "model-pz": frozenset({"planzero"}),
     "model-c-pkgz": frozenset({"conserve", "racemode2", "racemode4",
                                "planzero"}),
+    # M40 deep-dive candidates (2026-08-03). Base = conserve+planzero: the
+    # live evidence ranks conserve-only above the racemode package (Ship A
+    # 773.6 > Ship B 726.3 > floor 659.7) and planzero is the adopted S6
+    # serve fix. Each candidate is single-variable vs `model-cz`.
+    "model-cz": frozenset({"conserve", "planzero"}),
+    "model-cz-ashw": frozenset({"conserve", "planzero", "ash", "ashguard"}),
+    "model-cz-ham": frozenset({"conserve", "planzero", "hammer"}),
+    "model-cz-tempo": frozenset({"conserve", "planzero", "tempo"}),
+    # M40b Track C — value-guided veto on top of the cz base.
+    "model-cz-vv": frozenset({"conserve", "planzero", "vveto"}),
 }
+
+# M40b Track C `vveto` knobs (module-level like SOLVED_* so probes can read
+# and tests can monkeypatch). Critic = the ONLY E0-passing value head
+# (m39_retain_b, matched-pair 0.642); cont3's own head FAILED E0 at 0.469.
+# A discredited policy carrying the only validated critic is fine — the
+# critic is frozen and only ranks afterstates.
+VVETO_CRITIC = "checkpoints/m39_retain_b.pt"
+VVETO_TOPK = 3
+VVETO_DELTA = 0.10        # min V-margin to override the policy pick
+VVETO_DEADLINE_S = 0.12   # per-prompt wall cap across all candidate steps
+VVETO_STATS = {"prompts": 0, "opened": 0, "stepped": 0, "vetoes": 0,
+               "time_max": 0.0, "time_sum": 0.0}
 
 
 def resolve_deck(deck) -> list[int]:
@@ -584,6 +606,88 @@ def make_pilot(spec: OpponentSpec, instance: str):
             pstate = {"key": None, "vec": np.zeros(PLAN_DIM, np.float32),
                       "last_turn": -1}
 
+            vveto = None
+            if "vveto" in attach_fixes:
+                # M40b Track C (O17): 1-ply afterstate veto. score_siblings'
+                # skeleton — open ONE determinized search per prompt, step
+                # each of the policy's top-k picks once, score the child with
+                # the frozen E0-validated critic, override only on a clear
+                # V-margin. Sound within our own turn (the opponent never
+                # acts); skipped whenever search_begin_input is absent
+                # (logged replays) or a child leaves our perspective.
+                from time import perf_counter
+                from cg.api import search_end, search_step
+                from rl.turn_solver import _open_search
+                csd = torch.load(ROOT / VVETO_CRITIC, map_location="cpu")
+                c_ids = (csd["state_enc.0.weight"].shape[1] - _SV2 - _NC
+                         - PLAN_DIM) // EMBED_DIM
+                critic = OptionScorerV3(n_state_ids=c_ids,
+                                        option_dim=option_dim_of(csd))
+                critic.load_state_dict(csd)
+                critic.eval()
+                c_zero_plan = torch.zeros(1, critic.plan_dim)
+
+                def _critic_v(cur, ctx) -> float:
+                    num2, sids2 = enc_state(cur, deck_ids)
+                    sc2 = np.concatenate(
+                        [num2, encode_context(ctx)]).astype(np.float32)
+                    with torch.no_grad():
+                        v = critic.value_head(critic._trunk(
+                            torch.from_numpy(sc2).unsqueeze(0), c_zero_plan,
+                            torch.from_numpy(
+                                sids2.astype(np.int64)).unsqueeze(0)))
+                    return float(v.squeeze())
+
+                def vveto(obs, ranked):
+                    sel = obs.select
+                    if (sel.context != SelectContext.MAIN
+                            or sel.maxCount != 1 or len(sel.option) < 2
+                            or getattr(obs, "search_begin_input", None)
+                            is None):
+                        return ranked
+                    t0 = perf_counter()
+                    VVETO_STATS["prompts"] += 1
+                    me_idx = obs.current.yourIndex
+                    vals = {}
+                    try:
+                        root = _open_search(obs, deck_ids)
+                    except Exception:
+                        return ranked      # odd states can fail determinize
+                    VVETO_STATS["opened"] += 1
+                    try:
+                        for i in ranked[:VVETO_TOPK]:
+                            if perf_counter() - t0 > VVETO_DEADLINE_S:
+                                break
+                            try:
+                                child = search_step(root.searchId, [int(i)])
+                            except Exception:
+                                continue
+                            VVETO_STATS["stepped"] += 1
+                            cur = child.observation.current
+                            if cur.result >= 0:      # action ended the game
+                                vals[i] = (2.0 if cur.result == me_idx
+                                           else -2.0 if cur.result
+                                           == 1 - me_idx else 0.0)
+                                continue
+                            if (cur.yourIndex != me_idx
+                                    or child.observation.select is None):
+                                continue             # turn passed: V is from
+                            vals[i] = _critic_v(     # the wrong side — skip
+                                cur, child.observation.select.context)
+                    finally:
+                        search_end()
+                    dt = perf_counter() - t0
+                    VVETO_STATS["time_sum"] += dt
+                    VVETO_STATS["time_max"] = max(VVETO_STATS["time_max"], dt)
+                    if ranked[0] not in vals or len(vals) < 2:
+                        return ranked    # no comparison basis -> no veto
+                    best = max(vals, key=vals.get)
+                    if best != ranked[0] \
+                            and vals[best] - vals[ranked[0]] >= VVETO_DELTA:
+                        VVETO_STATS["vetoes"] += 1
+                        return [best] + [i for i in ranked if i != best]
+                    return ranked
+
             def fn3(od):
                 obs = to_observation_class(od)
                 if obs.select is None:
@@ -625,6 +729,8 @@ def make_pilot(spec: OpponentSpec, instance: str):
                                     len(obs.select.option), greedy=True)
                     ranked = apply_attach_overrides(obs, ranked, attach_fixes)
                     ranked = apply_play_overrides(obs, ranked, attach_fixes)
+                    if vveto is not None:
+                        ranked = vveto(obs, ranked)
                     return ranked[:obs.select.maxCount]
                 return m3.act(sc, plan, sids, opts, oids,
                               obs.select.maxCount, greedy=True)

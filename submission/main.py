@@ -160,10 +160,17 @@ _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
 # a mismatch rather than adding a mechanism, and removals are the class of
 # change that has actually transferred live. Bundled with the next net ship
 # rather than spending a slot of its own.
+# M40b round 1 (2026-08-03): the racemode package is DROPPED — live evidence
+# ranks conserve-only above it (Ship A 773.6 > Ship B 726.3 > floor 659.7)
+# and it produced no live deck-out reduction (5/27 vs 7/24, 7/30 losses).
+# `ash`+`ashguard` is the deep-dive Sacred Ash timing window (play at deck
+# 4-11 like the 1000+ pilots of this list; never at deck >12 — our live
+# pilots burned it at 12-36). Battery: +0.41pp z=+1.05 vs cz, mechanism
+# probe: ash plays moved from deck {8,13,24,42} to {2,3,8,9,10,12}.
 _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
         "PKM_ATTACH_FIXES",
-        "conserve,racemode2,racemode4,planzero").split(",") if f)
+        "conserve,planzero,ash,ashguard").split(",") if f)
 # M40 S6: `planzero` is a SERVE fix, not a reranker — it changes what the trunk
 # is FED, so it is read out here rather than passed to apply_*_overrides (which
 # ignore it harmlessly). See rl/plan.py O14 for why the plan head is

@@ -369,6 +369,35 @@ PLAY_FIX_RACEASH = "raceash"          # O13b: recycle Sacred Ash EARLY in a race
 # served input distribution match the trained one exactly; it is a removal, and
 # removals do not depend on out-playing anyone.
 SERVE_FIX_PLANZERO = "planzero"       # O14: feed plan=0, skip the plan head (m40 S6)
+# O17 `vveto` (m40b Track C): serve-time BLUNDER VETO — re-rank the policy's
+# top-k MAIN picks by the E0-validated value head over 1-ply engine
+# afterstates (rl/matchrunner, fn3 branch). A serve-side mechanism like
+# planzero: inert in apply_*_overrides, acts around the scorer, not in it.
+# Designed conservative (override only on a large V-margin) because the
+# codebase's prior on search+neural is negative: MCTS-16 on the v3 head was
+# −11pp RESOLVED (M28), and the solver changes 0.5% of neural actions (M22c).
+SERVE_FIX_VVETO = "vveto"             # O17: value-head afterstate veto (m40b C)
+
+# --- M40 deep-dive rules (docs/M40.md 2026-08-03, behavior census) -----------
+# Both target measured gaps between our live pilots and 1000+ pilots of OUR
+# OWN list (52 seats): they hold Sacred Ash until deck 4-11 while we burn it
+# at deck 12-36 (deviating from our own teachers, who play it at 1-8), and
+# they play Enhanced Hammer on 49.6% of offers vs our 22-25% while ENDing
+# with a playable item only 7.6% of the time vs our 13-33%.
+#
+# O15 `ashguard`: DEMOTE a Sacred Ash PLAY while our deck is still fat
+# (> _ASHGUARD_AT). Composes with O5 `ash` (promote at <= 10) into a timing
+# WINDOW matching the top band; separate name so each half stays
+# attributable (the raceash law). Removal-class: it prevents a waste, it
+# does not out-play anyone.
+# O16 `hammer`: tempo-class END-blocker — the model is about to END with an
+# Enhanced Hammer PLAY on the menu -> play it. Same ranked[0]==END gate as
+# O3 tempo, so it can never override a real play; engine legality implies a
+# target exists.
+PLAY_FIX_ASHGUARD = "ashguard"        # O15: no early Sacred Ash (deck fat)
+PLAY_FIX_HAMMER = "hammer"            # O16: no END while Enhanced Hammer playable
+ENHANCED_HAMMER_ID = 1081
+_ASHGUARD_AT = 12   # top-band plays land at deck 4-11; >12 is the waste zone
 _TEMPO_ITEM_IDS = frozenset({POFFIN_ID, POKE_PAD_ID})
 _DECKGUARD_AT = 6   # a use draws 3 (net -1); at <=3 it draws the deck to 0
 _ASH_AT = 10
@@ -597,6 +626,14 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
       Ash was played at deck 0 and deck 2 in two M37 losses — recycle value
       sat on until the last possible moment. Independent of `ash`: with
       neither name present the Sacred Ash promote is off entirely.
+    - O15 `ashguard` (m40 deep-dive): DEMOTE a Sacred Ash PLAY while our
+      deck > 12. Live pilots burn Ash at deck 12-36; the 1000+ pilots of
+      the same list play it at 4-11 and the training corpus at 1-8. With
+      O5 `ash` this forms a timing window (no early waste, forced late).
+    - O16 `hammer` (m40 deep-dive): about to END with an Enhanced Hammer
+      PLAY on the menu -> play it. The top band plays hammer on 49.6% of
+      offers vs our 22-25%, and ENDs with a playable item 7.6% vs our
+      13-33% — this converts pure END passivity into the tempo tool.
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -647,6 +684,13 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                  and _hand_card_id(opts[i], hand) in _TEMPO_ITEM_IDS]
         if tempo:
             pick = tempo[0]
+    if (pick is None and PLAY_FIX_HAMMER in fixes
+            and opts[ranked[0]].type == OptionType.END):
+        hammer = [i for i in ranked
+                  if opts[i].type == OptionType.PLAY
+                  and _hand_card_id(opts[i], hand) == ENHANCED_HAMMER_ID]
+        if hammer:
+            pick = hammer[0]
     if pick is not None and pick != ranked[0]:
         return [pick] + [i for i in ranked if i != pick]
     demote_ids = frozenset()
@@ -672,6 +716,8 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
         demote_hand_ids = _RACEMODE4_ALWAYS_IDS
         if _own_board_ids(me) & _RACEMODE4_SETUP_POKEMON:
             demote_hand_ids |= _RACEMODE4_SETUP_IDS
+    if PLAY_FIX_ASHGUARD in fixes and me.deckCount > _ASHGUARD_AT:
+        demote_hand_ids |= frozenset({SACRED_ASH_ID})
 
     def _demoted(i) -> bool:
         opt = opts[i]

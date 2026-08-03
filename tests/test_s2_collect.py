@@ -11,8 +11,9 @@ from argparse import Namespace
 
 import pytest
 
-from scripts.m40_s2_collect import (BEDS, config_fingerprint, load_manifest,
-                                    make_sampler, save_manifest)
+from scripts.m40_s2_collect import (BEDS, SAMPLER_PLAN, config_fingerprint,
+                                    load_manifest, make_sampler,
+                                    parity_verdict, save_manifest)
 
 
 def _args(**kw):
@@ -59,6 +60,49 @@ def test_fingerprint_ignores_nothing_that_matters_to_a_row():
     # resuming across a change to it can collide ids between chunks.
     assert config_fingerprint(_args(chunk_games=50)) != \
         config_fingerprint(_args(chunk_games=25))
+
+
+# --- the collection-time parity guard (G-14 at collection) ------------------
+# The collector's first outing served a non-zero plan while the sampler read
+# logits at plan=0 (diary 2026-08-02) — these pin the decision boundary of the
+# guard that now blocks that class before a chunk is spent.
+
+def test_parity_verdict_fails_on_plan_mismatch():
+    ok, reason = parity_verdict(
+        {"prompts": 500, "plan_mismatch_prompts": 175, "plan_enumerations": 174})
+    assert not ok
+    assert "two different policies" in reason
+
+
+def test_parity_verdict_fails_vacuous_probe():
+    """A probe that observed nothing must FAIL, not pass — the S6 mechanism
+    probe's first version read as decisive while measuring the wrong pilot."""
+    ok, reason = parity_verdict(
+        {"prompts": 0, "plan_mismatch_prompts": 0, "plan_enumerations": 0})
+    assert not ok
+    assert "harness defect" in reason
+
+
+def test_parity_verdict_passes_matching_arm():
+    ok, _ = parity_verdict(
+        {"prompts": 500, "plan_mismatch_prompts": 0, "plan_enumerations": 0})
+    assert ok
+
+
+def test_sampler_plan_is_zero_matching_planzero_serving():
+    """The sampler's plan vector IS the adopted serve distribution (S6:
+    plan=0 on every training row since M24). If someone changes SAMPLER_PLAN
+    they are changing what policy the corpus is on-distribution FOR, and this
+    test makes that a deliberate act rather than a drive-by edit."""
+    assert SAMPLER_PLAN.shape == (27,)
+    assert not SAMPLER_PLAN.any()
+
+
+def test_parity_record_stays_out_of_the_fingerprint():
+    """The guard's manifest record is informational: it must never enter
+    config_fingerprint, or every pre-guard dir would refuse to resume over a
+    check that changes no row's meaning."""
+    assert "parity" not in config_fingerprint(_args())
 
 
 # --- the sampler, which the pre-registered kill is measured against ---------

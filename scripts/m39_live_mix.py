@@ -31,9 +31,11 @@ sys.path.insert(0, str(ROOT))
 
 import polars as pl  # noqa: E402
 
-# The two ships whose live samples are pooled into the mix. Keep this at the
-# LAST TWO ships (G-6's spirit: an era-old mix is as stale as an era-old bed).
-SOURCE_SUBS = (55065484, 55146658)   # M37, M38
+# The ships whose live samples are pooled into the mix. Keep this at the
+# most recent ships (G-6's spirit: an era-old mix is as stale as an era-old
+# bed). Updated 2026-08-03 from (M37, M38) to the three forensic subs —
+# Ship A, Ship B and the M40 floor — 158 pooled games.
+SOURCE_SUBS = (55172160, 55182097, 55185485)
 OUT = ROOT / "data" / "m39_live_mix.json"
 COVERAGE_FLOOR = 0.80                # G-3: a gate roster below this is invalid
 
@@ -68,17 +70,29 @@ FAMILY_SIGNATURES = (
 # Which gate bed stands in for which live family (G-3 coverage accounting).
 # Two beds may share a family — their cells are pooled inside it, and the
 # family's live share is what weights the result.
+# SYNCED 2026-08-03 with scripts/m40_decide.py BED_FAMILY (this copy had
+# drifted: it listed a `stall` bed and a `garchomp` bed that do not exist —
+# m37_bc_garchomp.pt is pre-v4 and will not load — and lacked the G-13
+# panel-draw names). If the rosters diverge again, the coverage this script
+# prints and the coverage the decoder enforces are two different numbers.
 BED_FAMILY = {
     "tuned": "lucario",
     "mirror": "mirror",
     "m28": "mirror",
     "grim": "grim",
     "wall": "wall",
-    "stall": "stall",
+    "archaludon": "archaludon",
     "dragapult": "dragapult",
     "iono": "iono",
     "rocket": "rocket",
-    "garchomp": "garchomp",
+    "wall_d1": "wall", "wall_d2": "wall", "wall_d3": "wall",
+    "arch_d1": "archaludon", "arch_d2": "archaludon", "arch_d3": "archaludon",
+    "grim_d1": "grim", "grim_d2": "grim", "grim_d3": "grim",
+    "dragapult_d1": "dragapult", "dragapult_d2": "dragapult",
+    "dragapult_d3": "dragapult",
+    "garchomp_d1": "garchomp", "garchomp_d2": "garchomp",
+    "garchomp_d3": "garchomp",
+    "rocket_d1": "rocket", "rocket_d2": "rocket", "rocket_d3": "rocket",
 }
 
 

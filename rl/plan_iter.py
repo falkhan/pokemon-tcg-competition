@@ -924,6 +924,57 @@ def apply_outcome_weights(ds, alpha: float) -> None:
           f"{int(mask.sum())} rows ({mask.mean():.1%})")
 
 
+def apply_advantage_weights(ds, value_ckpt: str, beta: float = 1.0,
+                            clip: float = 3.0) -> None:
+    """M40 S2 arm 2b — advantage-weighted BC off an E0-validated value head.
+
+    apply_outcome_weights is the degenerate form of this: it weights a row by
+    its game's OUTCOME, which is constant within a game by construction. E0
+    (scripts/m40_e0_value.py, 2026-08-02) measured 68% of the value head's
+    variance WITHIN games, so A = result - V(s) can distinguish decisions the
+    outcome proxy cannot: rows where the eventual result beats the head's
+    expectation train harder, rows the head already priced in train softer —
+    and loser rows are no longer uniformly damped, which is the α=0.25
+    lesson taken one step further.
+
+    w = exp(A/beta) clipped to [1/clip, clip], then normalized to mean 1 so
+    the effective learning rate is unchanged. The critic is FROZEN and
+    separate from the trained net (gradients never touch value_ckpt); its
+    V(s) is computed at the trained rows' own state_ids — feeding zeros
+    would evaluate the head on an input no encoder emits (E0's own first-run
+    defect, G-14 6d's class). Policy-CE only; evaluate() stays unweighted
+    (same contract as apply_class_weights).
+    """
+    from rl.policy import option_dim_of
+    sd = torch.load(value_ckpt if Path(value_ckpt).is_absolute()
+                    else ROOT / value_ckpt, map_location="cpu")
+    n_ids = _n_ids_of(sd)
+    critic = OptionScorerV3(n_state_ids=n_ids, option_dim=option_dim_of(sd))
+    critic.load_state_dict(sd)
+    critic.eval()
+
+    ids = ds.state_ids[:, :n_ids] if ds.state_ids.shape[1] >= n_ids else \
+        np.pad(ds.state_ids, ((0, 0), (0, n_ids - ds.state_ids.shape[1])))
+    v = np.empty(len(ds.results), dtype=np.float32)
+    zeros_plan = torch.zeros(1, critic.plan_dim)
+    for i in range(0, len(v), 1024):
+        s = torch.from_numpy(ds.states[i:i + 1024].astype(np.float32))
+        sid = torch.from_numpy(ids[i:i + 1024].astype(np.int64))
+        with torch.no_grad():
+            out = critic.value_head(
+                critic._trunk(s, zeros_plan.expand(s.shape[0], -1), sid))
+        v[i:i + 1024] = out.squeeze(-1).numpy()
+
+    adv = ds.results - v
+    w = np.clip(np.exp(adv / beta), 1.0 / clip, clip).astype(np.float32)
+    w /= w.mean()
+    ds.weights *= w
+    print(f"advantage-weight ({Path(value_ckpt).name}, beta={beta}, "
+          f"clip={clip}): adv mean {adv.mean():+.3f} sd {adv.std():.3f}; "
+          f"w [{w.min():.2f}, {w.max():.2f}], "
+          f"{(w > 1).mean():.1%} up / {(w < 1).mean():.1%} down")
+
+
 def train(data_dirs: list, name: str, init: str | None = None,
           init_v2: str | None = None, init_v3h: str | None = None,
           init_v3o: str | None = None, init_v3m: str | None = None,
@@ -934,7 +985,9 @@ def train(data_dirs: list, name: str, init: str | None = None,
           card_kind_weights: dict[int, float] | None = None,
           phase_weight: float | None = None,
           phase_deck_at: int = 15,
-          outcome_weight: float | None = None) -> None:
+          outcome_weight: float | None = None,
+          advantage_ckpt: str | None = None,
+          advantage_beta: float = 1.0) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
@@ -956,6 +1009,8 @@ def train(data_dirs: list, name: str, init: str | None = None,
         apply_phase_weights(ds, phase_weight, phase_deck_at)
     if outcome_weight is not None:
         apply_outcome_weights(ds, outcome_weight)
+    if advantage_ckpt is not None:
+        apply_advantage_weights(ds, advantage_ckpt, beta=advantage_beta)
 
     rng = np.random.default_rng(0)
     unique_games = np.unique(ds.game_ids)
@@ -1246,6 +1301,14 @@ if __name__ == "__main__":
                         "games the imitated seat did NOT win by ALPHA — the "
                         "soft form of replay_bc --winners-only (alpha=0 "
                         "reproduces it; docs/M37-plan.md W4)")
+    t.add_argument("--advantage-ckpt", type=str, default=None,
+                   metavar="CKPT",
+                   help="M40 S2 arm 2b: weight each row by "
+                        "clip(exp((result - V(s))/beta)) with V from this "
+                        "FROZEN checkpoint's value head (E0-validated). "
+                        "Per-decision replacement for --outcome-weight")
+    t.add_argument("--advantage-beta", type=float, default=1.0,
+                   help="temperature for --advantage-ckpt (higher = flatter)")
     r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
                                        "sibling shard dirs (<dir><suffix>)")
     r.add_argument("--data", type=str, nargs="+", required=True)
@@ -1286,4 +1349,6 @@ if __name__ == "__main__":
               card_kind_weights=card_kind_weights or None,
               phase_weight=args.phase_weight,
               phase_deck_at=args.phase_deck_at,
-              outcome_weight=args.outcome_weight)
+              outcome_weight=args.outcome_weight,
+              advantage_ckpt=args.advantage_ckpt,
+              advantage_beta=args.advantage_beta)

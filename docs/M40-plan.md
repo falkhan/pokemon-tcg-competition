@@ -13,10 +13,39 @@ rests on a hypothesis M40 tests rather than assumes.
 
 ---
 
-## 0. STATUS BOARD — updated 2026-08-02 end of day 1
+## 0. STATUS BOARD — updated 2026-08-03 (day 2)
 
 Execution diary: [M40.md](M40.md). Every number below is decoded there with its
 interval; this table is the index, not the evidence.
+
+### Day 2 — the phase-2 plan (forensics-driven; approved 08-03)
+
+| lane | status | result |
+|---|---|---|
+| **Live forensics** (3 subs) | ✅ DONE | floor = **resolved live regression** (0.36, z=2.06); loss mass = grim/dragapult/rocket/garchomp ≈30% of games at 0.15 WR; `retain_b` retired |
+| **P0** collection-time G-14 | ✅ DONE | parity guard in collector, verified both directions (pkg arm fails 35/132) |
+| **P1** harvest+census+exports | ✅ DONE | snowball 800 eps → all 3 families cloneable at 1000+ band; `export_opp_deck.py` |
+| **P2** loss-family beds | ✅ DONE | `m40_bed_{dragapult,garchomp,rocket}_d1-3` (9 ckpts) |
+| **P3** positive control | ❌ **FAILED 4-for-4** | clones read 0.56-0.90 vs live 0.08-0.25; **composite wrap INERT vs us** (comp ≈ plain, grim+dragapult) |
+| **P4** re-pointed gate | ✅ DONE | 27-bed roster, live-mix from last 3 ships (coverage 83.2%), arm-2 rules pre-registered incl. held-outs |
+| **P5** S2 arm 2 | ✅ GATED | **2a KILLED** (−1.58pp z=−3.98); **2b NULL** (−0.63pp z=−1.60); both −6pp on the 900+ mirror (z=−5). Advantage > α on the same corpus, but neither beats control. Round 1 of the exhaustion clock |
+| **P6** ship-or-pivot | ⬜ **PIOTR** | offline levers all null/negative/invalid; recommendation + options in the 08-03 morning summary (diary + chat) |
+
+### M40b — the switch (decided 2026-08-03, plan in the session plan file + diary)
+
+Offline numbers are regression checks and mechanism probes ONLY; the ladder
+selects (read-n 45, replicates). Improvement operators: engineered priors →
+test-time value → live selection; full search-amplified loop deferred to M41.
+
+| track | status | result |
+|---|---|---|
+| **A** grim-clone probe | 🔄 gate running | ship live IFF weighted ≥0.55 (Piotr's bar); `model-pz` + `grim_live` |
+| **B** round-1 candidates | 🔄 battery resuming | ashguard (probe: ash window closed), hammer, tempo, top1000 (mirror-panel aligned) |
+| **C** value-guided veto | ⬜ C0 next | top-k afterstate re-rank by E0 critic; round-2 ship target |
+| round 2 | ⬜ | `gustdev` (needs new target-select override class) + live-favored combos |
+| endgame d9-13 | ⬜ | 3-4 replicates of the live leader; then accrual only |
+
+### Day 1 board (2026-08-02)
 
 | lane | phase | status | result |
 |---|---|---|---|

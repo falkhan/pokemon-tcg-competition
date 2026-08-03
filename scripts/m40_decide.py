@@ -73,6 +73,16 @@ BED_FAMILY = {
     "wall_d1": "wall", "wall_d2": "wall", "wall_d3": "wall",
     "arch_d1": "archaludon", "arch_d2": "archaludon", "arch_d3": "archaludon",
     "grim_d1": "grim", "grim_d2": "grim", "grim_d3": "grim",
+    # M40 phase 4 (2026-08-03): loss-family panels from 900-1150-band seats.
+    # The garchomp note above is superseded — m40_bed_garchomp_* are fresh
+    # v3 nets and load fine. Positive control FAILED for all three (they
+    # read 0.56-0.90 where live truth is 0.08-0.25), so these cells carry
+    # RELATIVE deltas into the weighted number, never live-band claims.
+    "dragapult_d1": "dragapult", "dragapult_d2": "dragapult",
+    "dragapult_d3": "dragapult",
+    "garchomp_d1": "garchomp", "garchomp_d2": "garchomp",
+    "garchomp_d3": "garchomp",
+    "rocket_d1": "rocket", "rocket_d2": "rocket", "rocket_d3": "rocket",
 }
 
 # Panel cells reported SEPARATELY and never pooled into the weighted number:
@@ -91,9 +101,10 @@ TOPGRIM_BEDS = ("topgrim_d1", "topgrim_d2", "topgrim_d3")
 
 # Families whose cell is a single draw, for the G-13 caveat line. mirror/m28
 # run our own champion lineage (a historical artifact, not a corpus we can
-# re-draw); tuned/dragapult/iono are rule agents with no training draw at
-# all; rocket's M30 corpus is not on this box.
-SINGLE_DRAW_BEDS = ("tuned", "mirror", "m28", "dragapult", "iono", "rocket")
+# re-draw); tuned/iono are rule agents with no training draw at all.
+# dragapult/rocket left this list 2026-08-03: their weak proxies (rule agent,
+# M30 clone) are retired and both families now carry 3-draw panels.
+SINGLE_DRAW_BEDS = ("tuned", "mirror", "m28", "iono")
 
 
 def ceiling_panel(args, beds, title: str, note: str) -> None:
