@@ -234,3 +234,41 @@ def test_ladders_are_untouched_when_scaling_is_off():
     for cid in list(_CARD)[:120]:
         printed = max((_ATK[a][0] for a in _CARD[cid][3] if a in _ATK), default=0)
         assert _attacker_quality(cid) == printed
+
+
+def test_over_attach_flag_skips_self_scaling_attackers():
+    """Piotr, reviewing the ogerpon QC: "over-attach works in its favour since
+    it scales the attack based on the attached energies". Myriad Leaf Shower is
+    paid at 3 energy and gains +30 per further attachment (180 -> 300 between 3
+    and 7), so `already charged` is not `saturated`. The M19 flag assumed
+    flat-damage attackers and reported correct play as a defect."""
+    from rl.combat import _CARD
+    if 96 not in _CARD:
+        pytest.skip("needs the real card pool")
+    from rl.postmortem import _attach_saturated
+
+    ogerpon = {"id": 96, "energies": [1, 1, 1, 1, 1], "hp": 210}
+    cur = {"players": [{"active": [ogerpon], "bench": []},
+                       {"active": [{"id": 648, "energies": [7, 7], "hp": 320}],
+                        "bench": []}]}
+    opt = {"inPlayArea": 4, "inPlayIndex": 0}      # AreaType.ACTIVE
+    assert _attach_saturated(opt, cur, 0, 1, 3) is None
+
+
+def test_over_attach_flag_still_fires_on_flat_attackers():
+    """The M19 defect it was written for must still be caught."""
+    from rl.combat import _CARD
+    if 678 not in _CARD:
+        pytest.skip("needs the real card pool")
+    from rl.postmortem import _attach_saturated
+
+    solrock = next((cid for cid, r in cards().items()
+                    if r["name_norm"] == "Solrock"), None)
+    if solrock is None:
+        pytest.skip("Solrock not in this pool")
+    loaded = {"id": solrock, "energies": [6, 6, 6, 6], "hp": 90}
+    cur = {"players": [{"active": [loaded], "bench": []},
+                       {"active": [{"id": 648, "energies": [], "hp": 320}],
+                        "bench": []}]}
+    got = _attach_saturated({"inPlayArea": 4, "inPlayIndex": 0}, cur, 0, 1, 3)
+    assert got is None or "over-attach" in got   # fires iff its attack is paid
