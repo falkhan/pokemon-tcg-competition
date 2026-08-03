@@ -8,7 +8,11 @@ from collections.abc import Sequence
 
 from tcg.constants import (COLORLESS, RESISTANCE_REDUCTION, UNREACHABLE_TURNS,
                            WEAKNESS_MULTIPLIER)
-from tcg.library import ATTACKS, CARDS
+from tcg.library import ATTACKS, CARDS, RETREAT_COSTS
+# M41 energy-planning card fact — the frozen id set lives in rl/combat.py as the
+# single source of truth (the rl.plan.GUST_IDS precedent in tcg/encoders.py):
+# duplicating a hand-curated table is what the "change BOTH" notes exist to stop.
+from rl.combat import OWN_ENERGY_SCALERS
 from tcg.models import UNKNOWN_CARD
 
 
@@ -50,7 +54,46 @@ def attack_available(attack_id, board_ids) -> bool:
     return required is None or board_ids is None or required in board_ids
 
 
-def charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
+def scales_on_own_energy(card_id) -> bool:
+    """Does this Pokémon have an attack that pays for more attached energy?"""
+    card = CARDS.get(card_id)
+    return card is not None and any(attack_id in OWN_ENERGY_SCALERS
+                                    for attack_id in card.attack_ids)
+
+
+def energy_is_dead(card_id, energies) -> bool:
+    """Can one more energy on this Pokémon buy ANYTHING the rules offer?
+
+    Twin of rl/combat.py energy_is_dead (change BOTH) — see that docstring for
+    the two falsified drafts this replaced. Deliberately damage-free: every
+    attack already affordable, retreat already covered, no own-energy scaling.
+    """
+    card = CARDS.get(card_id)
+    if card is None:
+        return True
+    if any(attack_id in OWN_ENERGY_SCALERS for attack_id in card.attack_ids):
+        return False
+    attached = list(energies or ())
+    for attack_id in card.attack_ids:
+        attack = ATTACKS.get(attack_id)
+        if attack is not None and not can_afford(attached, attack.cost):
+            return False
+    return len(attached) >= RETREAT_COSTS.get(card_id, 0)
+
+
+def _printed_or_scaling(attack_id: int, scaling: bool) -> int:
+    """Damage the planner should credit an attack with. ``scaling=False`` is the
+    printed number every shipped consumer has always used. rl.scaling is
+    imported lazily and deliberately NOT duplicated here: that curated table is
+    shared data, like rl.plan.GUST_IDS in tcg/encoders.py."""
+    if not scaling:
+        return ATTACKS[attack_id].damage
+    from rl.scaling import nominal_damage
+    return nominal_damage(attack_id)
+
+
+def charged_best(attacker, target=None, board_ids=None,
+                 scaling: bool = False) -> tuple[int, int]:
     """Best attack by damage vs ``target`` assuming FULL charge: (damage, cost_total).
 
     Unlike ``best_damage`` this skips affordability — it answers "what is this
@@ -70,7 +113,7 @@ def charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
         if attack_id not in ATTACKS or not attack_available(attack_id, board_ids):
             continue
         attack = ATTACKS[attack_id]
-        damage = attack.damage
+        damage = _printed_or_scaling(attack_id, scaling)
         if damage <= 0:
             continue
         if target_card.weakness is not None and target_card.weakness == attack_type:
@@ -82,14 +125,15 @@ def charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
     return best
 
 
-def turns_to_ready(pokemon, target=None, board_ids=None) -> int:
+def turns_to_ready(pokemon, target=None, board_ids=None,
+                   scaling: bool = False) -> int:
     """Attaches still needed before ``pokemon`` can fire its charged-best attack
     (attach 1/turn). Total cost, not typed: own-type energy pays typed AND
     colorless slots, so the gap is cost_total - attached (off-type costs are
     undercounted — accepted approximation; ``can_afford`` stays the exact check).
     Works on hand cards (no ``.energies`` -> 0 attached). UNREACHABLE_TURNS if
-    it can never deal damage."""
-    damage, cost_total = charged_best(pokemon, target, board_ids)
+    it can never deal damage. ``scaling`` forwards to charged_best (default OFF)."""
+    damage, cost_total = charged_best(pokemon, target, board_ids, scaling)
     if damage <= 0:
         return UNREACHABLE_TURNS
     return max(0, cost_total - len(getattr(pokemon, "energies", ())))
@@ -114,7 +158,8 @@ def turns_to_first_ko(attacker, target) -> int:
     return min(UNREACHABLE_TURNS, max(gap, 1) + hits - 1)
 
 
-def best_damage(attacker, target, extra_energy: int = 0, board_ids=None) -> int:
+def best_damage(attacker, target, extra_energy: int = 0, board_ids=None,
+                scaling: bool = False) -> int:
     """Max damage ``attacker`` can deal to ``target`` this turn.
 
     Best affordable attack, after weakness/resistance against the attacker's
@@ -134,7 +179,7 @@ def best_damage(attacker, target, extra_energy: int = 0, board_ids=None) -> int:
         if attack_id not in ATTACKS or not attack_available(attack_id, board_ids):
             continue
         attack = ATTACKS[attack_id]
-        damage = attack.damage
+        damage = _printed_or_scaling(attack_id, scaling)
         if damage <= 0 or not can_afford(energies, attack.cost):
             continue
         if target_card.weakness is not None and target_card.weakness == attack_type:

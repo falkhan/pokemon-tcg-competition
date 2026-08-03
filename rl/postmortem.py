@@ -404,8 +404,32 @@ def _attach_saturated(opt: dict, cur: dict, us: int, i: int, turn) -> str | None
     """M19: energy attached to a target whose charged-best attack is ALREADY
     paid (surplus attach — the live 3-energies-on-a-1-cost-Solrock defect).
     Complements [attach-off-racer], which only catches misrouting while the
-    racer is unloaded, not overfeeding a charged one."""
-    from rl.combat import _turns_to_ready
+    racer is unloaded, not overfeeding a charged one.
+
+    M41: SKIPPED for attackers whose damage scales with their OWN attached
+    energy. Teal Mask Ogerpon ex's `Myriad Leaf Shower` is paid at 3 energy and
+    then gains +30 damage for every further attachment (180 -> 300 between 3 and
+    7), so "already charged" is not "saturated" and the flag was reporting
+    correct play as a defect. Cost-satisfaction and damage-satisfaction are the
+    same thing only for flat attackers, which is what M19 was written against.
+
+    M41 (2026-08-03): the FALSE-NEGATIVE half of the same confusion. The test
+    was `_turns_to_ready == 0`, which routes through `_charged_best` and its
+    `if dmg <= 0: continue` — so on any attacker whose printed damage is 0 the
+    gap is UNREACHABLE and this flag could never fire AT ALL. On our own
+    Alakazam #743 (`Powerful Hand`, prints 0, really 20 x hand) it reported 1.5%
+    over-attach and blamed Kadabra and Abra while the true rate was 33.7%. Four
+    milestones of post-mortems missed the defect because the forensics shared
+    the agent's blind spot. `energy_is_dead` asks about affordability and
+    retreat cost instead of damage, so no printed number can blind it; it also
+    subsumes the own-energy-scaling skip above, which is kept as the explicit
+    early return because it documents the other half of the story.
+    """
+    from rl.combat import energy_is_dead
+    from rl.scaling import SCALING_ATTACKS
+
+    # modes where more energy on the ATTACKER means more damage
+    _SELF_SCALING = {"my_nrg", "both_nrg", "team_nrg"}
 
     me = cur["players"][us]
     area, idx = opt.get("inPlayArea"), opt.get("inPlayIndex")
@@ -419,15 +443,14 @@ def _attach_saturated(opt: dict, cur: dict, us: int, i: int, turn) -> str | None
     if not isinstance(target, dict) or not target.get("id"):
         return None
     shim = _poke_shim(target)
-    board_ids = {p.get("id") for p in [_active(me)] + (me.get("bench") or [])
-                 if isinstance(p, dict) and p.get("id")}
-    opponent = cur["players"][1 - us]
-    op_active = _active(opponent)
-    op_shim = _poke_shim(op_active) if op_active.get("id") else None
-    if _turns_to_ready(shim, op_shim, board_ids) == 0:
+    from rl.combat import _CARD
+    if any(SCALING_ATTACKS.get(a, ("", 0, 0))[0] in _SELF_SCALING
+           for a in _CARD.get(shim.id, (None, None, 0, [], 1))[3]):
+        return None
+    if energy_is_dead(shim.id, shim.energies):
         return (f"[over-attach] s{i} t{turn}: energy attached to "
-                f"{card_name(shim.id)} whose best attack was already charged "
-                f"({len(shim.energies)} energy attached)")
+                f"{card_name(shim.id)} which could already pay for every attack "
+                f"it has and its retreat ({len(shim.energies)} energy attached)")
     return None
 
 

@@ -35,6 +35,14 @@ CARDS: dict[int, Card] = {
     for card in all_card_data()
 }
 
+# M41: retreat cost, kept as its own map rather than a Card field so the frozen
+# dataclass and every positional consumer of it stay untouched (the rl/combat.py
+# _RETREAT twin — change BOTH). getattr for the fake_cg stub, which predates it.
+RETREAT_COSTS: dict[int, int] = {
+    card.cardId: int(getattr(card, "retreatCost", 0) or 0)
+    for card in all_card_data()
+}
+
 HAND_DISCARD_TRAINER_IDS: frozenset[int] = frozenset(
     card_id for card_id, card in CARDS.items()
     if card.name in constants.HAND_DISCARD_TRAINER_NAMES)

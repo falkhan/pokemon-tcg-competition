@@ -55,8 +55,106 @@ def _can_afford(energies, cost) -> bool:
 # comparisons stay branch-free.
 UNREACHABLE = 99
 
+# --- M41 card FACTS for energy planning (the CONDITIONAL_ATTACKS pattern) ---
+# Retreat cost. NOT folded into the _CARD tuple: that 5-tuple is unpacked
+# positionally at 65 call sites across 15 files and by tests/test_parity.py, so
+# widening it is a refactor, not a feature.
+_RETREAT = {c.cardId: int(getattr(c, "retreatCost", 0) or 0)
+            for c in _all_card_data()}
 
-def _charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
+# Attacks whose damage grows with the ATTACKER'S OWN attached energy — the one
+# class for which "this Pokémon has enough energy" is never true. Frozen ids
+# rather than a live regex for the SPREAD_ATTACKS reason: rules text is
+# free-form and a pool update must not silently re-point an entry.
+# tests/test_energy_ceiling.py re-derives the set from cg.api.
+#
+# The audited direction is FALSE NEGATIVES — omitting a scaler here would let
+# energy_is_dead ban a charge that really does buy damage. All 29 pool attacks
+# mentioning own-energy AND damage were reviewed; the 4 not listed (Torrential
+# Pump, Jungle Whip, Chrono Burst, Sonic Ripper) are flat "shuffle your energy
+# away for +N" bonuses whose printed cost already covers what they consume.
+OWN_ENERGY_SCALERS = frozenset({
+    120,   # Myriad Leaf Shower   Teal Mask Ogerpon ex
+    195,   # Syrup Storm          Hydrapple ex
+    201,   # Power Splash         Lapras ex
+    226,   # Thunderburst Storm   Raging Bolt
+    324,   # Verdant Storm        Leafeon ex
+    362,   # Hydro Pump           Wailord
+    363,   # Voltaic Chain        Iono's Voltorb
+    586,   # Crescendo Wave       Gorebyss
+    822,   # Energized Shell      Dewott
+    823,   # Energized Slash      Samurott
+    894,   # Power Whip           Ferrothorn
+    938,   # Spiky Wheel          Marnie's Morpeko
+    944,   # Stomping Wood        Exeggutor
+    1079,  # Mega Symphonia       Mega Gardevoir ex
+    1135,  # Bug's Cannon         Genesect
+    1144,  # Blaze Ball           Darumaka
+    1145,  # Blaze Ball           Darmanitan
+    1238,  # Hydro Pump           Golduck
+    1256,  # Powerful Bolt        Heliolisk
+    1325,  # Giant Bouquet        Mega Meganium ex
+    1384,  # Energized Balloon    Azumarill ex
+    1395,  # Energy Feather       Fezandipiti
+    1439,  # Work Rush            Larry's Dudunsparce ex
+    1444,  # Energy Crush         Delcatty
+    1492,  # Powerful Steam       Volcanion
+})
+
+
+def scales_on_own_energy(card_id) -> bool:
+    """Does this Pokémon have an attack that pays for more attached energy?"""
+    return any(aid in OWN_ENERGY_SCALERS
+               for aid in _CARD.get(card_id, (None, None, 0, (), 1))[3] or ())
+
+
+def energy_is_dead(card_id, energies) -> bool:
+    """Can one more energy on this Pokémon buy ANYTHING the rules offer?
+
+    True when it cannot: every attack is already affordable, the retreat cost is
+    already covered, and no attack scales on own energy.
+
+    Deliberately says nothing about DAMAGE, which is what makes it safe. Two
+    earlier drafts asked a damage question and both were falsified against live
+    replays (docs/M41.md, 2026-08-03):
+      * "which attacks deal damage?" read off rules text capped Fezandipiti ex
+        at 1, because Cruel Arrow prints 0 and keeps all 100 of its damage in
+        the effect text — it would have blocked 7 real attacks.
+      * "does the NEXT energy unlock an attack?" capped it at 1 again: Cruel
+        Arrow costs 3, so no single attach unlocks it from 1. That is the same
+        greedy error _charged_best documents below for _best_damage.
+    Asking "is everything already affordable" is exact for incremental charging
+    AND for typed costs — an off-type energy does not fill a {P} slot, and
+    _can_afford is the exact check.
+
+    Simulated as a hard mask over 316 live games across six ships it blocks
+    13-23% of all attaches with ZERO cases where an attack or a retreat later
+    needed energy above the cap.
+    """
+    attacks = _CARD.get(card_id, (None, None, 0, (), 1))[3] or ()
+    if any(aid in OWN_ENERGY_SCALERS for aid in attacks):
+        return False
+    have = list(energies or ())
+    for aid in attacks:
+        if aid in _ATK and not _can_afford(have, _ATK[aid][1]):
+            return False                  # a costlier attack is still unpaid
+    return len(have) >= _RETREAT.get(card_id, 0)
+
+
+def _printed_or_scaling(aid: int, scaling: bool) -> int:
+    """Damage the planner should credit `aid` with. `scaling=False` is the
+    printed number every shipped consumer has always used; `scaling=True` swaps
+    in rl.scaling's context-free estimate so an attack that prints 0 and really
+    does 20 x hand stops reading as harmless. Imported lazily — rl.scaling
+    imports us, and combat must stay the leaf of the graph."""
+    if not scaling:
+        return _ATK[aid][0]
+    from rl.scaling import nominal_damage
+    return nominal_damage(aid)
+
+
+def _charged_best(attacker, target=None, board_ids=None,
+                  scaling: bool = False) -> tuple[int, int]:
     """Best attack by damage vs `target` assuming FULL charge: (damage, cost_total).
 
     Unlike _best_damage this skips affordability — it answers "what is this
@@ -64,6 +162,12 @@ def _charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
     (_best_damage's affordable-only view is why the pilot stopped charging once
     the CHEAPEST attack was paid). Damage ties prefer the cheaper attack.
     target=None scores raw printed damage (promote contexts with no opponent).
+
+    `scaling` (M41, default OFF so every existing caller is byte-identical):
+    credit scaling attacks with their real damage. With it off, our own
+    Alakazam #743 returns (0, 0) at every energy count — printed damage 0 —
+    which is what pinned _turns_to_ready at UNREACHABLE and left the M19
+    anti-over-attach features constant on the ship's own win condition.
     """
     if attacker is None or attacker.id not in _CARD:
         return (0, 0)
@@ -74,7 +178,7 @@ def _charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
     for aid in attacks:
         if aid not in _ATK or not _attack_available(aid, board_ids):
             continue
-        dmg, cost = _ATK[aid]
+        dmg, cost = _printed_or_scaling(aid, scaling), _ATK[aid][1]
         if dmg <= 0:
             continue
         if t_weak is not None and int(t_weak) == atk_type:
@@ -86,14 +190,15 @@ def _charged_best(attacker, target=None, board_ids=None) -> tuple[int, int]:
     return best
 
 
-def _turns_to_ready(pokemon, target=None, board_ids=None) -> int:
+def _turns_to_ready(pokemon, target=None, board_ids=None,
+                    scaling: bool = False) -> int:
     """Attaches still needed before `pokemon` can fire its charged-best attack
     (attach 1/turn). Total cost, not typed: own-type energy pays typed AND
     colorless slots, so the gap is cost_total - attached (off-type costs are
     undercounted — accepted approximation; _can_afford stays the exact check).
     Works on hand cards (no .energies -> 0 attached). UNREACHABLE if it can
-    never deal damage."""
-    dmg, cost_total = _charged_best(pokemon, target, board_ids)
+    never deal damage. `scaling` forwards to _charged_best (default OFF)."""
+    dmg, cost_total = _charged_best(pokemon, target, board_ids, scaling)
     if dmg <= 0:
         return UNREACHABLE
     return max(0, cost_total - len(getattr(pokemon, "energies", ())))
@@ -118,11 +223,13 @@ def _turns_to_first_ko(attacker, target) -> int:
     return min(UNREACHABLE, max(gap, 1) + hits - 1)
 
 
-def _best_damage(attacker, target, extra_energy: int = 0, board_ids=None) -> int:
+def _best_damage(attacker, target, extra_energy: int = 0, board_ids=None,
+                 scaling: bool = False) -> int:
     """Max damage `attacker` can deal to `target` this turn (best affordable attack,
     after weakness/resistance vs the attacker's type). extra_energy simulates attaching
     that many of the attacker's own energy (the '+1 attach enables the attack' case).
-    board_ids (optional): own in-play card ids — gates CONDITIONAL_ATTACKS."""
+    board_ids (optional): own in-play card ids — gates CONDITIONAL_ATTACKS.
+    `scaling` credits scaling attacks with their real damage (default OFF)."""
     if attacker is None or target is None or attacker.id not in _CARD:
         return 0
     _, _, atk_type, attacks, _ = _CARD[attacker.id]
@@ -132,7 +239,7 @@ def _best_damage(attacker, target, extra_energy: int = 0, board_ids=None) -> int
     for aid in attacks:
         if aid not in _ATK or not _attack_available(aid, board_ids):
             continue
-        dmg, cost = _ATK[aid]
+        dmg, cost = _printed_or_scaling(aid, scaling), _ATK[aid][1]
         if dmg <= 0 or not _can_afford(energies, cost):
             continue
         if t_weak is not None and int(t_weak) == atk_type:

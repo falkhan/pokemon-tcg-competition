@@ -69,8 +69,150 @@ they're picked up.
   candidate ride-along for any M38/M39 ship commit.
 - **Stop-investing list** (do not resurrect without new evidence): grim
   deck-tech (~~6-2 live, self-resolved~~ REVOKED by M38 post-mortem — 1-6
-  live), gustveto (2 residual plays), hop beds (absent at altitude), brick
-  residual (2 losses, unactionable), starmie (solved).
+  live; **new evidence arrived 2026-08-03 — see "The deck question,
+  RE-OPENED by the leaderboard census" above: grim is 49.5% of the top 250
+  and we are 2-13 against it**), gustveto (2 residual plays), hop beds
+  (absent at altitude), brick residual (2 losses, unactionable), starmie
+  (solved).
+
+## The deck question, RE-OPENED by the leaderboard census (2026-08-03)
+
+Origin: `notebooks/leaderboard_decks.ipynb` / `scripts/leaderboard_decks.py`,
+first survey of what the top of the ladder actually plays (top 250, 222
+labeled). Full numbers in the M40 diary entry of the same date.
+
+**This section deliberately re-opens a question M40b called closed** ("with the
+clone ceiling, the deck A/B and this, the deck-switch question is closed on
+three independent measurements"). That verdict stands on its own evidence; the
+census adds an axis none of those three measurements covered, so the item goes
+to the backlog for a decision rather than being actioned or dropped.
+
+### The observation
+
+We are optimizing against the wrong distribution, and the typing is against us.
+
+| | leaderboard top-250 | our live mix | our live record |
+|---|---|---|---|
+| **grim** (Marnie's Grimmsnarl ex) | **49.5%** | 9.7% | **2-13 (13.3%)** |
+| mirror (ours) | 18.0% | 19.4% | 20-13 (60.6%) |
+| wall | 9.5% | 11.0% | 8-9 (47.1%) |
+| rocket | 4.1% | 5.2% | 1-7 (12.5%) |
+| dragapult | 3.2% | 7.7% | 1-11 (8.3%) |
+| lucario | 1.8% | 11.0% | 12-5 (70.6%) |
+| starmie | 0.5% | 7.1% | 8-3 (72.7%) |
+| **archaludon** | **0.0%** | **13.6%** | 14-7 (66.7%) |
+| iono | 0.0% | 0.7% | 0-1 |
+
+**We beat almost exactly the decks that are not up there, and lose to the ones
+that are.** Our four best matchups (archaludon, starmie, lucario, mirror) are
+2.3% of the top field between them excluding mirror; our four worst (dragapult,
+rocket, grim, garchomp) are 59.1%. `archaludon` holds 13.6% of our bed weight
+and three dedicated beds (`arch_d1/d2/d3`) and does not appear ONCE in the top
+250; `iono` likewise.
+
+**The typing is structural, not incidental** (`data/cards_features.parquet`):
+
+- The whole Marnie's Grimmsnarl line (Impidimp/Morgrem/Grimmsnarl ex, Darkness,
+  320 HP on the ex) is **weak to Grass**.
+- Our Alakazam (Psychic, 140 HP) is **weak to Darkness**.
+
+So the dominant deck resists us and we fold to it, by printed weakness. The
+field has already found the answer: **excluding grim, 42.0% of the top field is
+Grass** (47 teams, mean 1011.7 — Teal Mask Ogerpon ex, Dipplin, Crustle, Team
+Rocket's Spidops). Fire (which beats Grass) is only 2.7% of the field but
+carries the highest mean score of any energy, 1056.0 — the counter-counter is
+under-occupied.
+
+### The decision (Piotr, 2026-08-03) — three options, not yet chosen
+
+**(a) Switch to Grimmsnarl.**
+*For:* the shell is measured stronger — grim@1000+ beats our archetype **0.70**
+head-to-head with a worst matchup of 0.45 (M40 Track A rider). It is half the
+ladder. And the corpus asymmetry below is large.
+*Against:* **Track A killed it at 0.436 weighted vs the ≥0.55 bar** (z=−51; it
+lost even to the iono rule agent). Note precisely what that measured: *our net
+piloting a grim clone*, i.e. a pilot result, not a deck result. A switch means
+re-basing the entire imitation corpus, not editing `deck.csv`.
+
+**(b) Engineer an anti-grim deck (likely Grass).**
+*For:* it is the field's own answer, and deckbuilding is part of the
+competition. Infra is half-built and unused: `rl/deck_search.py` already has
+`validate_deck` + the mutation primitive (written for a "Phase 1" that never
+ran), `decks/gen/` holds 63 machine-generated lists, and `build_meta_field`
+freezes opponent snapshots to evaluate against.
+*Against:* an invented list has **no demonstrator population to clone**, which
+is how every one of our pilots has ever been trained. A *harvested* Grass list
+(Ogerpon/Dipplin/Spidops) avoids that; a searched one does not.
+
+**(c) Teach our current deck to beat these decks.**
+*For:* zero deck risk, all existing tooling and corpus apply, and it is the
+current campaign's path.
+*Against:* 2-13 live is the result of already trying, and the offline
+instrument cannot currently score the attempt — see the measurement blocker.
+
+### The measurement blocker — applies to ALL THREE options
+
+**We cannot presently measure a fix against real grim.** The panel says we beat
+top grim clones **0.684–0.691**; live we are **2-13**. That is not a
+contradiction, it is X5: BC retains 0.20 of demonstrator edge, so a "1000+ grim
+bed" is really an ~800-band opponent (M40 H-A, confirmed by two independent
+comparisons). Every grim bed we own flatters us by roughly the gap we care
+about. Whichever option is picked, a grim opponent at the true band is a
+prerequisite, or the decision is unfalsifiable offline and costs live slots.
+
+### The corpus asymmetry — the genuinely new argument
+
+Harvestable opponent seats by family (`data/kaggle/opp_decks.parquet`):
+
+| family | seats 900+ | seats 1000+ | **winning seats 1000+** |
+|---|---|---|---|
+| **grim** | 815 | 577 | **339** |
+| garchomp | 414 | 371 | 181 |
+| rocket | 412 | 337 | 165 |
+| dragapult | 145 | 133 | 78 |
+| **mirror (our list)** | 506 | 67 | **40** |
+
+M40's blocking result is "imitation is exhausted for the 1000 target." That was
+measured on **our** list — which has only **40 winning 1000+ seats in
+existence**. grim has **8.5×** as many. The ceiling may be a property of our
+deck's demonstrator population rather than of imitation itself, and no
+experiment we have run separates those two. This is the axis the three prior
+"closed" measurements did not test.
+
+### Cheapest discriminating probe (recommended before any commitment)
+
+Separate **deck strength** from **pilot strength**, which every measurement so
+far has confounded. Pilot each candidate deck with a *deck-agnostic rule pilot*
+against the grim beds and against each other:
+`uv run python -m rl.matchrunner play --a generic:<deck> --b generic:<deck> -n 800 --workers 8`.
+Same pilot on both sides ⇒ the delta is the deck. Candidates: our
+`alakazam_v2_h4`, a harvested grim list, and a harvested Grass list exported
+with `scripts/export_opp_deck.py --family ogerpon` (79 seats, hash `356c16bd`).
+
+**CORRECTION (2026-08-03, same day).** An earlier draft of this line said the
+sample agents are the deck-agnostic pilot. **They are not** —
+`sample-agent*/main.py` are hard-coded card-id cascades (`Mega_Lucario_ex =
+678`, 15–45 id comparisons each), and `tcg/teachers.py`'s own docstring records
+the failure mode ("the Lucario brain played the Kyogre deck through all of
+M1"): handed a foreign deck they degrade to a thin generic tail, so the probe
+would have measured the *brain's card coverage*, not the deck. The genuinely
+deck-agnostic pilot is `rl/generic_pilot.py` (`generic:` / `solver:`), which
+scores off the global card DB — only `Carmine` and `Boss's Orders` are
+name-keyed, and only under an opted-in `fixes` token.
+
+Note also that `matchrunner` yields **no watchable replays** — it drives
+`cg.game` directly, so there is no `visualize` payload. Replay review needs the
+`kaggle_environments` path (`rl/eval.py::play_games`, which accepts the
+callables `make_pilot` returns). M41 Phase 3 bridges the two.
+
+If the Grass list beats grim under a fixed pilot, (b) is live and cheap to
+stage via harvested demonstrators. If nothing beats grim under a fixed pilot,
+the deck is genuinely dominant and the question collapses to (a)-with-a-real-
+corpus versus (c)-forever.
+
+**Supersedes** the `grim deck-tech` line on the stop-investing list below —
+that line says "do not resurrect without new evidence", and this is the new
+evidence it was waiting for.
 
 ## Research sweep 2026-08-01 — methods beyond the current pipeline (M39+)
 

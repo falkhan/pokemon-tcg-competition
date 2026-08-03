@@ -281,6 +281,13 @@ OPTION_M27_DIM = OPTION_V3_DIM + N_OPTION_PLAY_PRE
 # M28 phase-interaction block — twin of rl/encoders.py (see its comment).
 N_OPTION_PHASE = 3
 OPTION_M28_DIM = OPTION_M27_DIM + N_OPTION_PHASE
+
+# M41 energy-ceiling block — twin of rl/encoders.py (change BOTH). Appended, so
+# `[:OPTION_M28_DIM]` stays byte-identical and every trained checkpoint
+# truncates these columns away.
+N_OPTION_ENERGY = 5
+OPTION_M41_DIM = OPTION_M28_DIM + N_OPTION_ENERGY
+MARGINAL_DAMAGE_SCALE = 60.0   # a big per-energy step; 30 is the modal one
 DECK_LOW_AT = 15.0
 _PLAY_KIND: dict[int, str] = {}
 
@@ -485,6 +492,67 @@ def _my_pokemon_at(observation, in_play_area, in_play_index):
     return zone[in_play_index]
 
 
+def attach_energy_ceiling(option, observation) -> np.ndarray:
+    """[dead, scaling-aware gap/5, retreat slack/5, own-energy-scaling] — M41
+    twin of rl/encoders.py _attach_energy_ceiling (change BOTH). See that
+    docstring for what each slot means and why the M19 block above cannot say
+    it."""
+    from tcg.combat import energy_is_dead, scales_on_own_energy, turns_to_ready
+    from tcg.library import RETREAT_COSTS
+
+    vector = np.zeros(N_OPTION_ENERGY, dtype=np.float32)
+    target = _my_pokemon_at(observation, option.inPlayArea, option.inPlayIndex)
+    if target is None:
+        return vector
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    opponent_active = (opponent.active[0]
+                       if opponent.active and opponent.active[0] is not None
+                       else None)
+    board_ids = {p.id for p in list(me.active or []) + list(me.bench or [])
+                 if p is not None}
+    attached = len(target.energies or ())
+    vector[0] = float(energy_is_dead(target.id, target.energies or ()))
+    vector[1] = min(turns_to_ready(target, opponent_active, board_ids,
+                                   scaling=True), 5) / 5.0
+    vector[2] = max(-5, min(5, attached - RETREAT_COSTS.get(target.id, 0))) / 5.0
+    vector[3] = float(scales_on_own_energy(target.id))
+    vector[4] = min(marginal_energy_damage(target, opponent_active),
+                    MARGINAL_DAMAGE_SCALE) / MARGINAL_DAMAGE_SCALE
+    return vector
+
+
+class _WithExtraEnergy:
+    """``pokemon`` plus one attached energy — only ``.energies`` is read."""
+
+    __slots__ = ("id", "energies", "hp", "maxHp", "tools")
+
+    def __init__(self, pokemon, energy_type):
+        self.id = pokemon.id
+        self.energies = list(pokemon.energies or ()) + [energy_type]
+        self.hp, self.maxHp = pokemon.hp, pokemon.maxHp
+        self.tools = getattr(pokemon, "tools", ())
+
+
+def marginal_energy_damage(pokemon, opponent_active) -> int:
+    """Extra damage one more of this Pokemon's own energy buys on the CURRENT
+    board — twin of rl/encoders.py _marginal_energy_damage (change BOTH)."""
+    from rl.scaling import SCALING_ATTACKS, effective_damage
+
+    card = CARDS.get(pokemon.id, UNKNOWN_CARD)
+    best = 0
+    for attack_id in card.attack_ids:
+        if attack_id not in SCALING_ATTACKS:
+            continue
+        now = effective_damage(attack_id, pokemon, opponent_active)
+        more = effective_damage(attack_id,
+                                _WithExtraEnergy(pokemon, card.energy_type),
+                                opponent_active)
+        best = max(best, more - now)
+    return max(0, best)
+
+
 def attach_extra(option, observation) -> np.ndarray:
     """[target attached-energy/5, energy gap/5, saturated flag] — M19 twin of
     rl/encoders.py _attach_extra (change BOTH)."""
@@ -537,7 +605,7 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     identity and NUMBER counts; M19 adds ATTACH energy-sufficiency and
     RETREAT utility in the same 3 slots (mutually exclusive types).
     Pre-M16 checkpoints: encode_option_v2_legacy."""
-    numeric = np.zeros(OPTION_M28_DIM, dtype=np.float32)
+    numeric = np.zeros(OPTION_M41_DIM, dtype=np.float32)
     numeric[:OPTION_DIM] = encode_option(option, observation)
     your_index = observation.current.yourIndex
     card_id = option.cardId
@@ -562,13 +630,16 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
                                                           observation)
     elif option.type == OptionType.ATTACH and option.inPlayArea is not None:
         numeric[OPTION_DIM:OPTION_DIM + 3] = attach_extra(option, observation)
+        numeric[OPTION_M28_DIM:OPTION_M41_DIM] = \
+            attach_energy_ceiling(option, observation)
     elif option.type == OptionType.RETREAT:
         numeric[OPTION_DIM:OPTION_DIM + 3] = retreat_extra(observation)
     elif getattr(option, "number", None) is not None:
         numeric[OPTION_DIM + 3] = min(float(option.number), 10.0) / 10.0
     if option.type == OptionType.PLAY:
         numeric[OPTION_V3_DIM:OPTION_M27_DIM] = play_precondition(card_id, observation)
-    numeric[OPTION_M27_DIM:] = phase_interaction(option, observation)
+    # bounded, not open-ended: the M41 energy block now sits after this one
+    numeric[OPTION_M27_DIM:OPTION_M28_DIM] = phase_interaction(option, observation)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return numeric, ids
 
