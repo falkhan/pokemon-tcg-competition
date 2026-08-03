@@ -962,7 +962,10 @@ def _main() -> None:
         refresh(a.subs, opp_subs=a.opp_subs, top_team_ids=a.teams,
                 max_new=a.max_new)
     elif a.cmd == "harvest":
-        print(harvest_decks(min_games=a.min_games))
+        # console_safe: the summary frame carries card/archetype text and this
+        # print crashed the CLI on a cp1252 console AFTER the parquet was
+        # already written — a success that looked like a failure.
+        print(console_safe(harvest_decks(min_games=a.min_games)))
     elif a.cmd == "meta":
         for spec in build_meta_field(top_k=a.top_k, dedupe_by=a.dedupe_by):
             print(spec)
