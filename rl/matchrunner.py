@@ -169,6 +169,9 @@ _MODEL_FIX_KINDS = {
     #                battery's single variable vs `model-c-pkg` is the plan
     #                vector and nothing else.
     "model-pz": frozenset({"planzero"}),
+    # M41 O18 `gustsnipe`, single-variable over model-pz — the ogerpon ship
+    # candidate's config plus the one new rule, so the battery attributes it.
+    "model-pz-snipe": frozenset({"planzero", "gustsnipe"}),
     "model-c-pkgz": frozenset({"conserve", "racemode2", "racemode4",
                                "planzero"}),
     # M40 deep-dive candidates (2026-08-03). Base = conserve+planzero: the
