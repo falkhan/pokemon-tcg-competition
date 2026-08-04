@@ -995,15 +995,25 @@ def _pair_worker(arg: tuple) -> tuple[int, int, list[int], list]:
     return job_idx, pair_idx, chunk, margins[:len(chunk)]
 
 
-def _run_key(pairs: list[tuple], workers: int, seed: int) -> dict:
+def _run_key(pairs: list[tuple], workers: int, seed: int,
+             extra: dict | None = None) -> dict:
     """The checkpoint header — json-normalized so tuple/list mismatch can't
-    false-negative the resume validation."""
-    return json.loads(json.dumps(
-        {"pairs": pairs, "workers": workers, "seed": seed}))
+    false-negative the resume validation.
+
+    `extra` is stamped in verbatim when given (M41b § II.3d: the gate spec's
+    hash rides here, so a battery file carries the bar it was run under and
+    the existing header-mismatch refusal becomes the tamper check). Omitted
+    entirely when None, so every pre-M41b checkpoint still validates.
+    """
+    key = {"pairs": pairs, "workers": workers, "seed": seed}
+    if extra:
+        key["extra"] = extra
+    return json.loads(json.dumps(key))
 
 
 def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
-              seed: int = 0, checkpoint: str | None = None) -> list[list[int]]:
+              seed: int = 0, checkpoint: str | None = None,
+              key_extra: dict | None = None) -> list[list[int]]:
     """Run [(spec_a, spec_b, n_games), ...]; returns per-pair result lists.
 
     workers <= 1 runs in-process (required for an injected game_fn — callables
@@ -1041,7 +1051,7 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
     fh = None
     if checkpoint:
         path = Path(checkpoint)
-        key = _run_key(pairs, workers, seed)
+        key = _run_key(pairs, workers, seed, key_extra)
         if path.exists() and path.read_text().strip():
             lines = [json.loads(line) for line in path.read_text().splitlines()
                      if line.strip()]
