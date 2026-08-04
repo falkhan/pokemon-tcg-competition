@@ -1,8 +1,37 @@
 # M41b — encoding, learning architecture, and harness
 
-**Part I** (below) is the encoder work M42's review measured: ready to execute.
-**Part II** is the pilot-learning architecture and the harness, sequenced
-against it — staged and gated, with one open question for Piotr at the end.
+**Part I** is the encoder work M42's review measured. **Part II** is the
+pilot-learning architecture and the harness, sequenced against it.
+
+Line-level claims were re-verified against the codebase, the engine API, and
+the diaries on 2026-08-04; the corrections and decisions from that review are
+folded in below, dated "(review, 2026-08-04)".
+
+## Execution order — decided with Piotr, 2026-08-04
+
+Both forks in § II.5 were put to Piotr and both resolved to the recommendation:
+**Stage A then B**, and **harness before Stage B**. The resulting order is the
+one thing in this document that is settled rather than proposed:
+
+| # | phase | why here | ends when |
+|---|---|---|---|
+| 0 | **§ II.1** — epoch amendment to `ARCHITECTURE.md` §15 | pure bookkeeping, but §15 currently forbids the family Stage B belongs to. Do it before anyone reads the list and stops. | the three pre-epoch entries and M8.4 are marked |
+| 1 | **Part I** — the encoder (Phases 1-3) | Stage A. Prerequisite: a search teacher cannot be distilled into a student whose inputs alias on 879 real option pairs. | aliasing probe reads `real::* == 0`; column safety PASSes at widths 100 and 115 |
+| 2 | **§ II.3a/b** — golden fixtures + cross-instrument agreement | Stage B is ONE gate cell that decides a month of work. Measuring it with instruments that took six corrections in their last milestone is how you buy a confident wrong answer. | every probe script (the 19 `*_probe.py` PLUS `pm_probe2.py`, which the glob misses) has a fires-and-guards fixture in the suite |
+| 3 | **§ II.3c** — the regression-adjusted gate estimator | Stage B's plausible effect (+25-60 ELO ≈ 3.5-8.5pp, § II.2) sits at or below the ~14pp a 400-game cell resolves — without variance reduction the gate is underpowered and its null is noise. Decided by re-analysing a finished battery both ways | a win-rate CI half-width comparison, raw vs adjusted; if adjustment fails, Stage B's n rises to ~2-3k |
+| 4 | **§ II.3d/e** — gates as a hashed spec, ship guards into CI | cheap, deterministic, and they close the exact holes M41 fell through | `ship_verify` Tier-1 invariants run as tests |
+| 5 | **Stage B** — BACKLOG #10, distil the search | the central assumption: is search output learnable by our net at our scale? | one gate cell against the panel, at the n § II.3c's outcome dictates |
+| 6 | **Stage C** — the `search_begin/step/end` re-descent probe | half a day, and it moves a 10-50x constant on everything downstream. Cheap enough to run whenever; must precede any re-estimate of #9. | a yes/no on re-descent from an arbitrary node |
+
+**Stage D is explicitly OUT OF SCOPE for M41b.** It is gated on Stage B's
+number, and BACKLOG 9's own note governs: *"consumes a whole campaign; do not
+start one inside a deadline."*
+
+The load-bearing property of this order is that a **null result at Stage B is
+interpretable**. Run before Part I, a null cannot distinguish "search output is
+not learnable at our scale" from "the student could not see what the teacher was
+reacting to". Run after, it can — and that distinction is the difference between
+correctly abandoning a month of work and wrongly abandoning it.
 
 > Naming note: this lands chronologically **after** M42, whose diary holds the
 > review that motivates it (`docs/M42.md` § "Encoding review"). Kept as M41b at
@@ -115,6 +144,14 @@ a menu — genuinely a *state* feature living in the option block. That redundan
 is the price of slice safety, and it is 4 columns; the alternative is a
 retrain-gated state append. Recorded so nobody later reads it as an oversight.
 
+One more property to pin in the code comment (review, 2026-08-04):
+identical-across-the-menu means the softmax eats any additive contribution —
+these four columns can matter ONLY through nonlinear interaction with
+per-option features in the score head. The MLP can form that, but it is a
+weaker gradient path than a per-option feature, and a linear probe would read
+the columns "dead" while they are doing their job. Any future census of them
+must judge variance across menus, never within one.
+
 ### 1d. Retreat + hand economics — slots 25-28
 
 `active_retreat_cost / 4`, `retreat_payable`, `my_hand_count / 15`,
@@ -181,6 +218,18 @@ only for the collect + train. The bundle path (`card_features.npy`, written by
 `tcg.shipping.export`) inherits whatever FEAT is live at export time, so the
 export must refuse to run with `FEAT_V2 = True` unless the checkpoint was
 trained under it — add that as a `ship_verify` Tier-1 check.
+
+**Review amendment (2026-08-04): the flag must not remain a hand-flipped module
+constant.** A module-level bool that changes encoding semantics, edited by hand
+"only for the collect + train", is ambient state in the same hazard class as
+M41's mid-edit export. The 2c guard generalises to fix this: persist a
+`feat_layout` version int in every checkpoint, and have CONSUMERS select the
+FEAT transform from the checkpoint's declared version — loaders refuse a
+mismatch instead of trusting whatever the module constant happened to be at
+import time. `FEAT_V2` may survive as the collect-time bootstrap default, but
+the export path and every loader key off checkpoint metadata, which makes the
+ship_verify check redundant by construction rather than the last line of
+defense.
 
 Under `tests/fake_cg` there are no `skills`, so `has_ability` reads all-zero;
 pin that so the column is never assumed populated in tests.
@@ -335,8 +384,11 @@ family the evidence above supports. Three of its entries are **pre-epoch**:
 * *"Override-style consumption of any eval signal — M8.1, M12, M13"* — two of
   the three cells are solver-based.
 
-The MILESTONES.md EPOCH MARKER states it plainly: the M37 audit found a
-**prize-term inversion in `score_leaf` at 4 sites, only 1 known**, and *"every
+The record states it plainly (corrected in review, 2026-08-04 — the first
+draft mis-attributed this). The M37 audit found the prize-term inversion was
+**systemic — 4 sites repo-wide, only 1 of them known**: `score_leaf` is one,
+the collector, selfplay, and `plan.py` carried the others (the M37-audit row,
+MILESTONES.md:1411). The EPOCH MARKER draws the consequence: *"every
 solver-backed bed number recorded before 2026-07-31 is pre-fix era and NOT
 comparable."* Those three entries were measured on an inverted leaf, and M40
 S3's post-fix **+125 ELO** is the direct contradiction.
@@ -380,6 +432,59 @@ distillation underperforms because the student cannot *see* what the teacher is
 reacting to, Part I is exactly the fix. The A-then-B order is what distinguishes
 "search is not learnable" from "the student was blind".
 
+**The power arithmetic (review, 2026-08-04).** The plausible effect is bounded
+by the record: the teacher's edge is +125 ELO (M40 S3) and BC retention of a
+demonstrator's edge measured 0.20 [0.07, 0.33] (M40 X5) — so even if Part I
+doubles retention, the student's plausible gain is **+25 to +60 ELO ≈
+3.5-8.5pp** near 0.500. A 400-game cell resolves ~14pp (±7pp half-width).
+Run naively, Stage B's null would be uninterpretable for a second reason the
+A-then-B ordering does not touch: **power**. Detecting a true 3.6pp at 80%
+power takes ~3,000 games. Hence the hard pairing with § II.3c: either the
+adjusted estimator shrinks the interval, or the cell runs at n≈2-3k — eval
+games are cheap next to the month they gate. Bar and n go into the § II.3d
+spec file before the run.
+
+**What the teacher actually emits (engine review, 2026-08-04).** Read
+`wrap_with_solver` (`rl/turn_solver.py:526`) before designing the corpus: the
+composite is not a search policy — it is the net with a sparse override.
+
+* The inner net runs on EVERY prompt (its v4 memory side effects require it)
+  and the solver replaces the answer only when a trigger fires AND the tier's
+  bar clears (>=1 prize / win, or the dev margin). On every other prompt the
+  composite's action IS the bare net's action. A distillation corpus therefore
+  agrees with the student's own argmax almost everywhere, and the whole
+  +125 ELO lives in the sparse overridden prompts — uniform cross-entropy is
+  mostly the student learning itself, a plausible mechanism for X5's 0.20 that
+  Part I does NOT fix. The wrapper already counts exactly the needed quantity
+  (`stats["fire_*"]`, `stats["changed"]`): persist per-row `fired`/`changed`
+  flags in the collect, report the divergence rate as a collect-time
+  measurement, and weight or isolate divergent rows in the loss (upweighting,
+  or divergent-rows-only with a KL anchor to the base policy on agreeing
+  rows). If the solver changes <~2% of prompts, loss design is not garnish —
+  it is the experiment.
+* **Soft targets already exist.** `score_siblings` (`rl/turn_solver.py:461`)
+  returns per-sibling deep scores at the root — ranked labels with margins, no
+  new engine work. Distilling margins or the ranking preserves strictly more
+  of the teacher than one-hot argmax (the ExIt/AlphaZero lesson: the search's
+  *distribution* is the label). Epoch note: this is the M12 ranker machinery,
+  whose dead-end entry is one of the three § II.1 marks pre-epoch — consumed
+  as LABELS it is exactly what the amendment re-opens; consumed as a live
+  override it stays dead (the override law is untouched).
+* **The state distribution is the teacher's, not the student's.** Composite-
+  as-actor collects states the composite reaches; the student will act from
+  its own. Covariate shift is the textbook BC failure and a second candidate
+  cause of X5's 0.20. Cheap mitigation, DAgger-shaped: mix in shards where the
+  BARE net acts and `solve_turn` labels without overriding — the wrapper
+  computes both actions on every prompt anyway, so logging `(base, solver,
+  fired, changed)` per row costs nothing extra, and even a 50/50 mix bounds
+  the shift.
+* Two design checks before the run: how `rl/bc.py` treats **multi-select**
+  rows today (the solver picks combos under `MAX_MULTI_COMBOS`, the net ranks
+  options independently — the loss must not pretend a set label is a single
+  action); and the student's value head gets its own E0 read — 0.642 is
+  checkpoint-specific (`m39_retain_b`; the same instrument read 0.469 on
+  `cont3`), so a distilled student inherits nothing.
+
 **Stage C — one cheap engine probe that moves a 10-50x constant.** BACKLOG 9(b)
 records the open question: whether `cg.api.search_begin/step/end` supports
 **re-descent from an arbitrary node** or only forward DFS. Reading the header:
@@ -387,7 +492,8 @@ records the open question: whether `cg.api.search_begin/step/end` supports
 during the search will be reused"* — per-state ids plus an explicit release
 strongly suggest multiple concurrent states, i.e. re-descent. **A half-day probe
 that decides a 10-50x constant on the entire search programme**, and it should
-run before anyone estimates #9 again.
+run before anyone estimates #9 again. It depends on nothing else in this plan —
+run it in any idle half-day, e.g. while a Stage B collect occupies the box.
 
 Two more facts from the same header, worth recording because they lower 9(a):
 `search_begin` takes **predicted** opponent deck / prize / hand, and
@@ -419,16 +525,24 @@ and its failure record is worse than the model's:
 | M41: export ran mid-edit, shipped a half-finished encoder | caught by a QC sweep that could easily have passed |
 | M41: `test_bundle_twins` compared only `plan.py` | a twin divergence survived a full milestone |
 
-Four of the six M42 bugs were caught by luck — an impossible >100% rate, and a
-flat contradiction between two instruments. That is not a system.
+Two of the six M42 corrections were caught only because each produced something
+impossible to ignore — a rate above 100%, and a flat contradiction between two
+instruments (`docs/M42.md:288` is explicit that both discoveries were
+accidents; the first draft of this plan said "four", which the diary does not
+support). Review caught the rest, and review does not scale. That is not a
+system.
 
 ### II.3a Golden fixtures for every instrument (highest value)
 
 Every probe and every forensic flag gets a synthetic fixture whose ground truth
-is true **by construction**, asserted in CI. M42 did this for the post-mortem
-flags (a `fires` case and a `guards` case each, 27 tests) and it is why those
-flags are the only instruments in the repo currently trustworthy. Extend it to
-all 20 `scripts/*_probe.py`.
+is true **by construction**, asserted in the suite. M42 did this for the
+post-mortem flags (a `fires` case and a `guards` case each, 27 tests) and it is
+why those flags are the only instruments in the repo currently trustworthy.
+Extend it to every probe — and note (review, 2026-08-04) that the glob
+`scripts/*_probe.py` matches 19 files and silently misses
+`scripts/pm_probe2.py`. Rename it to match, or enumerate explicitly; otherwise
+the completion criterion can pass while skipping a probe, which is precisely
+the class of hole this section exists to close.
 
 Concretely, this is what would have caught 4 of the 6 M42 bugs before a single
 game was played: a fixture where the pilot has *no legal way out* pins that
@@ -454,17 +568,26 @@ and `mp.Pool` assigns chunks by timing, so *"every cell is an independent sample
 and a 'seed' is just a label."* Five identical commands at seed 1 gave
 **0.471 / 0.494 / 0.526 / 0.506 / 0.537**.
 
-So common random numbers are off the table. The cheapest remaining lever is a
-**lower-variance outcome statistic**: gates currently score a Bernoulli
-win/loss, while `_engine_game` already records `stats["final"]` with per-seat
-deck counts and prizes remaining. Scoring the **prize differential** (or
-turns-to-win) as a continuous margin uses strictly more of each game. Same
-games, tighter interval — the one change that could move the G-12 power table,
-where n=400 currently resolves only ~14pp.
+So common random numbers are off the table. The remaining lever is the **prize
+differential** `_engine_game` already records (`stats["final"]`, per-seat deck
+counts and prizes remaining) — but HOW it enters matters, and this was decided
+with Piotr, 2026-08-04: **as a control variate, not as a replacement
+estimand.** Scoring margin *instead of* win/loss tightens a CI around a
+*different quantity* — every gate bar in the record is defined on win rate, and
+a margin CI does not decode a win-rate bar. The standard tool is regression
+adjustment (CUPED): estimate the win rate, subtract the margin's correlated
+noise — fit win ~ margin within the cell, report the adjusted mean and its
+interval. Same games, same estimand, tighter interval, and every historical bar
+keeps its meaning.
 
 **Pre-register the check:** re-analyse a completed battery's JSONLs both ways
-and compare CI half-widths. If the margin statistic does not shrink the interval
-materially, drop it and say so — do not carry it on theory.
+and compare win-rate CI half-widths, raw vs adjusted. If adjustment does not
+shrink the interval materially, drop it and say so — do not carry it on theory.
+**Pre-register the fallback too:** if dropped, Stage B does not run at n=400.
+The power arithmetic in § II.2 puts the plausible Stage B effect at ~3.5-8.5pp
+while a 400-game cell resolves ~14pp — the honest alternative is n≈2-3k for
+the Stage B cell, and whichever n it is goes into the § II.3d spec file before
+the run.
 
 ### II.3d Gates as code, not as a checklist
 
@@ -474,13 +597,31 @@ Every milestone hand-rolls a `*_decide.py`. Replace with one runner over a
 That is what stops a bar moving after the numbers land, and it is the machine
 version of a discipline the diaries currently keep by hand.
 
-### II.3e Push the ship guards into CI
+### II.3e Push the ship guards into the gate itself — there is no hosted CI
 
-`ship_verify` Tier-1 is a script someone remembers to run. The invariants it
-checks are exactly the ones that have broken: twin parity (M41), column safety
-at every trained width, the FEAT layout version (Part I section 2c), bundle
-purity, and the encoder width chain. All are cheap and deterministic. Make them
-tests.
+A fact the first draft glossed (review, 2026-08-04): this repo has **no CI
+service at all** — no workflows, no runner. "CI" here can only mean the pytest
+suite plus the QC battery, and both are scripts someone remembers to run — the
+exact failure mode this section exists to close ("M41: export ran mid-edit" was
+not a missing check; it was a present check nobody ran at the right moment).
+
+Decided with Piotr, 2026-08-04 — two structural moves, no hosted CI:
+
+1. **The export becomes self-gating.** `tcg.shipping.export` runs the
+   `ship_verify` Tier-1 invariants itself and REFUSES to write the tarball on
+   any failure: twin parity (M41), column safety at every trained width, the
+   FEAT layout version (Part I § 2c), bundle purity, the encoder width chain.
+   All cheap and deterministic. The gate travels with the dangerous action
+   instead of preceding it by convention.
+2. **One hardened gate script.** `scripts/ci_gate.py`: the full pytest suite +
+   `ship_verify` Tier-1 + the probe golden fixtures of § II.3a, one command,
+   one PASS/FAIL line — the thing a human runs before any consequential
+   action, and the first thing `scripts/qc_battery.py` runs so the replay QC
+   never measures a broken artifact.
+
+The invariants also land as ordinary pytest tests so the suite catches them at
+the earliest possible moment; the two moves above are what make them
+unskippable at the moments that have actually burned us.
 
 ## II.4 What Part II does NOT commit to
 
@@ -494,10 +635,15 @@ loop as work items yet. They are Stage D, they are correctly parked on compute
 grounds, and 9(b)'s re-descent probe may change their cost by more than any
 design decision available today.
 
-## II.5 The one open question this plan cannot answer
+## II.5 The two forks — RESOLVED 2026-08-04
 
-BACKLOG 9 says *"do not start one inside a deadline"*, and Stage D is a
-campaign. The competition's remaining time and submission slots decide whether
-this plan targets Stage B (hours, one gate cell) or commits to Stage D (weeks,
-the whole budget). That is Piotr's call and it changes the phase order, not just
-the emphasis.
+Both were put to Piotr and both resolved to the recommendation; the decided
+order is at the top of this document.
+
+1. **How far to commit** — Stage A then B. Not Stage D: BACKLOG 9's *"do not
+   start one inside a deadline"* stands, and Stage B is the day that decides
+   whether the month is worth spending.
+2. **When to harden the harness** — before Stage B, for the reason that made the
+   question worth asking: Stage B is a single gate cell deciding a month of
+   work, and the instruments that would measure it took six corrections in
+   their last milestone.
