@@ -961,9 +961,38 @@ def _make_jobs(pairs: list[tuple], workers: int, seed_base: int = 1000) -> list[
     return jobs
 
 
-def _pair_worker(arg: tuple) -> tuple[int, int, list[int]]:
+#: One game's MARGIN, side-a-relative, as persisted per game (M41b § II.3c):
+#: [a prizes left, b prizes left, a deck count, b deck count]. `None` when the
+#: engine ended without a final state (an errored game).
+MARGIN_FIELDS = ("a_prizes", "b_prizes", "a_deck", "b_deck")
+
+
+def _pair_worker(arg: tuple) -> tuple[int, int, list[int], list]:
+    """One chunk: the per-game results AND their margins.
+
+    M41b § II.3c: `_engine_game` has always captured the end state, and
+    `_from_a_view` has always re-keyed it to side a, but the margin died here
+    — the worker returned bare win/loss ints, so every `--workers` battery
+    ever run discarded it (verified across 3,245 run files: zero carry it).
+    The `on_game` closure is built INSIDE the worker, so it never has to cross
+    the spawn boundary that forbids callables in `run_pairs`' job tuples.
+    """
     job_idx, (pair_idx, spec_a, spec_b, n, seed) = arg
-    return job_idx, pair_idx, play_series(spec_a, spec_b, n, seed=seed)
+    margins: list = []
+
+    def on_game(_g, _result, view):
+        final = view.get("final") or {}
+        prizes, decks = final.get("prizes"), final.get("decks")
+        margins.append([prizes[0], prizes[1], decks[0], decks[1]]
+                       if prizes and decks else None)
+
+    chunk = play_series(spec_a, spec_b, n, seed=seed, on_game=on_game)
+    # Index alignment is the whole contract: margins[i] MUST describe the game
+    # results[i] scored, or the analysis pairs an outcome with someone else's
+    # margin and reports a confident wrong correlation. A game_fn that never
+    # fires on_game (test seams) would otherwise short the list.
+    margins += [None] * (len(chunk) - len(margins))
+    return job_idx, pair_idx, chunk, margins[:len(chunk)]
 
 
 def _run_key(pairs: list[tuple], workers: int, seed: int) -> dict:
@@ -985,6 +1014,9 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
     silently dropped on this path; note the engine's own RNG drives game
     variance either way — repeated runs are independent samples).
 
+    Each persisted chunk also carries `margins` — one MARGIN_FIELDS row per
+    game (M41b § II.3c). Old checkpoints have no such key and still resume.
+
     checkpoint (M8.1): a jsonl path. Line 1 pins the run key
     (pairs/workers/seed); each completed chunk appends one line as it
     finishes, and a rerun with the SAME key resumes, skipping completed
@@ -1001,6 +1033,10 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
 
     jobs = _make_jobs(pairs, workers, seed_base=1000 + seed)
     results: list[list[int]] = [[] for _ in pairs]
+    # Per-game margins ride alongside results (M41b § II.3c). They are not
+    # returned — the return type is load-bearing for every caller — but they
+    # ARE persisted to the checkpoint, which is the analysis artifact.
+    margins: list[list] = [[] for _ in pairs]
     done: set[int] = set()
     fh = None
     if checkpoint:
@@ -1015,6 +1051,11 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
             for row in lines[1:]:
                 done.add(row["job"])
                 results[row["pair"]].extend(row["results"])
+                # `margins` is absent in every pre-M41b checkpoint; resuming
+                # one must still work, so the results list stays the authority
+                # and margins are read only where they exist.
+                margins[row["pair"]].extend(
+                    row.get("margins") or [None] * len(row["results"]))
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(key) + "\n")
@@ -1025,12 +1066,14 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
         if pending:
             ctx = mp.get_context("spawn")
             with ctx.Pool(min(workers, len(pending))) as pool:
-                for job_idx, pair_idx, chunk in pool.imap_unordered(_pair_worker,
-                                                                    pending):
+                for job_idx, pair_idx, chunk, chunk_margins in \
+                        pool.imap_unordered(_pair_worker, pending):
                     results[pair_idx].extend(chunk)
+                    margins[pair_idx].extend(chunk_margins)
                     if fh is not None:
                         fh.write(json.dumps({"job": job_idx, "pair": pair_idx,
-                                             "results": chunk}) + "\n")
+                                             "results": chunk,
+                                             "margins": chunk_margins}) + "\n")
                         fh.flush()
     finally:
         if fh is not None:

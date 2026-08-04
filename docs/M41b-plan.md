@@ -18,7 +18,7 @@ one thing in this document that is settled rather than proposed:
 | 0 | **§ II.1** — epoch amendment to `ARCHITECTURE.md` §15 | pure bookkeeping, but §15 currently forbids the family Stage B belongs to. Do it before anyone reads the list and stops. | the three pre-epoch entries and M8.4 are marked |
 | 1 | **Part I** — the encoder (Phases 1-3) | Stage A. Prerequisite: a search teacher cannot be distilled into a student whose inputs alias on 879 real option pairs. | aliasing probe reads `real::* == 0`; column safety PASSes at widths 100 and 115 |
 | 2 | **§ II.3a/b** — golden fixtures + cross-instrument agreement | Stage B is ONE gate cell that decides a month of work. Measuring it with instruments that took six corrections in their last milestone is how you buy a confident wrong answer. | DONE 2026-08-04: all 20 probes carry fires-and-guards fixtures (104 tests), enforced by `tests/test_probe_fixture_coverage.py` rather than remembered; `pm_probe2.py` renamed `pm2_probe.py` so the glob cannot miss it; agreement tests in `tests/test_instrument_agreement.py`, mutation-verified |
-| 3 | **§ II.3c** — the regression-adjusted gate estimator | Stage B's plausible effect (+25-60 ELO ≈ 3.5-8.5pp, § II.2) sits at or below the ~14pp a 400-game cell resolves — without variance reduction the gate is underpowered and its null is noise. Decided by re-analysing a finished battery both ways | a win-rate CI half-width comparison, raw vs adjusted; if adjustment fails, Stage B's n rises to ~2-3k |
+| 3 | **§ II.3c** — the regression-adjusted gate estimator | Stage B's plausible effect (+25-60 ELO ≈ 3.5-8.5pp, § II.2) sits at or below the ~14pp a 400-game cell resolves — without variance reduction the gate is underpowered and its null is noise. Decided by re-analysing a finished battery both ways | DONE 2026-08-04: **adjustment DROPPED as invalid** (a post-outcome covariate; exact no-op, verified by bootstrap) — batteries now persist margins, and Stage B's n rises to **≥3,000/cell ≈ 3 min**, which measurement showed is cheaper than the hedge |
 | 4 | **§ II.3d/e** — gates as a hashed spec, ship guards into CI | cheap, deterministic, and they close the exact holes M41 fell through | `ship_verify` Tier-1 invariants run as tests |
 | 5 | **Stage B** — BACKLOG #10, distil the search | the central assumption: is search output learnable by our net at our scale? | one gate cell against the panel, at the n § II.3c's outcome dictates |
 | 6 | **Stage C** — the `search_begin/step/end` re-descent probe | half a day, and it moves a 10-50x constant on everything downstream. Cheap enough to run whenever; must precede any re-estimate of #9. | a yes/no on re-descent from an arbitrary node |
@@ -651,11 +651,51 @@ keeps its meaning.
 **Pre-register the check:** re-analyse a completed battery's JSONLs both ways
 and compare win-rate CI half-widths, raw vs adjusted. If adjustment does not
 shrink the interval materially, drop it and say so — do not carry it on theory.
+
+> **RESOLVED 2026-08-04 — DROPPED, and the recommendation above was wrong.**
+> Two findings, in order.
+>
+> *The check could not be run as pre-registered.* No battery on this box
+> carries a margin: all 3,245 `runs/*.jsonl` hold only `{job, pair, results}`
+> with bare win/loss ints. `_engine_game` does capture the end state and
+> `_from_a_view` re-keys it to side a — both as this section claimed — but
+> `_pair_worker` returned only the result ints, so the margin died at the
+> multiprocessing boundary and never reached disk. Fixed in this milestone
+> (margins now persist per chunk, index-aligned, old checkpoints still
+> resume), and a fresh 2,000-game cell was run to decide the question.
+>
+> *The method is invalid here, not merely unhelpful.* CUPED needs a covariate
+> measured BEFORE the treatment and independent of which arm is under test.
+> The prize margin is a same-game, post-outcome quantity and a stronger arm
+> produces better margins, so it is neither. With `E[X]` taken in-sample the
+> adjustment cancels exactly: `mean(Y - t(X - mean(X))) == mean(Y)`. Measured
+> on the cell: the margin correlates **+0.853** with the outcome, the naive
+> residual interval reads **47.9% narrower** — and the point estimate is
+> identical to `0.00e+00`, with 4,000 bootstrap replicates giving the two
+> estimators the *same* SD to five decimals (0.00990). The apparent gain is
+> an understatement of real uncertainty, i.e. exactly the confident-wrong
+> instrument this section exists to prevent. `scripts/m41b_gate_estimator.py`
+> is the standing instrument, with fixtures.
+>
+> **So Stage B's n is the answer, and it is affordable.** Measured throughput
+> on this box: 2,000 games in 1m46s at `--workers 8` (~19 games/s). For 80%
+> power on the plausible 3.5pp effect (§ II.2) a two-arm comparison needs
+> **n ≈ 3,200 per cell ≈ 3 minutes** — the fallback this plan treated as the
+> expensive branch is cheaper than the variance reduction it was hedging
+> against. Stage B runs at n ≥ 3,000, pinned in the § II.3d spec.
+>
+> *One legitimate reduction was found and left available:* seat is fixed by
+> the slot-fair design, before any game and independently of the arm, so
+> seat-stratified variance is correct where margin adjustment is not. It is
+> worth **nothing on this cell** (seats read 0.7295 vs 0.7005; true SD
+> unchanged), so it is implemented and reported but not adopted — if a future
+> cell shows a real seat split, the estimator already has it.
 **Pre-register the fallback too:** if dropped, Stage B does not run at n=400.
 The power arithmetic in § II.2 puts the plausible Stage B effect at ~3.5-8.5pp
 while a 400-game cell resolves ~14pp — the honest alternative is n≈2-3k for
 the Stage B cell, and whichever n it is goes into the § II.3d spec file before
-the run.
+the run. *(This is the branch that was taken — see the resolution below.
+Measured n for 80% power on 3.5pp: ~3,200/cell.)*
 
 ### II.3d Gates as code, not as a checklist
 
