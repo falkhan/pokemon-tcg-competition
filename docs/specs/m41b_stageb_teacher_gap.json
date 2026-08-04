@@ -1,0 +1,13 @@
+{
+  "name": "m41b_stageb_teacher_gap",
+  "question": "Does the COMPOSITE (net + within-turn solver) actually outplay the BARE net on our own deck? If not, Stage B has no teacher to distil and the collect+train must not be spent.",
+  "arm": "solved:checkpoints/m39_retain_b.pt:alakazam_v2_h4",
+  "control": "model:checkpoints/m39_retain_b.pt:alakazam_v2_h4",
+  "beds": [
+    {"name": "grim", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 11,
+  "bars": {"pass": 0.05, "kill": 0.0}
+}
