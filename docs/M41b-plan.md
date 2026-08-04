@@ -141,8 +141,17 @@ magnitude. But it **cannot simply be dropped**: `rl/deck_build.py:116`,
 the parquet, and dropping it from FEAT would change `FEAT_DIM` and shift every
 vector.
 
-The way through keeps the parquet untouched and `FEAT_DIM` at 36: **transform
-FEAT after load**, by column NAME, in both encoder twins.
+The way through keeps the parquet untouched — deck tooling keeps its column —
+and **transforms FEAT after load**, by column NAME, in both encoder twins.
+
+Phase 2 splits into two steps with **different risk profiles**, and they must
+not be conflated:
+
+* **2a, values only.** `FEAT_DIM` stays 36, so every checkpoint still loads and
+  every width still matches. The only hazard is a distribution shift.
+* **2b, columns dropped.** `FEAT_DIM` 36 -> 34, so the whole vector is re-laid
+  out and the silent mis-slice of 2c becomes possible. **2b must not land
+  without the 2c guard.**
 
 ```python
 FEAT_V2 = False   # M41b: OFF until a net is trained against it
