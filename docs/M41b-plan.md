@@ -1,4 +1,8 @@
-# M41b — the deck-agnostic encoding gaps: what the net cannot see
+# M41b — encoding, learning architecture, and harness
+
+**Part I** (below) is the encoder work M42's review measured: ready to execute.
+**Part II** is the pilot-learning architecture and the harness, sequenced
+against it — staged and gated, with one open question for Piotr at the end.
 
 > Naming note: this lands chronologically **after** M42, whose diary holds the
 > review that motivates it (`docs/M42.md` § "Encoding review"). Kept as M41b at
@@ -293,3 +297,207 @@ cannot rescue a re-layout — 2b needs a full retrain, not a warm start.
 - No attack-identity embedding. Within-menu attack aliasing measured 0, so
   there is nothing to fix; typed cost is the generalisation answer.
 - `tests/fake_cg.CardType` still does not match the engine's numbering.
+
+---
+
+# Part II — a battle-tested architecture for pilot learning and the harness
+
+Piotr, 2026-08-04: *"we definitely need to have a proper and battle-tested
+architecture for the pilot learning and harness."*
+
+Most of the learning half is **already scoped and measured** in
+`docs/BACKLOG.md` items 7-10. This section does not re-derive it. It does three
+things the backlog does not: it sequences that work against Part I, it adds the
+**harness** half, and it removes a blocker that currently gate-keeps the right
+approach.
+
+## II.0 The evidence that already exists — do not re-litigate it
+
+| finding | milestone | consequence |
+|---|---|---|
+| Wrapping the net in the solver = **+125 ELO [+90, +163]** | M40 S3 | a working policy-improvement operator. AZ's entire thesis, measured on OUR engine. |
+| BC retains only **0.20 [0.07, 0.33]** of demonstrator edge | M40 X5 | **imitation provably cannot reach the band.** The current ceiling is real, not a tuning problem. |
+| Imitation fidelity saturates ~0.527 on elite replays | M10 | the same conclusion from the other side. |
+| Game-structure-matched net: **+8-11pp** in a CPU-scale card-game study | BACKLOG 8 | the largest single design win available — and it needs a corpus that does not exist yet. |
+
+So the direction is not in doubt: **search is the lever, imitation is spent.**
+What is in doubt is cost, and that is where sequencing matters.
+
+## II.1 A blocker to remove first: ARCHITECTURE.md section 15 is stale
+
+Section 15, "Measured dead ends — do not re-propose", currently forbids the
+family the evidence above supports. Three of its entries are **pre-epoch**:
+
+* *"M8.1 development-tier solver — pooled 0.492"* — solver-based, so it routes
+  through `score_leaf`.
+* *"Any improvement operator built on `score_leaf`'s non-lethal ranking — M12 —
+  the bottleneck is `score_leaf` itself"* — explicitly `score_leaf`.
+* *"Override-style consumption of any eval signal — M8.1, M12, M13"* — two of
+  the three cells are solver-based.
+
+The MILESTONES.md EPOCH MARKER states it plainly: the M37 audit found a
+**prize-term inversion in `score_leaf` at 4 sites, only 1 known**, and *"every
+solver-backed bed number recorded before 2026-07-31 is pre-fix era and NOT
+comparable."* Those three entries were measured on an inverted leaf, and M40
+S3's post-fix **+125 ELO** is the direct contradiction.
+
+A fourth entry needs a narrower note. *"Inference-time MCTS on the classifier
+value head — M8.4 — sims ladder flat"* did **not** use `score_leaf`, so the
+epoch does not void it — but it ran on the *classifier* value head, which M12
+found to be the wrong signal and which the E0-validated outcome-grounded value
+(0.642 matched-pair, 68% within-game variance) has since replaced. Different
+reason, same status: untested on the current substrate.
+
+**Action:** add an epoch amendment to section 15, in the style of the one already
+there for PPO (*"'More PPO iterations is dead' was measured on v2 nets and does
+not transfer to V3"*). Mark the three entries pre-epoch and M8.4 as
+substrate-superseded. This is bookkeeping, but section 15 is a "do not
+re-propose" list and it currently points away from the only lever with a
+positive post-fix measurement.
+
+## II.2 The learning arc, sequenced
+
+**Stage A — Part I of this document (the encoder).** Prerequisite, not optional.
+You cannot distil a search teacher into a student whose inputs alias on 879 real
+option pairs and whose damage model scores its own win condition at 0. BACKLOG 8
+("game-structure-matched net, +8-11pp") is *precisely* a claim about
+representation, and Part I is the representation work it presumes.
+
+**Stage B — BACKLOG #10, distil the search.** The backlog already calls this
+*"the cheap 80% of #9, and the next thing to try"*: collect a corpus whose
+labels are the **composite's** actions rather than the bare net's, and fine-tune
+on it. AZ's inner loop run once — no MCTS, no belief states, no engine work.
+`scripts/m40_s2_collect.py` already does resumable collection against `solved:`
+arms, so *the change is the arm, not the machinery*. **Hours, not weeks.**
+
+It tests the single assumption everything downstream rests on: **is search
+output learnable by our net at our scale?** If distilling a measured +125 ELO
+teacher does not move the gate, the full build almost certainly would not
+either — a day spent instead of a month.
+
+Stage B should be re-run **after** Stage A, and the pairing is the point: if
+distillation underperforms because the student cannot *see* what the teacher is
+reacting to, Part I is exactly the fix. The A-then-B order is what distinguishes
+"search is not learnable" from "the student was blind".
+
+**Stage C — one cheap engine probe that moves a 10-50x constant.** BACKLOG 9(b)
+records the open question: whether `cg.api.search_begin/step/end` supports
+**re-descent from an arbitrary node** or only forward DFS. Reading the header:
+`search_step(search_id, select)`, `search_release(search_id)`, and *"memory used
+during the search will be reused"* — per-state ids plus an explicit release
+strongly suggest multiple concurrent states, i.e. re-descent. **A half-day probe
+that decides a 10-50x constant on the entire search programme**, and it should
+run before anyone estimates #9 again.
+
+Two more facts from the same header, worth recording because they lower 9(a):
+`search_begin` takes **predicted** opponent deck / prize / hand, and
+`manual_coin=True` lets the caller choose coin outcomes. The API is *natively a
+determinization interface* — ISMCTS over belief samples is the shape it was
+built for, so 9(a) drops from "build belief-state search" to "sample beliefs and
+feed them in". Strategy fusion remains the real risk and is not solved by the
+API.
+
+**Stage D — the full build (#9 PSRO / #7 PPO / #8 inductive bias).** Gated on B.
+The backlog's cost note stands and should be quoted at whoever proposes it:
+*"~58k games/day; convergence 1e5-1e6 games, so 2 days to 1 month, times
+determinization count. Consumes a whole campaign; do not start one inside a
+deadline."* And 9(d): a card pool is a *family* of games plus an outer
+deckbuilding optimisation, so the correct frame is **PSRO / double oracle**, not
+AlphaZero — the bed roster is already a hand-maintained version of that
+population.
+
+## II.3 The harness — the weaker half, and the one nobody has systematised
+
+The learning direction has a measured basis. The **measurement layer does not**,
+and its failure record is worse than the model's:
+
+| failure | cost |
+|---|---|
+| M37 audit: prize inversion at 4 sites, 1 known | a whole era of solver numbers void, including the campaign bar |
+| M40 X5: bed ABSOLUTES void as band claims | clone retention asserted 0.33-0.50, measured **0.20** |
+| M42: **six** instrument corrections in one milestone | four near-misses that would have shipped rules against phantom defects |
+| M41: export ran mid-edit, shipped a half-finished encoder | caught by a QC sweep that could easily have passed |
+| M41: `test_bundle_twins` compared only `plan.py` | a twin divergence survived a full milestone |
+
+Four of the six M42 bugs were caught by luck — an impossible >100% rate, and a
+flat contradiction between two instruments. That is not a system.
+
+### II.3a Golden fixtures for every instrument (highest value)
+
+Every probe and every forensic flag gets a synthetic fixture whose ground truth
+is true **by construction**, asserted in CI. M42 did this for the post-mortem
+flags (a `fires` case and a `guards` case each, 27 tests) and it is why those
+flags are the only instruments in the repo currently trustworthy. Extend it to
+all 20 `scripts/*_probe.py`.
+
+Concretely, this is what would have caught 4 of the 6 M42 bugs before a single
+game was played: a fixture where the pilot has *no legal way out* pins that
+`retreat_stranded` must not count it; a fixture where the stadium is played at
+prompt 5 of a turn pins the per-turn semantics; a fixture with a benched
+evolution pins that an in-play Pokemon is never a dead fetch.
+
+### II.3b Cross-instrument agreement, as a check rather than a coincidence
+
+The stadium bug surfaced only because the probe and the post-mortem flag
+disagreed on the same games. Make that deliberate: for any behaviour measured
+two ways, a CI test asserts the two instruments agree on a fixed replay corpus.
+Keep the two implementations **independent** on purpose — a shared helper would
+make them agree while both being wrong, which is the opposite of the property
+wanted.
+
+### II.3c CRN / paired evaluation is impossible here — reduce variance elsewhere
+
+Worth settling because it is the field's standard first answer and it does
+**not** apply. `cg.api` exposes **no seed at all**, and `docs/VALIDATION.md:228`
+records why a seed would not help anyway: the engine RNG is per worker process
+and `mp.Pool` assigns chunks by timing, so *"every cell is an independent sample
+and a 'seed' is just a label."* Five identical commands at seed 1 gave
+**0.471 / 0.494 / 0.526 / 0.506 / 0.537**.
+
+So common random numbers are off the table. The cheapest remaining lever is a
+**lower-variance outcome statistic**: gates currently score a Bernoulli
+win/loss, while `_engine_game` already records `stats["final"]` with per-seat
+deck counts and prizes remaining. Scoring the **prize differential** (or
+turns-to-win) as a continuous margin uses strictly more of each game. Same
+games, tighter interval — the one change that could move the G-12 power table,
+where n=400 currently resolves only ~14pp.
+
+**Pre-register the check:** re-analyse a completed battery's JSONLs both ways
+and compare CI half-widths. If the margin statistic does not shrink the interval
+materially, drop it and say so — do not carry it on theory.
+
+### II.3d Gates as code, not as a checklist
+
+Every milestone hand-rolls a `*_decide.py`. Replace with one runner over a
+**pre-registered spec file** (arms, bars, n, the read) written and hashed
+*before* the run, which refuses to decode a run that does not match its spec.
+That is what stops a bar moving after the numbers land, and it is the machine
+version of a discipline the diaries currently keep by hand.
+
+### II.3e Push the ship guards into CI
+
+`ship_verify` Tier-1 is a script someone remembers to run. The invariants it
+checks are exactly the ones that have broken: twin parity (M41), column safety
+at every trained width, the FEAT layout version (Part I section 2c), bundle
+purity, and the encoder width chain. All are cheap and deterministic. Make them
+tests.
+
+## II.4 What Part II does NOT commit to
+
+No architecture change is justified until **Stage B** returns a number. The
+point of the backlog's item-10 framing is that a day of distillation decides
+whether a month of PSRO is worth starting, and that ordering must not be
+inverted because a rewrite is more interesting than a probe.
+
+Nor does Part II propose belief-state search, batched inference, or a population
+loop as work items yet. They are Stage D, they are correctly parked on compute
+grounds, and 9(b)'s re-descent probe may change their cost by more than any
+design decision available today.
+
+## II.5 The one open question this plan cannot answer
+
+BACKLOG 9 says *"do not start one inside a deadline"*, and Stage D is a
+campaign. The competition's remaining time and submission slots decide whether
+this plan targets Stage B (hours, one gate cell) or commits to Stage D (weeks,
+the whole budget). That is Piotr's call and it changes the phase order, not just
+the emphasis.
