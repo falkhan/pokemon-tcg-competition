@@ -172,6 +172,64 @@ trained under it — add that as a `ship_verify` Tier-1 check.
 Under `tests/fake_cg` there are no `skills`, so `has_ability` reads all-zero;
 pin that so the column is never assumed populated in tests.
 
+### 2b. The categorical columns — ordinal ids where a category belongs
+
+Four FEAT columns encode an **unordered category as an ordinal scalar**, which
+is the wrong representation for two reasons specific to this architecture.
+`_pool` **sums** FEAT rows over a zone, so `sum(one-hot) = a histogram` (how
+many Grass cards in hand) while `sum(ordinal) = a sum of ids`, which is
+irrecoverable — one card with id 600 and two cards with ids 300 are identical.
+And the first layer is `Linear`, so an ordinal category can only contribute
+something monotonic in the id; representing "Darkness is special" costs hidden
+units to build a bump function, and it cannot generalise, because interpolating
+between `weakness_id` 4 and 6 is meaningless.
+
+Measured against the pool (1,267 cards):
+
+| column | distinct | verdict |
+|---|---|---|
+| `card_type` (0-6) | 7 | **DROP.** Provably a pure ordinal duplicate of the 7 one-hots beside it — the one-hot is exactly-one-hot on **0 of 1,267** exceptions. No information lost. |
+| `energy_type_id` (0-10) | 11 | **DROP.** 0 mismatches against the `type_*` one-hots wherever one is set; only **4** cards have a non-Colorless id with no one-hot, and those are special energies already covered by the v4 special-energy pools and the card-id embedding. |
+| `weakness_id` (-1..8) | 9 | **one-hot -> 9 cols, but DEFER** (below). |
+| `resistance_id` (-1..6) | 3 | **one-hot -> 3 cols, but DEFER** (below). |
+| `evolves_from_id` | 352 | **NOT a category — an identifier.** Never one-hot it; identity already has the `nn.Embedding` tables (`N_HAND_IDS`, option ids). Swap for `has_ability` as above. |
+
+**Why defer the weakness/resistance one-hots.** Phase 1 slots 21-24 already
+deliver the *decision-relevant* half of that information — "is the opponent weak
+to my type", both directions — for **4 columns**. The one-hots' unique extra
+value is the zone-level histogram ("how much of my remaining deck is weak to
+Fire"), which is real but unmeasured. And they are not cheap: **every FEAT
+column costs 28 state columns and 2 option columns**
+(`STATE_DIM = 209 + 28 * FEAT_DIM`, `OPTION_DIM = 18 + 2 * FEAT_DIM`), so +10
+FEAT columns is +280 state columns, a 23% state blow-up. Pay that only against a
+measurement.
+
+So 2b as scoped: **FEAT_DIM 36 -> 34** (two proven-redundant ordinals dropped,
+one column repurposed). It gets *smaller*, and every remaining column is either
+a bounded scalar or a flag.
+
+### 2c. A FEAT width change fails SILENTLY — add the guard
+
+This is the reason 2b cannot be smuggled in as "just hygiene".
+`rl/matchrunner.py:767` sniffs `option_dim` from the checkpoint's own
+`option_enc.0.weight`, and `forward()` truncates the *current* encoding to that
+width. Both assume every earlier width is a byte-identical **prefix** — true for
+appends, false for a re-layout. `OPTION_DIM = 18 + 2 * FEAT_DIM` sits at the
+FRONT of the option vector, so changing `FEAT_DIM` shifts every column after it
+and an old checkpoint would truncate a differently-laid-out vector to its old
+width: **wrong answers, no error**. `STATE_V2_DIM` is likewise a module constant
+in the `n_ids` arithmetic at `:613`.
+
+So Phase 2 must add a layout guard before it flips anything: persist
+`FEAT_DIM` (or a `feat_layout` version int) into the checkpoint and have the
+loaders **refuse** a mismatch instead of sniffing through it. Without that, 2b
+is a one-way door that silently invalidates every pinned baseline in
+`docs/MILESTONES.md`.
+
+The existing warm-start invariant (`load_v2_into_v3` and friends zero-init new
+inputs so day one is exactly equivalent) is the right tool for **appends** and
+cannot rescue a re-layout — 2b needs a full retrain, not a warm start.
+
 ## Phase 3 — verification, pre-registered
 
 1. **The aliasing kill.** `scripts/m42_alias_probe.py` keyed on the NEW width
@@ -204,6 +262,8 @@ pin that so the column is never assumed populated in tests.
 - Every encoder change lands in `rl/encoders.py` **and** `tcg/encoders.py`
   identically or `tests/test_parity.py` fails.
 - Evolution relations are by **NAME, never id**.
+- **No FEAT width change without the layout guard of 2c.** The truncation shim
+  assumes prefix-compatibility and fails silently when that is violated.
 - Bundle-safe: no polars, no torch, no parquet in anything the submission
   imports. `_ATK` and `cg.api` are the only card-data sources Phase 1 may use.
 - `--workers 8` maximum on any run.
