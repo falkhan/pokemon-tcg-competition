@@ -427,6 +427,70 @@ self-play become the M40 agenda rather than more harvesting.
    as LABELS it feeds #10's distillation corpus immediately (the
    `score_siblings`/`solve_turn_line(dev=True)` path M12 built).
 
+13. **BC-the-meta -> clone population -> PPO with SHAPED rewards** (Piotr,
+   2026-08-04; the "what if the teacher is weak" lane). Three parts with
+   very different standing — the value of this entry is keeping them apart.
+
+   **(a) BC across meta decks — population construction, NOT a strength
+   lever.** As a strength lever it is foreclosed: imitation is exhausted at
+   the 900+ band (M39: five arms, two independent corpora, all negative)
+   and a BC clone of a complex hybrid deck can be WEAKER than the rule
+   sample agent (M40). As OPPONENTS it is exactly right, and #9(d) already
+   frames the pool as PSRO/double-oracle with the bed roster as "a
+   hand-maintained version of that population." Scope it as bed-building
+   and it is correct and useful; scope it as "more BC will make us
+   stronger" and it re-runs a measured dead end.
+
+   **(b) Clones vs clones = the double oracle.** No objection on merit;
+   it is #9's population loop, parked on compute (~58k games/day,
+   convergence 1e5-1e6 games), not on evidence.
+
+   **(c) The shaped-reward part — where the trap is.** PPO on V3 is live,
+   not dead (§15's amendment: the kill was v2-only; M20's PPO produced the
+   champion), and `rl/ppo.py` already has `compute_gae` + the clipped
+   update. The proposed signals split into two classes and the split is the
+   whole point:
+
+   * `board advantage`, `energy efficiency` are STATE functions -> legal
+     potentials. Potential-based shaping is policy-invariant ONLY in the
+     form `F(s,s') = gamma*Phi(s') - Phi(s)` (Ng/Harada/Russell 1999).
+   * `cards taken`, `avoided attacks`, `survived pokemon` are EVENT
+     bonuses -> not potentials -> they change the optimal policy and the
+     agent farms the proxy. **Concrete hazard, not theoretical: "cards
+     taken" pays the agent to draw, and DECK-OUT is one of our measured
+     live loss families** — the `conserve`/`racemode`/`W_DECK_LOW`
+     machinery exists to fight exactly that. This class must not be added
+     without a potential reformulation.
+
+   Precedent for the failure mode is in our own code: `ENTROPY_COEF` was
+   cut 10x because the bonus "overpowered the weak advantage signal and
+   diffused the policy toward random" (`rl/ppo.py:31`). An auxiliary term
+   drowning the real gradient has already happened here once.
+
+   **Two reasons the shaping may be redundant.** We already HAVE a
+   validated potential: the E0-passed value head (0.642 matched-pair, 68%
+   within-game variance), and GAE already consumes V for precisely this
+   credit-assignment job — so `Phi = V(s)` is the principled "board
+   advantage" and the honest question is whether a hand-crafted Phi beats
+   it. And the credit-assignment gap the proposal intuits is already
+   MEASURED: `rl/ppo.py:106 advantage_by_type` (M23 audit) found supporter
+   advantages ~0 or noise-drowned while attack advantages dominate.
+
+   **Counterfactual signals are features, not rewards.** "Boss's Orders on
+   a Pokemon that could attack us" is expensive and noisy as a reward term
+   and cheap as an INPUT — and it half-exists already (O18 `gustsnipe`,
+   M41b's matchup slots). Prefer a census over a training run wherever a
+   signal can be handed to the net directly.
+
+   *Pre-registered falsification order if this is picked up:* (1)
+   `advantage_by_type` on a fresh post-epoch PPO shard to confirm the gap
+   still exists; (2) `Phi = V(s)` potential shaping as the control arm —
+   free, principled, no new signals; (3) hand-crafted potentials only if
+   (2) leaves something on the table, and only genuine state functions;
+   (4) never the event bonuses without a potential reformulation. Standing
+   caveat: offline gates measure relative deltas on ~750-800 proxies; live
+   value decides on the ladder.
+
 - **Deep equilibrium search lane (NFSP/CFR/ReBeL/Student of Games):**
   belief-state enumeration is intractable for collectible card games
   (~10^198 consistent decks in LOCM — arXiv 2404.16689); ReBeL's training
