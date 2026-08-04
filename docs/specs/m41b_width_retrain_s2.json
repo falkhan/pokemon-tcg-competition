@@ -1,0 +1,26 @@
+{
+  "name": "m41b_width_retrain_s2",
+  "question": "Replication draw 2 of the width question. G-13 measured a 10-12pp training lottery, so the seed-0 result (+1.14pp, INCONCLUSIVE) cannot be separated from the draw. Same corpus, same recipe, different training seed; consistency of SIGN across draws is the evidence, not any single delta.",
+  "arm": "model:checkpoints/m41b_arm_w143_s2.pt:alakazam_v2_h4",
+  "control": "model:checkpoints/m41b_ctl_w100_s2.pt:alakazam_v2_h4",
+  "beds": [
+    {
+      "name": "grim",
+      "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"
+    },
+    {
+      "name": "wall",
+      "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"
+    },
+    {
+      "name": "dragapult",
+      "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"
+    }
+  ],
+  "n_per_cell": 3000,
+  "seed": 23,
+  "bars": {
+    "pass": 0.02,
+    "kill": -0.02
+  }
+}

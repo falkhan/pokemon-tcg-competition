@@ -1067,10 +1067,19 @@ def train(data_dirs: list, name: str, init: str | None = None,
           phase_deck_at: int = 15,
           outcome_weight: float | None = None,
           advantage_ckpt: str | None = None,
-          advantage_beta: float = 1.0) -> None:
+          advantage_beta: float = 1.0,
+          seed: int | None = None) -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
+    if seed is not None:
+        # M41b: training had no seed control, so a rerun reproduced the same
+        # draw and independent draws were impossible. G-13 measured that
+        # clones of ONE corpus spread 10-12pp, so a single-draw A/B cannot
+        # separate a real effect from the training lottery — replication
+        # needs this knob, and pinning it also makes a run reproducible.
+        torch.manual_seed(seed)
+        np.random.seed(seed)
     if init_wide is not None:
         _refuse_mixed_option_widths(data_dirs)
     ds = BCDatasetV3([Path(d) for d in data_dirs])
@@ -1417,6 +1426,11 @@ if __name__ == "__main__":
                         "Per-decision replacement for --outcome-weight")
     t.add_argument("--advantage-beta", type=float, default=1.0,
                    help="temperature for --advantage-ckpt (higher = flatter)")
+    t.add_argument("--seed", type=int, default=None,
+                   help="M41b: pin torch/numpy RNG so a run is reproducible "
+                        "AND so independent draws are possible. G-13 measured "
+                        "a 10-12pp training lottery, so a single-draw A/B "
+                        "cannot separate an effect from the draw.")
     r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
                                        "sibling shard dirs (<dir><suffix>)")
     r.add_argument("--data", type=str, nargs="+", required=True)
@@ -1450,6 +1464,7 @@ if __name__ == "__main__":
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
               init_v3h=args.init_v3h, init_v3o=args.init_v3o,
               init_v3m=args.init_v3m, init_wide=args.init_wide,
+              seed=args.seed,
               epochs=args.epochs, lr=args.lr,
               batch_size=args.batch_size, plan_weight=args.plan_weight,
               uniform_weights=args.uniform_weights,
