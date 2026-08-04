@@ -19,6 +19,29 @@ sys.path.insert(0, str(ROOT))
 import rl.matchrunner as mr  # noqa: E402
 
 
+def run_series(fn_a, fn_b, deck_a, deck_b, games: int, engine=None) -> int:
+    """The probe's W-L core, extracted (unchanged) for the golden fixtures in
+    tests/test_probes_mechanism.py (M41b II.3a). Seat-alternated: game g seats
+    arm A at index g % 2, so `res == g % 2` is an arm-A win. `engine` defaults
+    to the live mr._engine_game (resolved at call time, so tests and probes
+    that monkeypatch it are honored)."""
+    engine = mr._engine_game if engine is None else engine
+    wins = 0
+    for g in range(games):
+        fns = (fn_a, fn_b) if g % 2 == 0 else (fn_b, fn_a)
+        decks = (deck_a, deck_b) if g % 2 == 0 else (deck_b, deck_a)
+        res = engine(fns[0], fns[1], decks[0], decks[1])
+        wins += int(res == g % 2)
+    return wins
+
+
+def mechanism_fired(stats: dict) -> bool:
+    """The probe's verdict: the veto path both OPENED searches and VETOED at
+    least once. `vetoes > 0` alone would pass a run where the search never
+    opened and the counter was stale (the vacuous-pass rule)."""
+    return stats["vetoes"] > 0 and stats["opened"] > 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("-n", "--games", type=int, default=16)
@@ -40,12 +63,7 @@ def main() -> int:
         instance=f"vv{a.seed}_a")
     fn_b, deck_b = mr.make_pilot(mr.parse_spec(a.bed),
                                  instance=f"vv{a.seed}_b")
-    wins = 0
-    for g in range(a.games):
-        fns = (fn_a, fn_b) if g % 2 == 0 else (fn_b, fn_a)
-        decks = (deck_a, deck_b) if g % 2 == 0 else (deck_b, deck_a)
-        res = mr._engine_game(fns[0], fns[1], decks[0], decks[1])
-        wins += int(res == g % 2)
+    wins = run_series(fn_a, fn_b, deck_a, deck_b, a.games)
 
     s = mr.VVETO_STATS
     print(f"vveto probe: n={a.games} vs {a.bed}  "
@@ -58,7 +76,7 @@ def main() -> int:
         print(f"  veto latency: mean {s['time_sum'] / s['prompts'] * 1e3:.1f} ms"
               f"  max {s['time_max'] * 1e3:.1f} ms   "
               f"(G6 bar: 50 ms mean; hard budget 600 s/game)")
-    ok = s["vetoes"] > 0 and s["opened"] > 0
+    ok = mechanism_fired(s)
     print("\nmechanism " + ("FIRES — C3 battery is worth running."
                             if ok else "DID NOT FIRE — investigate before "
                             "spending battery time (vacuous-pass rule)."))

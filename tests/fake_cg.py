@@ -76,6 +76,15 @@ class CardType(IntEnum):
     STADIUM = 4
 
 
+class LogType(IntEnum):
+    # Real engine values (cg/api.py) for the members instruments compare on.
+    TURN_START = 2
+    TURN_END = 3
+    DRAW = 4
+    MOVE_CARD = 6
+    RESULT = 23
+
+
 class SelectContext(IntEnum):
     MAIN = 0
     SETUP_ACTIVE_POKEMON = 1
@@ -215,7 +224,7 @@ def _install():
     for name, value in (
         ("EnergyType", EnergyType), ("AreaType", AreaType),
         ("OptionType", OptionType), ("CardType", CardType),
-        ("SelectContext", SelectContext),
+        ("SelectContext", SelectContext), ("LogType", LogType),
         ("all_attack", all_attack), ("all_card_data", all_card_data),
         ("to_observation_class", to_observation_class),
         ("search_begin", search_begin), ("search_step", search_step),

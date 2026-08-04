@@ -20,7 +20,7 @@ scripts/watch_games.py and the QC battery write):
 Columns 0..OPTION_M28_DIM plus the two embedding ids are what a LIVE bundle
 sees, so that is the DEFAULT key width — appended blocks are sliced away in
 service and must not flatter this number. `--width N` keys on a different
-prefix: `--width 144` (OPTION_M41B_DIM) is the M41b Phase 3 kill, whose
+prefix: `--width 143` (OPTION_M41B_DIM) is the M41b Phase 3 kill, whose
 pre-registered bar is real::* == 0 with harmless_true_duplicates unchanged
 (docs/M41b-plan.md Phase 3.1).
 """
@@ -30,12 +30,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
 from cg.api import AreaType, OptionType, to_observation_class
 from rl.encoders import encode_option_v2, OPTION_M28_DIM
-
-_ap = argparse.ArgumentParser()
-_ap.add_argument("--width", type=int, default=OPTION_M28_DIM,
-                 help="encoding prefix the alias key covers "
-                      f"(default {OPTION_M28_DIM}, the live-bundle width)")
-KEY_WIDTH = _ap.parse_args().width
 
 def obj_at(obs, area, index, player):
     if area is None or index is None:
@@ -62,56 +56,81 @@ def fingerprint(obs, o):
                 tuple(sorted(getattr(c, "id", 0) for c in (getattr(p, "tools", ()) or ()))))
     return (int(o.type), sig(acted), sig(tgt))
 
-c = Counter()
-examples = defaultdict(list)
-for path in sorted(glob.glob("replays/**/*.json", recursive=True)):
-    try:
-        raw = json.loads(Path(path).read_text())
-    except ValueError:
-        continue
-    if not isinstance(raw, dict) or not raw.get("steps"):
-        continue
-    for step in raw["steps"]:
-        for seat in (0, 1):
-            od = (step[seat] if seat < len(step) else {}).get("observation")
-            if not od or not od.get("select"):
-                continue
-            try:
-                obs = to_observation_class(od)
-            except Exception:
-                continue
-            opts = list(obs.select.option or ())
-            if len(opts) < 2:
-                continue
-            c["menus"] += 1
-            buckets = defaultdict(list)
-            for i, o in enumerate(opts):
+def iter_replay_observations(paths):
+    """Converted observations that carry a select block, one per prompt,
+    in file/step/seat order (the ordering Counter tie-breaks depend on)."""
+    for path in paths:
+        try:
+            raw = json.loads(Path(path).read_text())
+        except ValueError:
+            continue
+        if not isinstance(raw, dict) or not raw.get("steps"):
+            continue
+        for step in raw["steps"]:
+            for seat in (0, 1):
+                od = (step[seat] if seat < len(step) else {}).get("observation")
+                if not od or not od.get("select"):
+                    continue
                 try:
-                    num, ids = encode_option_v2(o, obs)
+                    yield to_observation_class(od)
                 except Exception:
                     continue
-                key = (num[:KEY_WIDTH].tobytes(), int(ids[0]), int(ids[1]))
-                buckets[key].append(i)
-            real = 0
-            for key, idxs in buckets.items():
-                if len(idxs) < 2:
-                    continue
-                fps = {fingerprint(obs, opts[i]) for i in idxs}
-                if len(fps) > 1:          # same encoding, DIFFERENT game object
-                    real += len(idxs) - 1
-                    t = OptionType(opts[idxs[0]].type).name
-                    c[f"real::{t}"] += len(idxs) - 1
-                    if len(examples[t]) < 2:
-                        examples[t].append(sorted(fps, key=repr)[:2])
-                else:
-                    c["harmless_true_duplicates"] += len(idxs) - 1
-            if real:
-                c["menus_with_REAL_aliasing"] += 1
-for k, v in c.most_common():
-    print(f"{v:8d}  {k}")
-print()
-for t, ex in examples.items():
-    print(f"--- {t} ---")
-    for pair in ex[:1]:
-        for fp in pair:
-            print("   ", fp)
+
+def probe_aliasing(observations, key_width):
+    """The measurement core: bucket each menu's options by (numeric-prefix,
+    embedding ids) key and split every aliased group into real (spans more
+    than one game-object fingerprint) vs harmless true duplicates.
+    Returns (counters, examples: option-type -> fingerprint pairs)."""
+    c = Counter()
+    examples = defaultdict(list)
+    for obs in observations:
+        opts = list(obs.select.option or ())
+        if len(opts) < 2:
+            continue
+        c["menus"] += 1
+        buckets = defaultdict(list)
+        for i, o in enumerate(opts):
+            try:
+                num, ids = encode_option_v2(o, obs)
+            except Exception:
+                continue
+            key = (num[:key_width].tobytes(), int(ids[0]), int(ids[1]))
+            buckets[key].append(i)
+        real = 0
+        for key, idxs in buckets.items():
+            if len(idxs) < 2:
+                continue
+            fps = {fingerprint(obs, opts[i]) for i in idxs}
+            if len(fps) > 1:          # same encoding, DIFFERENT game object
+                real += len(idxs) - 1
+                t = OptionType(opts[idxs[0]].type).name
+                c[f"real::{t}"] += len(idxs) - 1
+                if len(examples[t]) < 2:
+                    examples[t].append(sorted(fps, key=repr)[:2])
+            else:
+                c["harmless_true_duplicates"] += len(idxs) - 1
+        if real:
+            c["menus_with_REAL_aliasing"] += 1
+    return c, examples
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--width", type=int, default=OPTION_M28_DIM,
+                    help="encoding prefix the alias key covers "
+                         f"(default {OPTION_M28_DIM}, the live-bundle width)")
+    args = ap.parse_args(argv)
+    c, examples = probe_aliasing(
+        iter_replay_observations(sorted(glob.glob("replays/**/*.json",
+                                                  recursive=True))),
+        args.width)
+    for k, v in c.most_common():
+        print(f"{v:8d}  {k}")
+    print()
+    for t, ex in examples.items():
+        print(f"--- {t} ---")
+        for pair in ex[:1]:
+            for fp in pair:
+                print("   ", fp)
+
+if __name__ == "__main__":
+    main()

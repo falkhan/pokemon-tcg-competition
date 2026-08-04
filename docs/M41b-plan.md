@@ -17,7 +17,7 @@ one thing in this document that is settled rather than proposed:
 |---|---|---|---|
 | 0 | **§ II.1** — epoch amendment to `ARCHITECTURE.md` §15 | pure bookkeeping, but §15 currently forbids the family Stage B belongs to. Do it before anyone reads the list and stops. | the three pre-epoch entries and M8.4 are marked |
 | 1 | **Part I** — the encoder (Phases 1-3) | Stage A. Prerequisite: a search teacher cannot be distilled into a student whose inputs alias on 879 real option pairs. | aliasing probe reads `real::* == 0`; column safety PASSes at widths 100 and 115 |
-| 2 | **§ II.3a/b** — golden fixtures + cross-instrument agreement | Stage B is ONE gate cell that decides a month of work. Measuring it with instruments that took six corrections in their last milestone is how you buy a confident wrong answer. | every probe script (the 19 `*_probe.py` PLUS `pm_probe2.py`, which the glob misses) has a fires-and-guards fixture in the suite |
+| 2 | **§ II.3a/b** — golden fixtures + cross-instrument agreement | Stage B is ONE gate cell that decides a month of work. Measuring it with instruments that took six corrections in their last milestone is how you buy a confident wrong answer. | DONE 2026-08-04: all 20 probes carry fires-and-guards fixtures (104 tests), enforced by `tests/test_probe_fixture_coverage.py` rather than remembered; `pm_probe2.py` renamed `pm2_probe.py` so the glob cannot miss it; agreement tests in `tests/test_instrument_agreement.py`, mutation-verified |
 | 3 | **§ II.3c** — the regression-adjusted gate estimator | Stage B's plausible effect (+25-60 ELO ≈ 3.5-8.5pp, § II.2) sits at or below the ~14pp a 400-game cell resolves — without variance reduction the gate is underpowered and its null is noise. Decided by re-analysing a finished battery both ways | a win-rate CI half-width comparison, raw vs adjusted; if adjustment fails, Stage B's n rises to ~2-3k |
 | 4 | **§ II.3d/e** — gates as a hashed spec, ship guards into CI | cheap, deterministic, and they close the exact holes M41 fell through | `ship_verify` Tier-1 invariants run as tests |
 | 5 | **Stage B** — BACKLOG #10, distil the search | the central assumption: is search output learnable by our net at our scale? | one gate cell against the panel, at the n § II.3c's outcome dictates |
@@ -589,6 +589,16 @@ Extend it to every probe — and note (review, 2026-08-04) that the glob
 the completion criterion can pass while skipping a probe, which is precisely
 the class of hole this section exists to close.
 
+*DONE 2026-08-04.* `pm_probe2.py` -> `pm2_probe.py` (the glob now sees it);
+104 fires-and-guards tests across five files, one per probe family. The
+criterion itself is now a test — `tests/test_probe_fixture_coverage.py`
+enumerates `scripts/*_probe.py` from disk, asserts each is exercised by a
+fixture file, pins the count at 20, and fails on any probe that escapes the
+glob. Verified by negative control: an uncovered probe dropped into
+`scripts/` fails it. Most probes needed their measurement core extracted from
+a `main()` or a closure first; every extraction was byte-compared against a
+pre-refactor CLI run on the real corpus.
+
 Concretely, this is what would have caught 4 of the 6 M42 bugs before a single
 game was played: a fixture where the pilot has *no legal way out* pins that
 `retreat_stranded` must not count it; a fixture where the stadium is played at
@@ -603,6 +613,19 @@ two ways, a CI test asserts the two instruments agree on a fixed replay corpus.
 Keep the two implementations **independent** on purpose — a shared helper would
 make them agree while both being wrong, which is the opposite of the property
 wanted.
+
+*DONE 2026-08-04:* `tests/test_instrument_agreement.py`, 5 tests over the two
+behaviours both instruments measure — over-attach and the per-TURN stadium
+miss. Built on synthetic situations rather than a replay corpus, which is
+strictly stronger here: ground truth is known by construction, so the tests
+pin WHICH instrument is right rather than only that they match. Independence
+is preserved literally — `rl/postmortem.py` is fed replay-JSON dicts and the
+probe is fed engine observation objects through `instrument()`; the file
+shares only data rendering, which classifies and counts nothing.
+**Mutation-verified**, because a silent-agreement test can pass vacuously:
+breaking `_opponent_stadium`'s ownership check fails one test, and reverting
+the probe's stadium ladder to PER-PROMPT — the original M42 bug — fails
+another. Both restore clean.
 
 ### II.3c CRN / paired evaluation is impossible here — reduce variance elsewhere
 

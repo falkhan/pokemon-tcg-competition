@@ -43,6 +43,56 @@ DEFAULT_A = "generic:alakazam_v2_h4"
 DEFAULT_B = "generic:lucario"
 
 
+# --- measurement core (pure — golden-fixtured in tests/test_probes_engine_side.py).
+# The engine runs live below; these functions are the semantics the probe
+# ASSERTS about what it observed, so they must be pinnable without the engine.
+
+def prize_transition_keys(actor: int, prev: tuple, now: tuple) -> list:
+    """Tally keys for one observed prize-array change. The pinned convention
+    (docs/m37-code-audit.md): only the ACTING seat's own array may drain."""
+    return ["actor_drained" if seat == actor else "other_drained"
+            for seat in (0, 1) if now[seat] < prev[seat]]
+
+
+def end_state_key(result: int, end: tuple):
+    """Which seat's array reached zero in a decisive game, or None when
+    neither did (draws, and wins that ended some other way)."""
+    if result not in (0, 1):
+        return None
+    if end[result] == 0 and end[1 - result] > 0:
+        return "winner_array_zero"
+    if end[1 - result] == 0 and end[result] > 0:
+        return "loser_array_zero"
+    return None
+
+
+def endstate_verdict(tally: Counter) -> str:
+    """'ok' | 'mismatch' | 'inconclusive'. Silence (no drain ever observed)
+    is inconclusive, never a pass."""
+    if tally["loser_array_zero"] or tally["other_drained"]:
+        return "mismatch"
+    if not tally["actor_drained"]:
+        return "inconclusive"
+    return "ok"
+
+
+def leaf_keys(score: float, result: int, prizes_taken: int) -> list:
+    """Tally keys for one score_leaf call: a non-terminal leaf where WE took
+    prizes must score positive (the score_leaf-inversion regression check)."""
+    if result >= 0 or prizes_taken <= 0:
+        return []
+    return ["prize_leaves", "negative" if score < 0 else "positive"]
+
+
+def leaf_verdict(stats: Counter) -> str:
+    """'ok' | 'regressed' | 'inconclusive'."""
+    if not stats["prize_leaves"]:
+        return "inconclusive"
+    if stats["negative"]:
+        return "regressed"
+    return "ok"
+
+
 def _spec(text: str):
     from rl.matchrunner import parse_spec
     return parse_spec(text)
@@ -82,20 +132,15 @@ def check_endstate_and_attribution(spec_a, spec_b, games: int) -> bool:
     tally = Counter()
 
     def on_step(actor, prev, now):
-        for seat in (0, 1):
-            if now[seat] < prev[seat]:
-                tally["actor_drained" if seat == actor else "other_drained"] += 1
+        tally.update(prize_transition_keys(actor, prev, now))
 
     decisive = 0
     for _ in range(games):
         result, end = _play(spec_a, spec_b, on_step)
-        if result in (0, 1):
-            if end[result] == 0 and end[1 - result] > 0:
-                tally["winner_array_zero"] += 1
-                decisive += 1
-            elif end[1 - result] == 0 and end[result] > 0:
-                tally["loser_array_zero"] += 1
-                decisive += 1
+        key = end_state_key(result, end)
+        if key is not None:
+            tally[key] += 1
+            decisive += 1
 
     print(f"[1] end-state   : winner-array-zero={tally['winner_array_zero']} "
           f"loser-array-zero={tally['loser_array_zero']} "
@@ -103,13 +148,12 @@ def check_endstate_and_attribution(spec_a, spec_b, games: int) -> bool:
     print(f"[2] attribution : acting-seat drained={tally['actor_drained']} "
           f"other-seat drained={tally['other_drained']}")
 
-    ok = tally["loser_array_zero"] == 0 and tally["other_drained"] == 0
-    if not ok:
+    verdict = endstate_verdict(tally)
+    if verdict == "mismatch":
         print("    !! prize semantics do NOT match the pinned convention")
-    elif not tally["actor_drained"]:
+    elif verdict == "inconclusive":
         print("    ?? no prize changes observed — inconclusive, raise --games")
-        ok = False
-    return ok
+    return verdict == "ok"
 
 
 def check_leaf_scoring(spec_a, spec_b, games: int) -> bool:
@@ -125,9 +169,8 @@ def check_leaf_scoring(spec_a, spec_b, games: int) -> bool:
         cur = obs.current
         if cur.result < 0:
             me_p = cur.players[snap.me]
-            if snap.my_prizes - len(me_p.prize) > 0:      # we took prizes
-                stats["prize_leaves"] += 1
-                stats["negative" if score < 0 else "positive"] += 1
+            stats.update(leaf_keys(score, cur.result,
+                                   snap.my_prizes - len(me_p.prize)))
         return score
 
     ts.score_leaf = traced
@@ -140,15 +183,14 @@ def check_leaf_scoring(spec_a, spec_b, games: int) -> bool:
     n = stats["prize_leaves"]
     print(f"[3] leaf scoring: {n} leaves where we took prizes — "
           f"{stats['positive']} positive / {stats['negative']} negative")
-    if not n:
+    verdict = leaf_verdict(stats)
+    if verdict == "inconclusive":
         print("    ?? no prize-taking leaves — inconclusive, raise --games "
               "(needs a solver spec, e.g. --a solver:alakazam_v2_h4)")
-        return False
-    if stats["negative"]:
+    elif verdict == "regressed":
         print("    !! score_leaf is scoring OUR OWN knockouts as losses "
               "(the M37-audit P0 inversion has regressed)")
-        return False
-    return True
+    return verdict == "ok"
 
 
 def main() -> int:

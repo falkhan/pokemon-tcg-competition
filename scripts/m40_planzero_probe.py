@@ -32,6 +32,35 @@ import rl.plan as rp  # noqa: E402
 import rl.policy  # noqa: E402
 
 
+def plan_is_nonzero(plan) -> bool:
+    """Measurement core, per prompt: is the vector the trunk is FED non-zero?
+    (The literal `serve plan=0` claim — golden-fixtured in
+    tests/test_probes_rule_mechanism.py.)"""
+    return bool(np.asarray(plan).any())
+
+
+def claim_failures(ctl: dict, arm: dict) -> list:
+    """The probe's verdict on the two censuses. Returns the FAIL lines to
+    print (empty list = PASS). Golden-fixtured in
+    tests/test_probes_rule_mechanism.py."""
+    failures = []
+    # The claim, both halves. Each is a hard equality: `planzero` is a
+    # removal, so "mostly zero" would mean the guard has a hole.
+    if arm["plan_enumerations"] != 0:
+        failures.append(f"FAIL: planzero arm ran the plan head "
+                        f"{arm['plan_enumerations']}x")
+    if arm["nonzero_plan_prompts"] != 0:
+        failures.append(f"FAIL: planzero arm fed a non-zero plan on "
+                        f"{arm['nonzero_plan_prompts']}/{arm['prompts']} prompts")
+    # Non-vacuity: the control must show the behaviour we claim to remove,
+    # on the same games. Without this a broken harness reads as a pass.
+    if ctl["plan_enumerations"] == 0 or ctl["nonzero_plan_prompts"] == 0:
+        failures.append("FAIL: control showed no plan-head activity — the "
+                        "probe is not measuring anything (harness defect, "
+                        "not a result)")
+    return failures
+
+
 def _instrumented_pilot(spec, instance: str, rec: dict):
     """Build one pilot with PER-SIDE instrumentation.
 
@@ -60,7 +89,7 @@ def _instrumented_pilot(spec, instance: str, rec: dict):
         def act(self, state_ctx, plan, state_ids, options, option_ids, k,
                 greedy=True):
             rec["prompts"] += 1
-            if np.asarray(plan).any():
+            if plan_is_nonzero(plan):
                 rec["nonzero_plan_prompts"] += 1
             return super().act(state_ctx, plan, state_ids, options, option_ids,
                                k, greedy=greedy)
@@ -114,23 +143,10 @@ def main() -> int:
         print(f"{name:<14}{s['prompts']:>9}{s['plan_enumerations']:>11}"
               f"{s['nonzero_plan_prompts']:>14}")
 
-    ok = True
-    # The claim, both halves. Each is a hard equality: `planzero` is a
-    # removal, so "mostly zero" would mean the guard has a hole.
-    if arm["plan_enumerations"] != 0:
-        print(f"\nFAIL: planzero arm ran the plan head "
-              f"{arm['plan_enumerations']}x")
-        ok = False
-    if arm["nonzero_plan_prompts"] != 0:
-        print(f"\nFAIL: planzero arm fed a non-zero plan on "
-              f"{arm['nonzero_plan_prompts']}/{arm['prompts']} prompts")
-        ok = False
-    # Non-vacuity: the control must show the behaviour we claim to remove,
-    # on the same games. Without this a broken harness reads as a pass.
-    if ctl["plan_enumerations"] == 0 or ctl["nonzero_plan_prompts"] == 0:
-        print("\nFAIL: control showed no plan-head activity — the probe is "
-              "not measuring anything (harness defect, not a result)")
-        ok = False
+    failures = claim_failures(ctl, arm)
+    for msg in failures:
+        print("\n" + msg)
+    ok = not failures
 
     print("\nPASS: the plan head never runs and the trunk is fed zeros; "
           "the control does both on the same games." if ok else "\nPROBE FAILED")
