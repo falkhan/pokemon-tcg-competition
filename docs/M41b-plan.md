@@ -83,12 +83,24 @@ Also confirmed: `OptionScorerV3.forward` truncates **only `options`**
 (`rl/policy.py:207-208`), never `state_ctx`. **State appends are retrain-gated**,
 so everything in Phase 1 goes on the option side.
 
-## Phase 1 — the M41b option block, 115 -> 144 (append-only, capability)
+## Phase 1 — the M41b option block, 115 -> 145 (append-only, capability)
 
-29 slots appended after the M42 block. Slot indices below are relative to
+30 slots appended after the M42 block. Slot indices below are relative to
 `OPTION_M42_DIM = 115`.
 
-### 1a. Board-object live state — slots 0-6 (the measured fix)
+> **Amendment (Piotr, 2026-08-04, during execution): 144 -> 145, foreign
+> boards are encoded.** The first spec read only OUR board and returned None
+> for a foreign `playerIndex`, on the recorded premise "0 foreign-board
+> options in 4,388 prompts". The kill probe falsified the premise: at the
+> ours-only width 144 the residual was **259 real pairs, ALL foreign** —
+> DAMAGE (91 groups) and DAMAGE_COUNTER (53) spread-target submenus and
+> gust-SWITCH (21) address the OPPONENT's Pokemon via `area`+`playerIndex`
+> (the earlier "0 foreign" count had only examined the `inPlay*` fields).
+> Piotr's call: resolve the subject on whichever board `playerIndex` names
+> and add `is_opponents` as board slot 7. Blind damage-target menus were the
+> single most decision-relevant residual — dragapult's bread and butter.
+
+### 1a. Board-object live state — slots 0-7 (the measured fix)
 
 The 879 aliased pairs, all of them. The subject is on the board in *different
 fields* depending on option type, measured over real replays:
@@ -104,21 +116,23 @@ New helper, generalising the existing `_my_poke_at`:
 
 ```python
 def _option_board_object(opt, obs):
-    """(pokemon, is_active, bench_index) for whichever field points at OUR
-    board, or (None, False, 0). inPlayArea wins when both are set."""
+    """(pokemon, is_active, bench_index, is_opponents) for whichever board
+    Pokemon the option addresses, or (None, False, 0, False). inPlayArea wins
+    when both are set; ownership follows playerIndex explicitly."""
 ```
 
 Slots: `has_object`, `hp / maxHp`, `min(maxHp - hp, 100) / 100`,
-`len(energies) / 5`, `len(tools) / 2`, `is_active`, `bench_index / 4`.
+`len(energies) / 5`, `len(tools) / 2`, `is_active`, `bench_index / 4`,
+`is_opponents` (the amendment above).
 
 `bench_index` is not needed to break the aliasing — the live state does that —
 but it lets the net associate the option with the correct per-slot state block
 (`173 + slot*87`), which is the join it currently cannot make.
 
-### 1b. Typed attack cost — slots 7-20
+### 1b. Typed attack cost — slots 8-21
 
-`cost_by_type[12] / 3` (slots 7-18), `colorless_deficit / 5` (19),
-`can_afford_now` (20). Read from `_ATK[aid][1]`, which is already a tuple of
+`cost_by_type[12] / 3` (slots 8-19), `colorless_deficit / 5` (20),
+`can_afford_now` (21). Read from `_ATK[aid][1]`, which is already a tuple of
 `EnergyType` ints, so this is bundle-safe and needs no parquet.
 
 The deficit is **not** a per-type subtraction — colorless slots are payable by
@@ -133,7 +147,7 @@ generalisation argument, not an aliasing one — within-menu attack aliasing
 measured **0** (only 54 menus offer 2+ attacks). Phase 3's census is what
 decides whether the slots carry information.
 
-### 1c. Type matchup — slots 21-24
+### 1c. Type matchup — slots 22-25
 
 `opp_weak_to_my_type`, `opp_resists_my_type`, `my_active_weak_to_opp_type`,
 `my_active_resists_opp_type`, from `_CARD` weakness/resistance vs the attacker's
@@ -152,7 +166,7 @@ weaker gradient path than a per-option feature, and a linear probe would read
 the columns "dead" while they are doing their job. Any future census of them
 must judge variance across menus, never within one.
 
-### 1d. Retreat + hand economics — slots 25-28
+### 1d. Retreat + hand economics — slots 26-29
 
 `active_retreat_cost / 4`, `retreat_payable`, `my_hand_count / 15`,
 `my_bench_count / 5`.
@@ -165,7 +179,7 @@ net can see it at all; bench count has no scalar anywhere.
 
 | file | change |
 |---|---|
-`rl/encoders.py` | `N_OPTION_BOARD/COST/MATCHUP/ECON`, `OPTION_M41B_DIM = 144`; `_option_board_object`, `_percept_board`, `_percept_cost`, `_percept_matchup`, `_percept_econ`; write site in `encode_option_v2`; `np.zeros(OPTION_M41B_DIM)` |
+`rl/encoders.py` | `N_OPTION_BOARD/COST/MATCHUP/ECON`, `OPTION_M41B_DIM = 145`; `_option_board_object`, `_percept_board`, `_percept_cost`, `_percept_matchup`, `_percept_econ`; write site in `encode_option_v2`; `np.zeros(OPTION_M41B_DIM)` |
 `tcg/encoders.py` | mirror all of it (no-underscore names, that file's convention) — `tests/test_parity.py` compares the two byte-for-byte |
 `rl/policy.py` | **no change** — the truncation shim is already generic |
 `tests/test_encoders.py` | extend the width chain; per-block behaviour tests under the existing `for mod in (old, new)` pattern; zero-on-inapplicable-option-type |
@@ -212,9 +226,10 @@ could never do.
 
 **This changes VALUES inside trained widths, so it is a distribution shift on a
 live bundle** — precisely what M41 refused to do. Hence `FEAT_V2 = False` by
-default: `scripts/m42_column_safety.py` at width 100 must stay
-`9b4603c33bd7e86676e321460b3812a6` with the flag off, and the flag is flipped
-only for the collect + train. The bundle path (`card_features.npy`, written by
+default: `scripts/m42_column_safety.py` at width 100 must stay bit-identical
+under `--out`/`--compare` on a fixed corpus with the flag off (digests are
+corpus-relative — the 3.3 correction), and the flag is flipped only for the
+collect + train. The bundle path (`card_features.npy`, written by
 `tcg.shipping.export`) inherits whatever FEAT is live at export time, so the
 export must refuse to run with `FEAT_V2 = True` unless the checkpoint was
 trained under it — add that as a `ship_verify` Tier-1 check.
@@ -299,6 +314,12 @@ cannot rescue a re-layout — 2b needs a full retrain, not a warm start.
    `harmless_true_duplicates` unchanged at ~9,807. Any residual real pair is a
    slot that was specified wrong. This is the only pass/fail bar in the
    milestone that needs no training.
+   *Result (2026-08-04): MET at width 145 after the foreign-board amendment —
+   real::\* == 0, no menus with real aliasing. The ours-only width 144 left
+   259 real pairs (the amendment's evidence). harmless_true_duplicates read
+   9,176, not ~9,807: bench_index splits same-id same-state pairs at
+   different slots, which the probe's slot-blind fingerprint counts as
+   harmless — they stop being aliases altogether, which loses nothing.*
 2. **Feature census — new instrument.** `scripts/m41b_feature_census.py`: for
    every new slot, the non-zero rate and the value spread over real options.
    **Pre-registered kill: any slot that is non-zero on <1% of the options its
@@ -307,7 +328,11 @@ cannot rescue a re-layout — 2b needs a full retrain, not a warm start.
    that stops 1b being carried on a coverage argument alone.
 3. **Column safety.** `scripts/m42_column_safety.py --width 100` and
    `--width 115` must both PASS against the pre-change digests, with
-   `FEAT_V2 = False`.
+   `FEAT_V2 = False`. *Correction (2026-08-04): the digest is CORPUS-relative
+   (it hashes encodings over `replays/**`), so a pinned hex from another day
+   proves nothing — the script's own `--out`/`--compare` contract is the
+   check. Result: before-snapshot taken at HEAD via stash, PASS at both
+   widths over 31,021 real options.*
 4. **Twin parity + suite.** `tests/test_parity.py` byte-identical;
    1062 passed + the same 4 known failures.
 5. **Watchable sanity.** `scripts/watch_games.py` on one rule arm and one model
@@ -338,11 +363,14 @@ cannot rescue a re-layout — 2b needs a full retrain, not a warm start.
   reads columns 0-99 and will not see any of it. The width-144 retrain is the
   next decision, and it now carries the `FEAT_V2` question with it.
 - The `rl/encoders.py:207` / `:717` `inPlayArea`-vs-`playerIndex` target
-  misresolution stays unfixed — still latent (0 foreign-board options in 4,388
-  prompts), still a column move. **But note it interacts with 1a**: if an
-  option ever addresses the opponent's board, `_option_board_object` must not
-  silently read our slot at that index. Phase 1 resolves ownership explicitly
-  and returns `None` for a foreign board rather than inheriting the bug.
+  misresolution stays unfixed in the TRAINED columns — still a column move.
+  **Its "still latent" premise is now half-false** (amendment above): foreign
+  addressing via `area`+`playerIndex` occurs in real spread-damage and gust
+  submenus; only the `inPlay*` fields measured 0 foreign. Phase 1's
+  `_option_board_object` resolves ownership on the board `playerIndex`
+  actually names with an explicit `is_opponents` slot, so the M41b block
+  reads the right board — while `encode_option`'s v1 columns keep their
+  historical (mis)behaviour untouched, as append-safety demands.
 - No attack-identity embedding. Within-menu attack aliasing measured 0, so
   there is nothing to fix; typed cost is the generalisation answer.
 - `tests/fake_cg.CardType` still does not match the engine's numbering.

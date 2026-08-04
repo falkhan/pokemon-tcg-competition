@@ -18,15 +18,24 @@ scripts/watch_games.py and the QC battery write):
     uv run python scripts/m42_alias_probe.py
 
 Columns 0..OPTION_M28_DIM plus the two embedding ids are what a LIVE bundle
-sees, so that is what the key covers — appended blocks are sliced away in
-service and must not flatter this number.
+sees, so that is the DEFAULT key width — appended blocks are sliced away in
+service and must not flatter this number. `--width N` keys on a different
+prefix: `--width 144` (OPTION_M41B_DIM) is the M41b Phase 3 kill, whose
+pre-registered bar is real::* == 0 with harmless_true_duplicates unchanged
+(docs/M41b-plan.md Phase 3.1).
 """
-import glob, json, sys
+import argparse, glob, json, sys
 from collections import Counter, defaultdict
 from pathlib import Path
 sys.path.insert(0, str(Path.cwd()))
 from cg.api import AreaType, OptionType, to_observation_class
 from rl.encoders import encode_option_v2, OPTION_M28_DIM
+
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--width", type=int, default=OPTION_M28_DIM,
+                 help="encoding prefix the alias key covers "
+                      f"(default {OPTION_M28_DIM}, the live-bundle width)")
+KEY_WIDTH = _ap.parse_args().width
 
 def obj_at(obs, area, index, player):
     if area is None or index is None:
@@ -81,7 +90,7 @@ for path in sorted(glob.glob("replays/**/*.json", recursive=True)):
                     num, ids = encode_option_v2(o, obs)
                 except Exception:
                     continue
-                key = (num[:OPTION_M28_DIM].tobytes(), int(ids[0]), int(ids[1]))
+                key = (num[:KEY_WIDTH].tobytes(), int(ids[0]), int(ids[1]))
                 buckets[key].append(i)
             real = 0
             for key, idxs in buckets.items():
@@ -93,7 +102,7 @@ for path in sorted(glob.glob("replays/**/*.json", recursive=True)):
                     t = OptionType(opts[idxs[0]].type).name
                     c[f"real::{t}"] += len(idxs) - 1
                     if len(examples[t]) < 2:
-                        examples[t].append(sorted(fps)[:2])
+                        examples[t].append(sorted(fps, key=repr)[:2])
                 else:
                     c["harmless_true_duplicates"] += len(idxs) - 1
             if real:

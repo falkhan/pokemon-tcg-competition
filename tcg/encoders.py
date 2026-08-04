@@ -297,6 +297,21 @@ OPTION_M42_DIM = OPTION_M41_DIM + N_OPTION_PERCEPT
 EFFECTIVE_DAMAGE_SCALE = 300.0
 HAND_COST_SCALE = 40.0
 DECK_LOW_AT = 15.0
+
+# M41b block — twin of rl/encoders.py (change BOTH; see that module for the
+# measurements each sub-block answers to, and the 2026-08-04 foreign-board
+# amendment). Layout relative to OPTION_M42_DIM: board 0-7, cost 8-21,
+# matchup 22-25, econ 26-29.
+N_OPTION_BOARD = 8
+N_OPTION_COST = 14
+N_OPTION_MATCHUP = 4
+N_OPTION_ECON = 4
+N_OPTION_M41B = N_OPTION_BOARD + N_OPTION_COST + N_OPTION_MATCHUP + N_OPTION_ECON
+OPTION_M41B_DIM = OPTION_M42_DIM + N_OPTION_M41B
+M41B_BOARD_TYPES = frozenset((int(OptionType.CARD), int(OptionType.TOOL_CARD),
+                              int(OptionType.ENERGY), int(OptionType.ATTACH),
+                              int(OptionType.EVOLVE), int(OptionType.ABILITY)))
+
 _PLAY_KIND: dict[int, str] = {}
 
 
@@ -724,6 +739,139 @@ def retreat_extra(observation) -> np.ndarray:
     return vector
 
 
+def option_board_object(option, observation):
+    """(pokemon, is_active, bench_index, is_opponents) for whichever board
+    Pokémon the option addresses, or (None, False, 0, False) — twin of
+    rl/encoders.py _option_board_object (change BOTH). inPlayArea wins when
+    both field pairs are set; ownership is resolved explicitly on the board
+    playerIndex names (the 2026-08-04 foreign-board amendment)."""
+    state = observation.current
+    if option.inPlayArea is not None and option.inPlayIndex is not None:
+        area, index = int(option.inPlayArea), option.inPlayIndex
+        owner = int(state.yourIndex)
+    elif option.area is not None and option.index is not None:
+        area, index = int(option.area), option.index
+        owner = (int(option.playerIndex) if option.playerIndex is not None
+                 else int(state.yourIndex))
+    else:
+        return None, False, 0, False
+    board = state.players[owner]
+    zone = {int(AreaType.ACTIVE): board.active,
+            int(AreaType.BENCH): board.bench}.get(area)
+    if zone is None or index >= len(zone):
+        return None, False, 0, False
+    pokemon = zone[index]
+    if pokemon is None:
+        return None, False, 0, False
+    is_active = area == int(AreaType.ACTIVE)
+    return (pokemon, is_active, (0 if is_active else index),
+            owner != int(state.yourIndex))
+
+
+def percept_board(option, observation) -> np.ndarray:
+    """M41b slots 0-7: the subject's LIVE state — twin of rl/encoders.py
+    _percept_board (change BOTH); see that docstring for the 879-pair fix."""
+    vector = np.zeros(N_OPTION_BOARD, dtype=np.float32)
+    pokemon, is_active, bench_index, is_opponents = \
+        option_board_object(option, observation)
+    if pokemon is None:
+        return vector
+    max_hp = max(1, pokemon.maxHp or 1)
+    vector[0] = 1.0
+    vector[1] = (pokemon.hp or 0) / max_hp
+    vector[2] = min(max(0, max_hp - (pokemon.hp or 0)), 100) / 100.0
+    vector[3] = min(len(pokemon.energies or ()), 5) / 5.0
+    vector[4] = min(len(getattr(pokemon, "tools", ()) or ()), 2) / 2.0
+    vector[5] = float(is_active)
+    vector[6] = bench_index / 4.0
+    vector[7] = float(is_opponents)
+    return vector
+
+
+def typed_cost_deficit(energies, cost) -> int:
+    """Energies still MISSING for `cost` (typed first, colorless from the
+    surplus) — twin of rl/encoders.py _typed_cost_deficit (change BOTH).
+    `can_afford` stays the boolean authority."""
+    from tcg.constants import COLORLESS
+    available: dict[int, int] = {}
+    for energy in energies:
+        available[int(energy)] = available.get(int(energy), 0) + 1
+    missing = 0
+    colorless_slots = 0
+    for slot in cost:
+        slot = int(slot)
+        if slot == COLORLESS:
+            colorless_slots += 1
+        elif available.get(slot, 0) > 0:
+            available[slot] -= 1
+        else:
+            missing += 1
+    surplus = sum(available.values())
+    return missing + max(0, colorless_slots - surplus)
+
+
+def percept_cost(option, observation) -> np.ndarray:
+    """M41b slots 8-21 for an ATTACK option: typed cost histogram /3, the
+    colorless-aware deficit /5, affordability — twin of rl/encoders.py
+    _percept_cost (change BOTH)."""
+    vector = np.zeros(N_OPTION_COST, dtype=np.float32)
+    attack_id = getattr(option, "attackId", None)
+    if attack_id is None or attack_id not in ATTACKS:
+        return vector
+    cost = ATTACKS[attack_id].cost
+    for slot in cost:
+        vector[int(slot)] += 1.0 / 3.0
+    me = observation.current.players[observation.current.yourIndex]
+    active = me.active[0] if me.active and me.active[0] is not None else None
+    energies = list(active.energies or ()) if active is not None else []
+    vector[12] = min(typed_cost_deficit(energies, cost), 5) / 5.0
+    vector[13] = float(can_afford(energies, cost))
+    return vector
+
+
+def percept_matchup(observation) -> np.ndarray:
+    """M41b slots 22-25: active-vs-active weakness/resistance, both ways —
+    twin of rl/encoders.py _percept_matchup (change BOTH). Identical for
+    every option in a menu; interaction-only under the softmax (plan § 1c)."""
+    vector = np.zeros(N_OPTION_MATCHUP, dtype=np.float32)
+    state = observation.current
+    me = state.players[state.yourIndex]
+    opponent = state.players[1 - state.yourIndex]
+    mine = me.active[0] if me.active and me.active[0] is not None else None
+    theirs = (opponent.active[0]
+              if opponent.active and opponent.active[0] is not None else None)
+    if mine is None or theirs is None:
+        return vector
+    my_card = CARDS.get(mine.id, UNKNOWN_CARD)
+    their_card = CARDS.get(theirs.id, UNKNOWN_CARD)
+    vector[0] = float(their_card.weakness is not None
+                      and int(their_card.weakness) == my_card.energy_type)
+    vector[1] = float(their_card.resistance is not None
+                      and int(their_card.resistance) == my_card.energy_type)
+    vector[2] = float(my_card.weakness is not None
+                      and int(my_card.weakness) == their_card.energy_type)
+    vector[3] = float(my_card.resistance is not None
+                      and int(my_card.resistance) == their_card.energy_type)
+    return vector
+
+
+def percept_econ(observation) -> np.ndarray:
+    """M41b slots 26-29: retreat cost /4, retreat payable, hand /15, bench /5
+    — twin of rl/encoders.py _percept_econ (change BOTH)."""
+    from tcg.library import RETREAT_COSTS
+    vector = np.zeros(N_OPTION_ECON, dtype=np.float32)
+    state = observation.current
+    me = state.players[state.yourIndex]
+    active = me.active[0] if me.active and me.active[0] is not None else None
+    if active is not None:
+        retreat_cost = RETREAT_COSTS.get(active.id, 0)
+        vector[0] = min(retreat_cost, 4) / 4.0
+        vector[1] = float(len(active.energies or ()) >= retreat_cost)
+    vector[2] = min(len(me.hand or ()), 15) / 15.0
+    vector[3] = len([p for p in (me.bench or ()) if p is not None]) / 5.0
+    return vector
+
+
 def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     """(numeric OPTION_V3_DIM f32, [acted_id, target_id] i32, 0 = none).
 
@@ -731,8 +879,9 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
     hand card (FEAT block + embedding id), the appended block encodes attack
     identity and NUMBER counts; M19 adds ATTACH energy-sufficiency and
     RETREAT utility in the same 3 slots (mutually exclusive types).
-    Pre-M16 checkpoints: encode_option_v2_legacy."""
-    numeric = np.zeros(OPTION_M42_DIM, dtype=np.float32)
+    M41b appends the board/cost/matchup/econ block; `[:OPTION_M42_DIM]` stays
+    byte-identical. Pre-M16 checkpoints: encode_option_v2_legacy."""
+    numeric = np.zeros(OPTION_M41B_DIM, dtype=np.float32)
     numeric[:OPTION_DIM] = encode_option(option, observation)
     your_index = observation.current.yourIndex
     card_id = option.cardId
@@ -774,6 +923,16 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
         numeric[OPTION_M41_DIM + 9] = percept_stadium(card_id, observation)
     # bounded, not open-ended: the M41 energy block now sits after this one
     numeric[OPTION_M27_DIM:OPTION_M28_DIM] = phase_interaction(option, observation)
+    # M41b block — board 0-7 / cost 8-21 / matchup 22-25 / econ 26-29,
+    # relative to OPTION_M42_DIM.
+    if int(option.type) in M41B_BOARD_TYPES:
+        numeric[OPTION_M42_DIM:OPTION_M42_DIM + 8] = \
+            percept_board(option, observation)
+    if option.type == OptionType.ATTACK:
+        numeric[OPTION_M42_DIM + 8:OPTION_M42_DIM + 22] = \
+            percept_cost(option, observation)
+    numeric[OPTION_M42_DIM + 22:OPTION_M42_DIM + 26] = percept_matchup(observation)
+    numeric[OPTION_M42_DIM + 26:OPTION_M42_DIM + 30] = percept_econ(observation)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return numeric, ids
 
