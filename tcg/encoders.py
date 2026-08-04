@@ -299,11 +299,12 @@ HAND_COST_SCALE = 40.0
 DECK_LOW_AT = 15.0
 
 # M41b block — twin of rl/encoders.py (change BOTH; see that module for the
-# measurements each sub-block answers to, and the 2026-08-04 foreign-board
-# amendment). Layout relative to OPTION_M42_DIM: board 0-7, cost 8-21,
-# matchup 22-25, econ 26-29.
+# measurements each sub-block answers to, the 2026-08-04 foreign-board
+# amendment, and the census kill of the deficit/afford slots). Layout
+# relative to OPTION_M42_DIM: board 0-7, cost 8-19, matchup 20-23,
+# econ 24-27.
 N_OPTION_BOARD = 8
-N_OPTION_COST = 14
+N_OPTION_COST = 12
 N_OPTION_MATCHUP = 4
 N_OPTION_ECON = 4
 N_OPTION_M41B = N_OPTION_BOARD + N_OPTION_COST + N_OPTION_MATCHUP + N_OPTION_ECON
@@ -788,49 +789,21 @@ def percept_board(option, observation) -> np.ndarray:
     return vector
 
 
-def typed_cost_deficit(energies, cost) -> int:
-    """Energies still MISSING for `cost` (typed first, colorless from the
-    surplus) — twin of rl/encoders.py _typed_cost_deficit (change BOTH).
-    `can_afford` stays the boolean authority."""
-    from tcg.constants import COLORLESS
-    available: dict[int, int] = {}
-    for energy in energies:
-        available[int(energy)] = available.get(int(energy), 0) + 1
-    missing = 0
-    colorless_slots = 0
-    for slot in cost:
-        slot = int(slot)
-        if slot == COLORLESS:
-            colorless_slots += 1
-        elif available.get(slot, 0) > 0:
-            available[slot] -= 1
-        else:
-            missing += 1
-    surplus = sum(available.values())
-    return missing + max(0, colorless_slots - surplus)
-
-
 def percept_cost(option, observation) -> np.ndarray:
-    """M41b slots 8-21 for an ATTACK option: typed cost histogram /3, the
-    colorless-aware deficit /5, affordability — twin of rl/encoders.py
-    _percept_cost (change BOTH)."""
+    """M41b slots 8-19 for an ATTACK option: typed cost histogram /3 — twin
+    of rl/encoders.py _percept_cost (change BOTH). The deficit/afford slots
+    were census-killed: the engine never offers an unaffordable ATTACK."""
     vector = np.zeros(N_OPTION_COST, dtype=np.float32)
     attack_id = getattr(option, "attackId", None)
     if attack_id is None or attack_id not in ATTACKS:
         return vector
-    cost = ATTACKS[attack_id].cost
-    for slot in cost:
+    for slot in ATTACKS[attack_id].cost:
         vector[int(slot)] += 1.0 / 3.0
-    me = observation.current.players[observation.current.yourIndex]
-    active = me.active[0] if me.active and me.active[0] is not None else None
-    energies = list(active.energies or ()) if active is not None else []
-    vector[12] = min(typed_cost_deficit(energies, cost), 5) / 5.0
-    vector[13] = float(can_afford(energies, cost))
     return vector
 
 
 def percept_matchup(observation) -> np.ndarray:
-    """M41b slots 22-25: active-vs-active weakness/resistance, both ways —
+    """M41b slots 20-23: active-vs-active weakness/resistance, both ways —
     twin of rl/encoders.py _percept_matchup (change BOTH). Identical for
     every option in a menu; interaction-only under the softmax (plan § 1c)."""
     vector = np.zeros(N_OPTION_MATCHUP, dtype=np.float32)
@@ -856,7 +829,7 @@ def percept_matchup(observation) -> np.ndarray:
 
 
 def percept_econ(observation) -> np.ndarray:
-    """M41b slots 26-29: retreat cost /4, retreat payable, hand /15, bench /5
+    """M41b slots 24-27: retreat cost /4, retreat payable, hand /15, bench /5
     — twin of rl/encoders.py _percept_econ (change BOTH)."""
     from tcg.library import RETREAT_COSTS
     vector = np.zeros(N_OPTION_ECON, dtype=np.float32)
@@ -923,16 +896,16 @@ def encode_option_v2(option, observation) -> tuple[np.ndarray, np.ndarray]:
         numeric[OPTION_M41_DIM + 9] = percept_stadium(card_id, observation)
     # bounded, not open-ended: the M41 energy block now sits after this one
     numeric[OPTION_M27_DIM:OPTION_M28_DIM] = phase_interaction(option, observation)
-    # M41b block — board 0-7 / cost 8-21 / matchup 22-25 / econ 26-29,
+    # M41b block — board 0-7 / cost 8-19 / matchup 20-23 / econ 24-27,
     # relative to OPTION_M42_DIM.
     if int(option.type) in M41B_BOARD_TYPES:
         numeric[OPTION_M42_DIM:OPTION_M42_DIM + 8] = \
             percept_board(option, observation)
     if option.type == OptionType.ATTACK:
-        numeric[OPTION_M42_DIM + 8:OPTION_M42_DIM + 22] = \
+        numeric[OPTION_M42_DIM + 8:OPTION_M42_DIM + 20] = \
             percept_cost(option, observation)
-    numeric[OPTION_M42_DIM + 22:OPTION_M42_DIM + 26] = percept_matchup(observation)
-    numeric[OPTION_M42_DIM + 26:OPTION_M42_DIM + 30] = percept_econ(observation)
+    numeric[OPTION_M42_DIM + 20:OPTION_M42_DIM + 24] = percept_matchup(observation)
+    numeric[OPTION_M42_DIM + 24:OPTION_M42_DIM + 28] = percept_econ(observation)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return numeric, ids
 

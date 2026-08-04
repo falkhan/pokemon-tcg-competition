@@ -83,9 +83,9 @@ Also confirmed: `OptionScorerV3.forward` truncates **only `options`**
 (`rl/policy.py:207-208`), never `state_ctx`. **State appends are retrain-gated**,
 so everything in Phase 1 goes on the option side.
 
-## Phase 1 — the M41b option block, 115 -> 145 (append-only, capability)
+## Phase 1 — the M41b option block, 115 -> 143 (append-only, capability)
 
-30 slots appended after the M42 block. Slot indices below are relative to
+28 slots appended after the M42 block. Slot indices below are relative to
 `OPTION_M42_DIM = 115`.
 
 > **Amendment (Piotr, 2026-08-04, during execution): 144 -> 145, foreign
@@ -99,6 +99,18 @@ so everything in Phase 1 goes on the option side.
 > Piotr's call: resolve the subject on whichever board `playerIndex` names
 > and add `is_opponents` as board slot 7. Blind damage-target menus were the
 > single most decision-relevant residual — dragapult's bread and butter.
+>
+> **Second amendment (Piotr, 2026-08-04): 145 -> 143, the census killed the
+> deficit/afford slots.** Over all 1,272 corpus ATTACK options,
+> `colorless_deficit` read 0 and `can_afford_now` read 1 — **the engine never
+> offers an unaffordable attack**; affordability is enforced upstream of the
+> menu, by rule. Both slots dropped before any retrain (structurally dead —
+> the exact class the census bar exists for). The bar itself was amended in
+> the same decision: it applies to STRUCTURAL deadness only; slots zero
+> merely because the corpus spans 4 matchup families (7 unexercised
+> cost-histogram types, 2 resist flags) are corpus-starved, exempt, and
+> re-censused when a broader corpus exists — killing them would rebuild the
+> deck-specificity this block removes.
 
 ### 1a. Board-object live state — slots 0-7 (the measured fix)
 
@@ -129,17 +141,17 @@ Slots: `has_object`, `hp / maxHp`, `min(maxHp - hp, 100) / 100`,
 but it lets the net associate the option with the correct per-slot state block
 (`173 + slot*87`), which is the join it currently cannot make.
 
-### 1b. Typed attack cost — slots 8-21
+### 1b. Typed attack cost — slots 8-19
 
-`cost_by_type[12] / 3` (slots 8-19), `colorless_deficit / 5` (20),
-`can_afford_now` (21). Read from `_ATK[aid][1]`, which is already a tuple of
-`EnergyType` ints, so this is bundle-safe and needs no parquet.
+`cost_by_type[12] / 3` (slots 8-19). Read from `_ATK[aid][1]`, which is
+already a tuple of `EnergyType` ints, so this is bundle-safe and needs no
+parquet.
 
-The deficit is **not** a per-type subtraction — colorless slots are payable by
-any energy, so it is a small matching problem. Compute it exactly: satisfy typed
-slots first from same-type energy, then pay colorless slots from the surplus,
-and report what is still missing. `_can_afford` stays the boolean authority for
-slot 20 so the two can never disagree.
+*The planned `colorless_deficit` and `can_afford_now` slots (20-21) were
+census-killed before any retrain — see the second amendment above. The
+matching-problem deficit was implemented, measured constant-zero (the engine
+pre-filters unaffordable attacks), and removed; do not re-propose it as an
+ATTACK-option feature.*
 
 **Honest scoping:** unlike 1a this has no measured misplay rate behind it. The
 evidence is coverage (69% typed, 52 tuples collapsing to one value) and it is a
@@ -147,7 +159,7 @@ generalisation argument, not an aliasing one — within-menu attack aliasing
 measured **0** (only 54 menus offer 2+ attacks). Phase 3's census is what
 decides whether the slots carry information.
 
-### 1c. Type matchup — slots 22-25
+### 1c. Type matchup — slots 20-23
 
 `opp_weak_to_my_type`, `opp_resists_my_type`, `my_active_weak_to_opp_type`,
 `my_active_resists_opp_type`, from `_CARD` weakness/resistance vs the attacker's
@@ -166,7 +178,7 @@ weaker gradient path than a per-option feature, and a linear probe would read
 the columns "dead" while they are doing their job. Any future census of them
 must judge variance across menus, never within one.
 
-### 1d. Retreat + hand economics — slots 26-29
+### 1d. Retreat + hand economics — slots 24-27
 
 `active_retreat_cost / 4`, `retreat_payable`, `my_hand_count / 15`,
 `my_bench_count / 5`.
@@ -179,7 +191,7 @@ net can see it at all; bench count has no scalar anywhere.
 
 | file | change |
 |---|---|
-`rl/encoders.py` | `N_OPTION_BOARD/COST/MATCHUP/ECON`, `OPTION_M41B_DIM = 145`; `_option_board_object`, `_percept_board`, `_percept_cost`, `_percept_matchup`, `_percept_econ`; write site in `encode_option_v2`; `np.zeros(OPTION_M41B_DIM)` |
+`rl/encoders.py` | `N_OPTION_BOARD/COST/MATCHUP/ECON`, `OPTION_M41B_DIM = 143`; `_option_board_object`, `_percept_board`, `_percept_cost`, `_percept_matchup`, `_percept_econ`; write site in `encode_option_v2`; `np.zeros(OPTION_M41B_DIM)` |
 `tcg/encoders.py` | mirror all of it (no-underscore names, that file's convention) — `tests/test_parity.py` compares the two byte-for-byte |
 `rl/policy.py` | **no change** — the truncation shim is already generic |
 `tests/test_encoders.py` | extend the width chain; per-block behaviour tests under the existing `for mod in (old, new)` pattern; zero-on-inapplicable-option-type |
@@ -326,6 +338,11 @@ cannot rescue a re-layout — 2b needs a full retrain, not a warm start.
    type applies to, or has zero variance, is DROPPED before the retrain.** Dead
    columns are not free — they are capacity and noise, and this is the check
    that stops 1b being carried on a coverage argument alone.
+   *Result (2026-08-04): the bar did its job on 1b — deficit/afford killed as
+   structurally dead (the engine pre-filters unaffordable attacks; second
+   amendment above). Bar amended by the same decision: corpus-starved slots
+   (unexercised histogram types, unpaired resist flags) are exempt and
+   re-censused on a broader corpus. All 28 surviving slots clear the bar.*
 3. **Column safety.** `scripts/m42_column_safety.py --width 100` and
    `--width 115` must both PASS against the pre-change digests, with
    `FEAT_V2 = False`. *Correction (2026-08-04): the digest is CORPUS-relative

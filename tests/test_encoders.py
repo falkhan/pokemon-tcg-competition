@@ -664,12 +664,12 @@ def test_m41b_board_and_cost_are_zero_on_types_they_do_not_describe():
                 option(OptionType.END)):
         for mod in (old, new):
             block = _m41b(mod, opt, obs)
-            assert not block[:22].any(), opt.type      # board AND cost stay 0
+            assert not block[:20].any(), opt.type      # board AND cost stay 0
     atk = option(OptionType.ATTACK, attack_id=101)
     ability = option(OptionType.ABILITY, area=AreaType.ACTIVE, index=0)
     for mod in (old, new):
         assert not _m41b(mod, atk, obs)[:8].any()      # ATTACK: no board object
-        assert not _m41b(mod, ability, obs)[8:22].any()  # ABILITY: no cost
+        assert not _m41b(mod, ability, obs)[8:20].any()  # ABILITY: no cost
 
 
 def test_m41b_board_slots_break_a_real_aliased_pair():
@@ -764,8 +764,9 @@ def test_m41b_board_slots_break_a_foreign_aliased_pair():
 
 def test_m41b_typed_cost_splits_what_size_collapsed():
     """Attacks 102 {F}{C} and 105 {F}{F} are both size 2 — the old encoding
-    read 0.400 for each. With [F, W] attached, 102 is payable (W covers the
-    colorless slot) and 105 is not: affordability is a TYPE question."""
+    read 0.400 for each. The histogram tells them apart. (The plan's
+    deficit/afford slots were census-killed: the engine never offers an
+    unaffordable ATTACK, so they read 0/1 on all 1,272 corpus options.)"""
     me = player(active=pokemon(1, energies=[FIGHTING, WATER]))
     obs = observation(me=me, opponent=player(active=pokemon(2)))
     fc = _m41b(old, option(OptionType.ATTACK, attack_id=102), obs)
@@ -778,20 +779,7 @@ def test_m41b_typed_cost_splits_what_size_collapsed():
     assert fc[8 + int(FIGHTING)] == pytest.approx(1 / 3.0)
     assert fc[8 + 0] == pytest.approx(1 / 3.0)           # the colorless slot
     assert ff[8 + int(FIGHTING)] == pytest.approx(2 / 3.0)
-    assert fc[20] == 0.0 and fc[21] == 1.0               # payable now
-    assert ff[20] == pytest.approx(1 / 5.0) and ff[21] == 0.0
-    assert not np.array_equal(fc[8:22], ff[8:22])
-
-
-def test_m41b_colorless_deficit_is_a_matching_not_a_subtraction():
-    """{F}{C} with one WATER attached: the typed slot is missing (W cannot pay
-    F) and the colorless slot is paid by the W — deficit exactly 1."""
-    me = player(active=pokemon(1, energies=[WATER]))
-    obs = observation(me=me, opponent=player(active=pokemon(2)))
-    for mod in (old, new):
-        block = _m41b(mod, option(OptionType.ATTACK, attack_id=102), obs)
-        assert block[20] == pytest.approx(1 / 5.0)
-        assert block[21] == 0.0
+    assert not np.array_equal(fc[8:20], ff[8:20])
 
 
 def test_m41b_matchup_flags_fire_both_directions_and_per_menu():
@@ -804,11 +792,11 @@ def test_m41b_matchup_flags_fire_both_directions_and_per_menu():
                              opponent=player(active=pokemon(4)))
     for mod in (old, new):
         for opt in (option(OptionType.END), option(OptionType.RETREAT)):
-            assert _m41b(mod, opt, vs_water)[22:26].tolist() == [0, 1, 0, 0]
-            assert _m41b(mod, opt, vs_psychic)[22:26].tolist() == [0, 0, 1, 0]
+            assert _m41b(mod, opt, vs_water)[20:24].tolist() == [0, 1, 0, 0]
+            assert _m41b(mod, opt, vs_psychic)[20:24].tolist() == [0, 0, 1, 0]
     bare = observation(me=player(), opponent=player(active=pokemon(2)))
     for mod in (old, new):
-        assert not _m41b(mod, option(OptionType.END), bare)[22:26].any()
+        assert not _m41b(mod, option(OptionType.END), bare)[20:24].any()
 
 
 def test_m41b_econ_slots(monkeypatch):
@@ -824,12 +812,12 @@ def test_m41b_econ_slots(monkeypatch):
     obs = observation(me=me, opponent=player(active=pokemon(2)))
     for mod in (old, new):
         block = _m41b(mod, option(OptionType.END), obs)
-        assert block[26] == 0.0 and block[27] == 1.0     # fake_cg: no cost
-        assert block[28] == pytest.approx(3 / 15.0)
-        assert block[29] == pytest.approx(2 / 5.0)
+        assert block[24] == 0.0 and block[25] == 1.0     # fake_cg: no cost
+        assert block[26] == pytest.approx(3 / 15.0)
+        assert block[27] == pytest.approx(2 / 5.0)
     monkeypatch.setitem(rl.combat._RETREAT, 1, 2)
     monkeypatch.setitem(tcg.library.RETREAT_COSTS, 1, 2)
     for mod in (old, new):
         block = _m41b(mod, option(OptionType.END), obs)
-        assert block[26] == pytest.approx(2 / 4.0)
-        assert block[27] == 0.0                          # one F < cost 2
+        assert block[24] == pytest.approx(2 / 4.0)
+        assert block[25] == 0.0                          # one F < cost 2

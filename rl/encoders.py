@@ -380,8 +380,8 @@ HAND_COST_SCALE = 40.0         # 20/card is our own case; 40 leaves headroom
 #   matter ONLY through score-head interactions; a linear probe reading them
 #   "dead" within one menu is measuring the wrong thing (plan § 1c).
 #
-# Layout, relative to OPTION_M42_DIM: board 0-7, cost 8-21, matchup 22-25,
-# econ 26-29. Board slots fill for the six option types whose subject sits on
+# Layout, relative to OPTION_M42_DIM: board 0-7, cost 8-19, matchup 20-23,
+# econ 24-27. Board slots fill for the six option types whose subject sits on
 # a board; cost for ATTACK; matchup/econ for every option. Every slot is 0
 # on types it does not describe (test-pinned, the M42 pattern).
 #
@@ -394,11 +394,17 @@ HAND_COST_SCALE = 40.0         # 20/card is our own case; 40 leaves headroom
 # never silently misread (the :207 trap this block must not inherit).
 N_OPTION_BOARD = 8     # has_object, hp frac, damage/100, energies/5, tools/2,
                        # is_active, bench_index/4, is_opponents
-N_OPTION_COST = 14     # cost-by-type histogram /3 + colorless-aware deficit /5
-                       # + can_afford_now. /3 unclipped: per-type multiplicity
-                       # reaches 5 only on all-colorless costs (measured
-                       # 2026-08-04: {1:1459, 2:493, 3:139, 4:18, 5:2}), and a
-                       # clip would alias 3-colorless against 5-colorless.
+N_OPTION_COST = 12     # cost-by-type histogram /3. Unclipped: per-type
+                       # multiplicity reaches 5 only on all-colorless costs
+                       # (measured 2026-08-04: {1:1459, 2:493, 3:139, 4:18,
+                       # 5:2}), and a clip would alias 3-colorless against
+                       # 5-colorless. The plan's deficit + can_afford slots
+                       # were CENSUS-KILLED before any retrain (Piotr,
+                       # 2026-08-04): the engine never offers an unaffordable
+                       # ATTACK — deficit read 0 and afford read 1 on all
+                       # 1,272 corpus ATTACK options. Do not re-add them as
+                       # option features; affordability lives upstream of the
+                       # menu, by rule.
 N_OPTION_MATCHUP = 4   # opp weak/resists my type, my active weak/resists theirs
 N_OPTION_ECON = 4      # retreat cost /4, retreat payable, hand /15, bench /5
 N_OPTION_M41B = N_OPTION_BOARD + N_OPTION_COST + N_OPTION_MATCHUP + N_OPTION_ECON
@@ -999,50 +1005,22 @@ def _percept_board(opt, obs) -> np.ndarray:
     return v
 
 
-def _typed_cost_deficit(energies, cost) -> int:
-    """How many energies are still MISSING for `cost` — the exact small
-    matching problem, not a per-type subtraction: typed slots consume matching
-    energy first, colorless slots are then payable by any surplus.
-    `_can_afford` stays the boolean authority (slot 20); this counts."""
-    have = {}
-    for e in energies:
-        have[int(e)] = have.get(int(e), 0) + 1
-    missing = 0
-    n_colorless = 0
-    for c in cost:
-        c = int(c)
-        if c == COLORLESS:
-            n_colorless += 1
-        elif have.get(c, 0) > 0:
-            have[c] -= 1
-        else:
-            missing += 1
-    surplus = sum(have.values())
-    return missing + max(0, n_colorless - surplus)
-
-
 def _percept_cost(opt, obs) -> np.ndarray:
-    """M41b slots 8-21 for an ATTACK option: the TYPED cost the encoder only
+    """M41b slots 8-19 for an ATTACK option: the TYPED cost the encoder only
     ever saw the size of (1,069 of 1,556 attacks; 52 distinct 3-cost tuples
-    all read 0.600). Histogram by EnergyType (8-19), the colorless-aware
-    deficit against my active's attached energy (20), affordability (21)."""
+    all read 0.600). Histogram by EnergyType. The plan's deficit/affordability
+    slots died in the census — see the N_OPTION_COST comment."""
     v = np.zeros(N_OPTION_COST, dtype=np.float32)
     aid = getattr(opt, "attackId", None)
     if aid is None or aid not in _ATK:
         return v
-    cost = _ATK[aid][1]
-    for c in cost:
+    for c in _ATK[aid][1]:
         v[int(c)] += 1.0 / 3.0
-    me = obs.current.players[obs.current.yourIndex]
-    active = me.active[0] if me.active and me.active[0] is not None else None
-    energies = list(active.energies or ()) if active is not None else []
-    v[12] = min(_typed_cost_deficit(energies, cost), 5) / 5.0
-    v[13] = float(_can_afford(energies, cost))
     return v
 
 
 def _percept_matchup(obs) -> np.ndarray:
-    """M41b slots 22-25: weakness/resistance between the two ACTIVES, both
+    """M41b slots 20-23: weakness/resistance between the two ACTIVES, both
     directions. Identical for every option in a menu (a state feature living
     in the option block for slice safety — plan § 1c records why, and why a
     within-menu read of these columns is meaningless)."""
@@ -1064,7 +1042,7 @@ def _percept_matchup(obs) -> np.ndarray:
 
 
 def _percept_econ(obs) -> np.ndarray:
-    """M41b slots 26-29: retreat + hand economics. Retreat cost is in FEAT and
+    """M41b slots 24-27: retreat + hand economics. Retreat cost is in FEAT and
     `rl/combat._RETREAT` but read by NO decision feature today; hand size
     exists only as v4 state index 1625 (invisible to every v3 net); bench
     count has no scalar anywhere. Per-menu constants, same § 1c contract as
@@ -1146,14 +1124,14 @@ def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
         num[OPTION_M41_DIM + 9] = _percept_stadium(card_id, obs)
     # bounded, not open-ended: the M41 energy block now sits after this one
     num[OPTION_M27_DIM:OPTION_M28_DIM] = _phase_interaction(opt, obs)
-    # M41b block — board 0-7 / cost 8-21 / matchup 22-25 / econ 26-29,
+    # M41b block — board 0-7 / cost 8-19 / matchup 20-23 / econ 24-27,
     # relative to OPTION_M42_DIM.
     if int(opt.type) in _M41B_BOARD_TYPES:
         num[OPTION_M42_DIM:OPTION_M42_DIM + 8] = _percept_board(opt, obs)
     if int(opt.type) == _OT_ATTACK:
-        num[OPTION_M42_DIM + 8:OPTION_M42_DIM + 22] = _percept_cost(opt, obs)
-    num[OPTION_M42_DIM + 22:OPTION_M42_DIM + 26] = _percept_matchup(obs)
-    num[OPTION_M42_DIM + 26:OPTION_M42_DIM + 30] = _percept_econ(obs)
+        num[OPTION_M42_DIM + 8:OPTION_M42_DIM + 20] = _percept_cost(opt, obs)
+    num[OPTION_M42_DIM + 20:OPTION_M42_DIM + 24] = _percept_matchup(obs)
+    num[OPTION_M42_DIM + 24:OPTION_M42_DIM + 28] = _percept_econ(obs)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return num, ids
 
