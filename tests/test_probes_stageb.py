@@ -116,3 +116,56 @@ def test_wall_probe_guards_an_attack_with_no_id():
                                    active=builders.pokemon(2)))
     assert wp.option_label(
         builders.option(OptionType.ATTACK), obs) == "ATTACK(dmg=0)"
+
+
+# --- the corpus slicer (M41b R2) --------------------------------------------
+
+def test_slicing_is_exact_and_keeps_every_other_column(tmp_path):
+    """The control corpus must differ from the arm's in EXACTLY one thing.
+    Slicing is the append-and-slice law applied at training time: [0, N) of
+    the wide encoding IS the narrow encoding."""
+    import numpy as np
+
+    import scripts.m41b_slice_corpus as sl
+
+    src, dst = tmp_path / "wide", tmp_path / "narrow"
+    src.mkdir()
+    rng = np.random.default_rng(0)
+    opts = rng.standard_normal((7, 143)).astype(np.float32)
+    labels = np.arange(3, dtype=np.int32)
+    np.savez(src / "shard_0000.npz", options=opts, labels=labels,
+             n_options=np.array([3, 2, 2], dtype=np.int32))
+    (src / "deck_registry.json").write_text('{"base": 1000}', encoding="utf-8")
+
+    out = sl.slice_dir(src, dst, 100)
+    assert out == {"shards": 1, "rows": 7, "from": [143], "to": 100}
+    with np.load(dst / "shard_0000.npz") as z:
+        assert z["options"].shape == (7, 100)
+        assert np.array_equal(z["options"], opts[:, :100])   # exact prefix
+        assert np.array_equal(z["labels"], labels)           # untouched
+        assert np.array_equal(z["n_options"], np.array([3, 2, 2]))
+    # provenance travels with the slice
+    assert (dst / "deck_registry.json").read_text(encoding="utf-8")
+
+
+def test_slicing_refuses_to_widen(tmp_path):
+    """Widening by slicing is impossible; asking for it must fail loudly
+    rather than silently producing a narrower corpus than requested."""
+    import numpy as np
+
+    import scripts.m41b_slice_corpus as sl
+
+    src, dst = tmp_path / "narrow", tmp_path / "wider"
+    src.mkdir()
+    np.savez(src / "shard_0000.npz",
+             options=np.zeros((2, 100), dtype=np.float32))
+    with pytest.raises(SystemExit, match="cannot widen"):
+        sl.slice_dir(src, dst, 143)
+
+
+def test_slicing_an_empty_corpus_is_an_error(tmp_path):
+    import scripts.m41b_slice_corpus as sl
+    src = tmp_path / "empty"
+    src.mkdir()
+    with pytest.raises(SystemExit, match="no .npz shards"):
+        sl.slice_dir(src, tmp_path / "out", 100)
