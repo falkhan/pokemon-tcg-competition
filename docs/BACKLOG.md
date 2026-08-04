@@ -402,7 +402,30 @@ self-play become the M40 agenda rather than more harvesting.
    plain greedy net that was TRAINED on search output — inference cost
    unchanged.
 
-### Negative results adopted from the literature (stop-investing, cited)
+11. **Energy-fetcher forensics flag, feature gated on its fire rate**
+   (from the M41b census discussion, Piotr 2026-08-04). The census killed
+   menu-level affordability (the engine never offers an unaffordable
+   ATTACK), but the PLANNING version — "active is one energy short, a
+   retrieval trainer is in hand, the fetch → attach → attack line exists
+   and was not taken" — is unmeasured. Method: measure first. Add the flag
+   to the `rl.postmortem` taxonomy (fires when active ≤1 energy short of
+   its best attack + a fetcher id in hand + no fetch line taken that turn);
+   if its fire rate on real replays is material, the encoder answer is a
+   curated fetcher-id set (the `GUST_IDS`/`CONDITIONAL_ATTACKS` pattern)
+   plus a typed active-deficit column, riding the width-143 retrain. The
+   state already holds the raw ingredients (typed discard pools,
+   `energyAttached`, M41b econ/board slots) — only trainer-effect
+   semantics are missing, and search composes them without semantics.
+
+12. **Re-measure the T5 dev tier post-epoch (`solver-dev:` arms).** The
+   M8.1 kill (pooled 0.492) was measured on the inverted leaf and is
+   formally pre-epoch (ARCHITECTURE.md §15 amendment, 2026-08-04). The dev
+   tier is the trigger that covers exactly the fetch-to-become-able-to-
+   attack scenario (`W_DEV_READY` + `W_DEV_RACE` vs the 900 margin), and
+   it ships nowhere today (`dev=False` everywhere). Two sanctioned uses:
+   as a LIVE override it needs a fresh post-fix battery before any ship;
+   as LABELS it feeds #10's distillation corpus immediately (the
+   `score_siblings`/`solve_turn_line(dev=True)` path M12 built).
 
 - **Deep equilibrium search lane (NFSP/CFR/ReBeL/Student of Games):**
   belief-state enumeration is intractable for collectible card games
