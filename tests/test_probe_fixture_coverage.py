@@ -31,6 +31,7 @@ FIXTURE_FILES = (
     "test_probes_mechanism.py",
     "test_probes_replay_analyzers.py",
     "test_probes_rule_mechanism.py",
+    "test_probes_stageb.py",
 )
 
 
@@ -85,9 +86,9 @@ def test_every_probe_has_fixtures(probe):
 
 
 def test_the_coverage_count_is_what_the_milestone_claimed():
-    """20 probes, the number § II.3a scoped (19 matching the glob at the time
-    plus the misnamed one). A new probe SHOULD break this — update it in the
+    """22 probes: the 20 § II.3a scoped, plus the two Stage B probes this
+    milestone added (the registry caught them missing fixtures). A new probe SHOULD break this — update it in the
     same commit that adds the probe's fixtures, so the count stays a decision
     rather than a drift."""
-    assert len(_probe_scripts()) == 20, (
+    assert len(_probe_scripts()) == 22, (
         f"probe count moved to {len(_probe_scripts())}: {_probe_scripts()}")

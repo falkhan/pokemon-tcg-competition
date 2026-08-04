@@ -18,7 +18,7 @@ It re-implements the wrapper's decision inline rather than calling
 action; the comparison IS the measurement here. `solve_turn`'s own override
 bar is reused untouched, so a fire here is a fire there.
 
-    uv run python scripts/m41b_wall_forensics.py --games 30
+    uv run python scripts/m41b_wall_probe.py --games 30
 """
 import argparse
 import sys

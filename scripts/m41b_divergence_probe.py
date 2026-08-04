@@ -36,6 +36,32 @@ if hasattr(sys.stdout, "reconfigure"):
 DEFAULT_ARM = "solved:checkpoints/m39_retain_b.pt:alakazam_v2_h4"
 DEFAULT_BED = "model:checkpoints/m39_bc_grim.pt:grim_live"
 
+#: Below this share of prompts, uniform cross-entropy spends almost all of its
+#: gradient on rows where teacher and student already agree.
+SPARSE_AT = 0.02
+
+
+def summarize(stats: dict) -> dict:
+    """The measurement core: wrapper counters -> the rates that decide corpus
+    design. Pure, so it can be fixtured without playing a game."""
+    prompts = int(stats.get("prompts", 0))
+    fired = int(stats.get("solver_fired", 0))
+    changed = int(stats.get("changed", 0))
+    tiers = {}
+    for key in stats:
+        if key.startswith("trig_"):
+            tier = key[len("trig_"):]
+            tiers[tier] = (int(stats[key]), int(stats.get(f"fire_{tier}", 0)))
+    return {
+        "prompts": prompts, "fired": fired, "changed": changed,
+        "fire_rate": fired / prompts if prompts else 0.0,
+        "change_rate": changed / prompts if prompts else 0.0,
+        "change_given_fire": changed / fired if fired else 0.0,
+        "rows_per_1000": (changed / prompts * 1000) if prompts else 0.0,
+        "sparse": (changed / prompts if prompts else 0.0) < SPARSE_AT,
+        "tiers": tiers,
+    }
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -57,9 +83,8 @@ def main() -> int:
                              a.games, seed=a.seed)
     wr = mr.series_wr(results)
 
-    prompts = stats.get("prompts", 0)
-    fired = stats.get("solver_fired", 0)
-    changed = stats.get("changed", 0)
+    s = summarize(stats)
+    prompts, fired, changed = s["prompts"], s["fired"], s["changed"]
     if not prompts:
         print("FAIL: no prompts counted — is --arm really a `solved:` spec? "
               "Only that branch installs SOLVED_STATS.")
@@ -85,11 +110,11 @@ def main() -> int:
                   f"   {fire / trig if trig else 0:>7.2%}")
 
     print("\n--- what this means for the corpus ---")
-    rate = changed / prompts
+    rate = s["change_rate"]
     print(f"Useful rows per 1,000 prompts: ~{rate * 1000:.0f}. "
           f"A corpus of N prompts carries ~{rate:.1%} teacher signal; the rest "
           "is the student's own argmax.")
-    if rate < 0.02:
+    if s["sparse"]:
         print("VERDICT: SPARSE. Uniform cross-entropy would spend >98% of its "
               "gradient on rows where teacher and student already agree — the "
               "loss must upweight or isolate the divergent rows, and the "

@@ -838,6 +838,85 @@ def migrate_v3_to_v4(v3_sd: dict, plan_dim: int = PLAN_DIM) -> OptionScorerV3:
     return model
 
 
+def _refuse_mixed_option_widths(data_dirs: list) -> None:
+    """M41b hazard guard for widening runs — checked BEFORE the corpus loads.
+
+    `BCDatasetV3`'s M16 pad shim zero-pads shards of mixed option width up to
+    the widest. For the LEGACY blocks that is correct semantics ("no identity
+    info", and those shards' PLAY FEAT blocks really are blank). For the
+    M41/M42/M41b blocks it is a **lie**: a padded row asserts has_object=0,
+    matchup=0, retreat_payable=0 where the true values are nonzero, and the
+    net would learn that the new features are noise — quietly guaranteeing
+    the null result the widening exists to test.
+
+    So a widening run demands a uniformly re-encoded corpus, retention shards
+    included. They come from the same cached episodes, so that costs CPU, not
+    games.
+    """
+    widths: dict[int, set] = {}
+    for d in data_dirs:
+        for shard in sorted(Path(d).glob("*.npz")):
+            with np.load(shard) as z:
+                widths.setdefault(int(z["options"].shape[1]), set()).add(str(d))
+            break                          # one shard per dir is enough
+    if len(widths) > 1:
+        detail = "; ".join(f"width {w}: {sorted(v)}"
+                           for w, v in sorted(widths.items()))
+        raise SystemExit(
+            f"--init-wide got shards of MIXED option width -- {detail}. The "
+            "pad shim would zero-fill the narrow ones, which is FALSE for the "
+            "appended blocks (it asserts the new features are 0 where they are "
+            "not). Re-encode every shard dir at the current width first.")
+
+
+def widen_option_dim(sd: dict, target_option_dim: int,
+                     plan_dim: int = PLAN_DIM) -> OptionScorerV3:
+    """Warm-start ANY v3/v4 checkpoint into a WIDER option encoding.
+
+    M41b: the generic form of `load_v3h_into_v3o` / `load_v3o_into_v3m`. Those
+    were written one per milestone because one block was appended per
+    milestone; the census that motivated this found THREE unconsumed blocks at
+    once (M41 100-104, M42 105-114, M41b 115-142 — no checkpoint on the box
+    trains above 100), so the migration is parameterised instead of copied a
+    seventh time.
+
+    The warm-start invariant, unchanged and the whole point: `option_enc.0`'s
+    new numeric columns are ZERO-init and the embedding column block shifts
+    right, so at initialisation the wide net reproduces the narrow one
+    EXACTLY on any input whose new columns are zero. The appended features
+    start with no influence and have to earn it from the gradient — nothing
+    is assumed about their value, which is what makes a null result readable.
+
+    Raises on a NARROWING request: that is a re-layout, not an append, and it
+    would silently mis-slice (the § 2c hazard).
+    """
+    from rl.encoders import EMBED_DIM, N_OPTION_IDS, V4_EXTRA_DIM
+
+    old_opt = sd["option_enc.0.weight"].shape[1] - N_OPTION_IDS * EMBED_DIM
+    if target_option_dim < old_opt:
+        raise ValueError(
+            f"refusing to narrow {old_opt} -> {target_option_dim}: the "
+            "warm-start invariant covers APPENDS only, and a narrower target "
+            "re-lays out the vector rather than truncating it")
+    extra = V4_EXTRA_DIM if "enc_ver" in sd else 0
+    model = OptionScorerV3(plan_dim=plan_dim, n_state_ids=_n_ids_of(sd),
+                           option_dim=target_option_dim, extra_dim=extra)
+    if target_option_dim == old_opt:
+        model.load_state_dict(sd)
+        return model
+    new_sd = model.state_dict()
+    for k, v in sd.items():
+        if k == "option_enc.0.weight":
+            wide = torch.zeros_like(new_sd[k])
+            wide[:, :old_opt] = v[:, :old_opt]          # trained numeric cols
+            wide[:, target_option_dim:] = v[:, old_opt:]  # embedding block
+            new_sd[k] = wide
+        else:
+            new_sd[k] = v
+    model.load_state_dict(new_sd)
+    return model
+
+
 def _n_ids_of(sd: dict) -> int:
     """Infer a v3/v4 checkpoint's state-id count from its first Linear width
     (M21: v4 checkpoints declare themselves via the enc_ver buffer)."""
@@ -978,6 +1057,7 @@ def apply_advantage_weights(ds, value_ckpt: str, beta: float = 1.0,
 def train(data_dirs: list, name: str, init: str | None = None,
           init_v2: str | None = None, init_v3h: str | None = None,
           init_v3o: str | None = None, init_v3m: str | None = None,
+          init_wide: str | None = None,
           epochs: int = 8, lr: float = 3e-4,
           batch_size: int = 256, plan_weight: float = 1.0,
           uniform_weights: bool = False,
@@ -991,6 +1071,8 @@ def train(data_dirs: list, name: str, init: str | None = None,
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
+    if init_wide is not None:
+        _refuse_mixed_option_widths(data_dirs)
     ds = BCDatasetV3([Path(d) for d in data_dirs])
     if uniform_weights:
         # M21 Gate-A kill lesson: 36% of the 4k-game EI rows carried the 10x
@@ -1043,6 +1125,17 @@ def train(data_dirs: list, name: str, init: str | None = None,
         print(f"warm-start from {'v4' if extra else 'v3'} {init} "
               f"(n_state_ids={model.n_state_ids}, "
               f"option_dim={model.option_dim}, extra_dim={extra})")
+    elif init_wide is not None:
+        # M41b: the generic widening warm start. The data's own width is the
+        # target — the encoder may have grown further since the checkpoint,
+        # and building to anything but the shards' width would either pad
+        # (see the guard below) or crash at the first batch.
+        target = ds.options.shape[1]
+        model = widen_option_dim(torch.load(_resolve(init_wide),
+                                            map_location="cpu"), target)
+        print(f"warm-start from narrow {init_wide} widened to option_dim="
+              f"{target} (appended columns zero-init; day one reproduces the "
+              "narrow net's ranking exactly)")
     elif init_v3m is not None:
         model = load_v3o_into_v3m(torch.load(_resolve(init_v3m),
                                              map_location="cpu"))
@@ -1100,9 +1193,18 @@ def train(data_dirs: list, name: str, init: str | None = None,
         return correct / max(1, total), pcorrect / max(1, ptotal)
 
     if any(p is not None for p in (init, init_v2, init_v3h, init_v3o,
-                                   init_v3m)):
+                                   init_v3m, init_wide)):
         acc0, pacc0 = evaluate()
         print(f"init val_acc {acc0:.3f}  plan_acc {pacc0:.3f}")
+        if init_wide is not None:
+            # The warm-start invariant, checked on the REAL data rather than
+            # asserted: a widened net starts as the narrow one, so its
+            # accuracy at epoch 0 is the narrow net's. A surprise here means
+            # the migration mis-slotted the weights and every downstream
+            # number would be measuring a scrambled champion.
+            print(f"  ^ widened warm start: this is the NARROW net's accuracy "
+                  f"on these shards; the {ds.options.shape[1] - 100} appended "
+                  "columns contribute exactly 0 until trained")
 
     for epoch in range(epochs):
         model.train()
@@ -1267,6 +1369,12 @@ if __name__ == "__main__":
                    help="M27 warm start: an OPTION_V3_DIM checkpoint into an "
                         "OPTION_M27_DIM net (play-precondition columns "
                         "zero-init, so init is exactly the old net)")
+    t.add_argument("--init-wide", type=str, default=None,
+                   help="M41b GENERIC widening warm start: any narrower "
+                        "checkpoint into a net built at the DATA's option "
+                        "width, appended columns zero-init (day one "
+                        "reproduces the narrow net's ranking exactly). "
+                        "Refuses shards of mixed width -- re-encode first.")
     t.add_argument("--init-v3o", type=str, default=None,
                    help="warm-start an OPTION-IDENTITY net from a pre-M16 "
                         "v3/v3h checkpoint (option columns zero-init)")
@@ -1341,7 +1449,7 @@ if __name__ == "__main__":
             card_kind_weights[int(CardType[kind_name.upper()])] = float(factor)
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
               init_v3h=args.init_v3h, init_v3o=args.init_v3o,
-              init_v3m=args.init_v3m,
+              init_v3m=args.init_v3m, init_wide=args.init_wide,
               epochs=args.epochs, lr=args.lr,
               batch_size=args.batch_size, plan_weight=args.plan_weight,
               uniform_weights=args.uniform_weights,
