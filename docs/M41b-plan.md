@@ -19,7 +19,7 @@ one thing in this document that is settled rather than proposed:
 | 1 | **Part I** — the encoder (Phases 1-3) | Stage A. Prerequisite: a search teacher cannot be distilled into a student whose inputs alias on 879 real option pairs. | aliasing probe reads `real::* == 0`; column safety PASSes at widths 100 and 115 |
 | 2 | **§ II.3a/b** — golden fixtures + cross-instrument agreement | Stage B is ONE gate cell that decides a month of work. Measuring it with instruments that took six corrections in their last milestone is how you buy a confident wrong answer. | DONE 2026-08-04: all 20 probes carry fires-and-guards fixtures (104 tests), enforced by `tests/test_probe_fixture_coverage.py` rather than remembered; `pm_probe2.py` renamed `pm2_probe.py` so the glob cannot miss it; agreement tests in `tests/test_instrument_agreement.py`, mutation-verified |
 | 3 | **§ II.3c** — the regression-adjusted gate estimator | Stage B's plausible effect (+25-60 ELO ≈ 3.5-8.5pp, § II.2) sits at or below the ~14pp a 400-game cell resolves — without variance reduction the gate is underpowered and its null is noise. Decided by re-analysing a finished battery both ways | DONE 2026-08-04: **adjustment DROPPED as invalid** (a post-outcome covariate; exact no-op, verified by bootstrap) — batteries now persist margins, and Stage B's n rises to **≥3,000/cell ≈ 3 min**, which measurement showed is cheaper than the hedge |
-| 4 | **§ II.3d/e** — gates as a hashed spec, ship guards into CI | cheap, deterministic, and they close the exact holes M41 fell through | `ship_verify` Tier-1 invariants run as tests |
+| 4 | **§ II.3d/e** — gates as a hashed spec, ship guards into CI | cheap, deterministic, and they close the exact holes M41 fell through | DONE 2026-08-04: `scripts/gate_spec.py` (hash/run/decode, refuses a moved bar — verified on the engine); self-gating `export` + `scripts/ci_gate.py`, run first by `qc_battery.py` |
 | 5 | **Stage B** — BACKLOG #10, distil the search | the central assumption: is search output learnable by our net at our scale? | one gate cell against the panel, at the n § II.3c's outcome dictates |
 | 6 | **Stage C** — the `search_begin/step/end` re-descent probe | half a day, and it moves a 10-50x constant on everything downstream. Cheap enough to run whenever; must precede any re-estimate of #9. | a yes/no on re-descent from an arbitrary node |
 
@@ -705,6 +705,20 @@ Every milestone hand-rolls a `*_decide.py`. Replace with one runner over a
 That is what stops a bar moving after the numbers land, and it is the machine
 version of a discipline the diaries currently keep by hand.
 
+*DONE 2026-08-04:* `scripts/gate_spec.py` — `hash` / `run` / `decode`. The
+spec's canonical hash covers the DECISION content (arms, beds, n, seed, bars;
+not prose, so a reworded question is not a tamper) and is stamped into every
+battery checkpoint header through `run_pairs(key_extra=...)`, which means the
+**existing** header-mismatch refusal becomes the tamper check rather than a
+new mechanism to trust. `decode` refuses — before reading a single number —
+on a changed hash, a cell short of the pre-registered n, a missing cell, or
+an unstamped legacy battery, and reports INCONCLUSIVE between the bars rather
+than rounding up to a pass. Verified end to end on the engine: an honest run
+decodes (arm 0.74 vs control 0.08, z 13.42, PASS), and moving the pass bar
+from 0.05 to 0.90 afterwards produces a refusal with no verdict. The eight
+existing `*_decide.py` are left alone: `m40_decide.py` carries the
+pre-registered live-mix weighting and is frozen as the record of what shipped.
+
 ### II.3e Push the ship guards into the gate itself — there is no hosted CI
 
 A fact the first draft glossed (review, 2026-08-04): this repo has **no CI
@@ -730,6 +744,27 @@ Decided with Piotr, 2026-08-04 — two structural moves, no hosted CI:
 The invariants also land as ordinary pytest tests so the suite catches them at
 the earliest possible moment; the two moves above are what make them
 unskippable at the moments that have actually burned us.
+
+*DONE 2026-08-04.* `tcg.shipping.verify_bundle` is the self-gating subset —
+twin parity, artifacts present, deck size/identity, module-level bundle
+purity — and `export` raises `BundleError` rather than leaving a shippable
+bundle. `scripts/ci_gate.py` is the one command (suite + bundle + instruments,
+~11 s), tolerating the 4 known failures **by name** so a new one cannot hide
+in the allowance, and `scripts/qc_battery.py` runs it first and aborts with
+exit 1 rather than spending a human replay review on a stale artifact. Both
+negative controls verified: a planted failing test is named as NEW, and a
+one-line drift in `submission/rl/combat.py` fails the bundle tier.
+
+> **The purity check caught itself first, which is worth recording.** Its
+> first draft searched for the substring `import polars` and flagged
+> `rl/encoders.py` — where the import is guarded by `if _PARQUET.exists()`
+> precisely so it never runs on Kaggle (the bundle ships
+> `card_features.npy`). A gate that fails every healthy export gets disabled
+> and then protects nothing, so the check now parses the AST and flags only
+> MODULE-LEVEL imports. The false positive is pinned as a regression test.
+> Scope note: `verify_bundle` deliberately omits the Tier-1 checks that need
+> the training shards (serve/train parity, corpus stats); those stay in
+> `scripts/ship_verify.py`, which the pre-ship battery still runs.
 
 ## II.4 What Part II does NOT commit to
 

@@ -70,7 +70,23 @@ def main():
     ap.add_argument("--prev", default=None,
                     help="previous ship tarball for the mirror leg "
                          "(default: newest-but-one dist/submission_*.tar.gz)")
+    ap.add_argument("--skip-ci-gate", action="store_true",
+                    help="run QC against an unverified bundle (do not use "
+                         "before a ship — see § II.3e)")
     args = ap.parse_args()
+
+    # M41b § II.3e: never spend a human replay review on a broken artifact.
+    # The mandatory QC read is the most expensive step in the ship path and
+    # the least able to notice that the bundle it is reading is stale —
+    # M41's mid-edit export was caught by a QC sweep that could easily have
+    # passed. Verify first, then play.
+    if not args.skip_ci_gate:
+        gate = subprocess.run([sys.executable, str(ROOT / "scripts/ci_gate.py")],
+                              cwd=ROOT)
+        if gate.returncode != 0:
+            print("\nQC ABORTED: ci_gate failed. The replays this battery "
+                  "would produce are not worth reviewing until it is green.")
+            return 1
 
     from tcg.evaluation import play_games
 
@@ -120,4 +136,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main() returns 1 when the ci_gate abort fires and None otherwise, so the
+    # abort has to reach the shell — a QC that "fails" with exit 0 is exactly
+    # the kind of soft guard § II.3e exists to remove.
+    raise SystemExit(main())
