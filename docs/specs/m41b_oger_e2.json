@@ -1,0 +1,26 @@
+{
+  "name": "m41b_oger_e2",
+  "question": "Ogerpon dose ladder, 2 epoch(s). The 14-epoch retrain KILLED at -5.35pp, consistent with M38's 'overwrites and regresses' on an already-converged net. This asks whether a SHORT dose absorbs the 3x-larger corpus without overwriting m41_ogerpon. Width 100: the appended columns measured -1.99pp on this lineage, so the ship candidate uses the narrow encoding.",
+  "arm": "model:checkpoints/m41b_oger_e2.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "control": "model:checkpoints/m41_ogerpon.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "beds": [
+    {
+      "name": "wall",
+      "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"
+    },
+    {
+      "name": "bctop",
+      "spec": "model:checkpoints/m39_bc_top.pt:data/kaggle/mirror_a4f0650b_deck.csv"
+    },
+    {
+      "name": "archaludon",
+      "spec": "model:checkpoints/m39_bc_archaludon.pt:archaludon"
+    }
+  ],
+  "n_per_cell": 2000,
+  "seed": 92,
+  "bars": {
+    "pass": 0.02,
+    "kill": -0.02
+  }
+}
