@@ -1,0 +1,14 @@
+{
+  "name": "m41b_oger_ship_pick",
+  "question": "Which ogerpon net ships? m41b_oger_w100 is m41_ogerpon fine-tuned on the re-encoded corpus (10,468 decisions vs the original 3,326) at the same width, so this asks whether 3x the data helped. Headroom-screened panel; the widened w143 net is excluded, having already measured -1.99pp.",
+  "arm": "model:checkpoints/m41b_oger_w100.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "control": "model:checkpoints/m41_ogerpon.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "beds": [
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
+    {"name": "bctop", "spec": "model:checkpoints/m39_bc_top.pt:data/kaggle/mirror_a4f0650b_deck.csv"},
+    {"name": "archaludon", "spec": "model:checkpoints/m39_bc_archaludon.pt:archaludon"}
+  ],
+  "n_per_cell": 2000,
+  "seed": 81,
+  "bars": {"pass": 0.02, "kill": -0.02}
+}
