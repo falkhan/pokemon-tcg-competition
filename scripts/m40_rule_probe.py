@@ -27,32 +27,45 @@ from cg.api import OptionType  # noqa: E402
 ARMS = ("model-cz", "model-cz-ashw", "model-cz-ham", "model-cz-tempo")
 
 
+def new_census(n_games: int = 0) -> dict:
+    """One arm's empty census (shape shared with the golden-fixture tests)."""
+    return {"prompts": 0, "fires": 0, "ash_deck": [], "hammer_plays": 0,
+            "tempo_plays": 0, "end_picks": 0, "wins": 0, "games": n_games}
+
+
+def record_pick(rec: dict, obs, ranked: list, out: list) -> None:
+    """Measurement core: classify ONE apply_play_overrides decision into the
+    arm's census. `ranked` is the model's order, `out` the post-override order;
+    a fire is the override changing the top pick. Golden-fixtured in
+    tests/test_probes_rule_mechanism.py."""
+    rec["prompts"] += 1
+    if out[0] != ranked[0]:
+        rec["fires"] += 1
+    st = obs.current
+    me = st.players[st.yourIndex]
+    hand = me.hand or []
+    opt = obs.select.option[out[0]]
+    if opt.type == OptionType.END:
+        rec["end_picks"] += 1
+    if opt.type == OptionType.PLAY and opt.index is not None \
+            and opt.index < len(hand):
+        cid = hand[opt.index].id
+        if cid == rp.SACRED_ASH_ID:
+            rec["ash_deck"].append(me.deckCount)
+        elif cid == rp.ENHANCED_HAMMER_ID:
+            rec["hammer_plays"] += 1
+        elif cid in rp._TEMPO_ITEM_IDS:
+            rec["tempo_plays"] += 1
+
+
 def probe_arm(kind: str, checkpoint: str, deck: str, bed: str,
               n_games: int, seed: int) -> dict:
-    rec = {"prompts": 0, "fires": 0, "ash_deck": [], "hammer_plays": 0,
-           "tempo_plays": 0, "end_picks": 0, "wins": 0, "games": n_games}
+    rec = new_census(n_games)
     real = rp.apply_play_overrides
 
     def counting(obs, ranked, fixes):
         out = real(obs, ranked, fixes)
-        rec["prompts"] += 1
-        if out[0] != ranked[0]:
-            rec["fires"] += 1
-        st = obs.current
-        me = st.players[st.yourIndex]
-        hand = me.hand or []
-        opt = obs.select.option[out[0]]
-        if opt.type == OptionType.END:
-            rec["end_picks"] += 1
-        if opt.type == OptionType.PLAY and opt.index is not None \
-                and opt.index < len(hand):
-            cid = hand[opt.index].id
-            if cid == rp.SACRED_ASH_ID:
-                rec["ash_deck"].append(me.deckCount)
-            elif cid == rp.ENHANCED_HAMMER_ID:
-                rec["hammer_plays"] += 1
-            elif cid in rp._TEMPO_ITEM_IDS:
-                rec["tempo_plays"] += 1
+        record_pick(rec, obs, ranked, out)
         return out
 
     rp.apply_play_overrides = counting

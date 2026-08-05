@@ -126,3 +126,91 @@ class TestEmptyFixesIdentity:
                    b.option(OptionType.ATTACK, attack_id=101)]
         for o in options:
             assert rlp.score_option(o, obs) == rlp.score_option(o, obs, frozenset())
+
+
+class TestM42ScalingReachesTheAttachPath:
+    """M41 threaded `scaling` through score_attack and the card ladders but not
+    through score_attach — score_option called it with no fixes at all, so the
+    one path that decides where energy GOES still asked the printed-damage
+    question. fake_cg card 5's only attack (103) prints 0, which is the shape
+    the whole problem lives in."""
+
+    ZERO_PRINTED_ATTACK = 103
+    SCALER_CARD = 5
+
+    @pytest.fixture
+    def hand_scaler(self, monkeypatch):
+        """Make 103 a hand-scaler, the Powerful Hand shape."""
+        import rl.scaling as sc
+        monkeypatch.setitem(sc.SCALING_ATTACKS, self.ZERO_PRINTED_ATTACK,
+                            ("hand", 20, 0))
+
+    def _obs(self, energies=()):
+        me = b.player(active=b.pokemon(self.SCALER_CARD, energies=list(energies)))
+        return b.observation(me=me, opponent=b.player(active=b.pokemon(4, hp=300)))
+
+    def _attach_opt(self):
+        return b.option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                        in_play_index=0)
+
+    def test_default_still_calls_it_a_non_attacker(self):
+        """Unchanged without the flag: the probe measures the DEFAULT rule
+        pilot over-attaching 0.0%, so there is no defect here worth moving the
+        shipped rules agent or the corpus the net learns from."""
+        assert rlp.score_attach(self._attach_opt(), self._obs(), 
+                                self._obs().current.players[0]) == 400
+
+    def test_scaling_arm_sees_a_real_attacker(self, hand_scaler):
+        obs = self._obs()
+        me = obs.current.players[0]
+        plain = rlp.score_attach(self._attach_opt(), obs, me)
+        scaled = rlp.score_attach(self._attach_opt(), obs, me,
+                                  frozenset({"scaling"}))
+        assert plain == 400                      # "no damaging attack"
+        assert scaled > plain                    # reaches the charged tier
+
+    def test_surplus_penalty_becomes_reachable(self, hand_scaler):
+        """The anti-over-attach cap is the only one in the codebase and it
+        could never fire on a printed-0 attacker: _turns_to_ready routes
+        through `if dmg <= 0` and returns UNREACHABLE at every energy count."""
+        scaling = frozenset({"scaling"})
+        lean = self._obs(energies=[FIGHTING])
+        fat = self._obs(energies=[FIGHTING] * 4)
+        lean_score = rlp.score_attach(self._attach_opt(), lean,
+                                      lean.current.players[0], scaling)
+        fat_score = rlp.score_attach(self._attach_opt(), fat,
+                                     fat.current.players[0], scaling)
+        assert fat_score < lean_score            # surplus is now penalised
+
+    def test_own_energy_scalers_are_exempt_from_the_penalty(self, hand_scaler,
+                                                            monkeypatch):
+        """The other half of the M41 confusion, killed in the forensics on
+        2026-08-03 and never carried into the pilot: Ogerpon is paid at 3
+        energy and gains +30 per further attach, so "charged" is not
+        "saturated" and the penalty would punish correct play."""
+        import rl.combat as rc
+        monkeypatch.setattr(rc, "OWN_ENERGY_SCALERS",
+                            frozenset({self.ZERO_PRINTED_ATTACK}))
+        scaling = frozenset({"scaling"})
+        lean = self._obs(energies=[FIGHTING])
+        fat = self._obs(energies=[FIGHTING] * 4)
+        assert rlp.score_attach(self._attach_opt(), fat,
+                                fat.current.players[0], scaling) == \
+            rlp.score_attach(self._attach_opt(), lean,
+                             lean.current.players[0], scaling)
+
+    def test_score_option_actually_forwards_the_flag(self, hand_scaler):
+        """The bug was one missing argument at the dispatcher, so pin it."""
+        obs = self._obs()
+        assert rlp.score_option(self._attach_opt(), obs, frozenset({"scaling"})) \
+            != rlp.score_option(self._attach_opt(), obs)
+
+    def test_attach_recipient_value_forwards_scaling(self, hand_scaler):
+        """Same drop, one function over: `scaling` was accepted and then not
+        passed to _turns_to_ready."""
+        me = b.player(active=b.pokemon(self.SCALER_CARD),
+                      bench=[b.pokemon(self.SCALER_CARD)])
+        card = me.bench[0]
+        opp_active = b.pokemon(4, hp=300)
+        assert rlp._attach_recipient_value(card, me, opp_active, True) != \
+            rlp._attach_recipient_value(card, me, opp_active, False)

@@ -1,0 +1,33 @@
+{
+  "arm": "generic:lucario_evolved",
+  "opp": "generic:festival_dipplin",
+  "games": 20,
+  "counters": {
+    "prompts": 883,
+    "fetch_prompts": 236,
+    "main_prompts": 502,
+    "dead_basis_fetch.situation": 9,
+    "dead_basis_fetch.strict_situation": 3,
+    "dead_basis_fetch.offered": 9,
+    "retreat_stranded.situation": 159,
+    "over_attach.situation": 90,
+    "over_attach.offered": 90,
+    "retreat_stranded.offered": 53,
+    "stadium_ignored.situation": 9,
+    "stadium_ignored.offered": 5,
+    "stadium_ignored.chose_bad": 2,
+    "over_attach.chose_bad": 1,
+    "over_attach.damage_forgone": 0
+  },
+  "detail": {
+    "over_attach": {
+      "Mega Lucario ex": 1
+    },
+    "hand_scaler_blind": {},
+    "retreat_stranded": {},
+    "dead_basis_fetch": {},
+    "stadium_ignored": {
+      "Festival Grounds": 2
+    }
+  }
+}

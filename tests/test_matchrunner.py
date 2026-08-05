@@ -3,6 +3,7 @@
 The engine game loop itself is [ENGINE] (import-smoke only, house convention);
 everything here runs through the injected game_fn seam.
 """
+import json
 from pathlib import Path
 
 import pytest
@@ -381,3 +382,69 @@ def test_run_pairs_seed_threads_into_chunk_seeds():
     seeds_a = {j[4] for j in mr._make_jobs(pairs, 2, seed_base=1001)}
     seeds_b = {j[4] for j in mr._make_jobs(pairs, 2, seed_base=1002)}
     assert seeds_a != seeds_b                # --seed finally changes something
+
+
+# --- M41b § II.3c: per-game margins ride alongside results ---------------------
+
+def test_run_pairs_persists_margins_aligned_with_results(tmp_path, monkeypatch):
+    """The margin is the II.3c covariate, and it is only useful if margins[i]
+    describes the game results[i] scored. `_engine_game` has always captured
+    the end state; before M41b it died in the worker return."""
+    def series(a, b, n, seed=0, on_game=None, **k):
+        for g in range(n):
+            on_game(g, g % 2, {"final": {"prizes": [g, 6], "decks": [30, g]}})
+        return [g % 2 for g in range(n)]
+
+    _patch_pool(monkeypatch, series)
+    ck = tmp_path / "m.jsonl"
+    results = mr.run_pairs([(("generic", "x"), ("generic", "y"), 8)],
+                           workers=2, seed=5, checkpoint=str(ck))[0]
+
+    rows = [json.loads(line) for line in ck.read_text().splitlines()][1:]
+    assert len(results) == 8
+    for row in rows:
+        margins, persisted = row["margins"], row["results"]
+        assert len(margins) == len(persisted)
+        # The alignment property itself, made checkable by construction: the
+        # stub sets a's prizes-left to the game index and a's result to
+        # index % 2, so a slid margin breaks this pairing immediately.
+        assert [m[0] % 2 for m in margins] == persisted
+        assert [m[0] for m in margins] == list(range(len(persisted)))
+        assert all(m[1] == 6 and m[2] == 30 for m in margins)
+
+
+def test_run_pairs_margins_stay_aligned_when_on_game_never_fires(tmp_path,
+                                                                 monkeypatch):
+    """A test seam (or an errored game) that never reports a final state must
+    pad, not shorten — a short list would slide every later margin onto the
+    wrong game."""
+    _patch_pool(monkeypatch, lambda a, b, n, seed=0, **k: [0] * n)
+    ck = tmp_path / "m.jsonl"
+    mr.run_pairs([(("generic", "x"), ("generic", "y"), 6)],
+                 workers=2, seed=5, checkpoint=str(ck))
+    rows = [json.loads(line) for line in ck.read_text().splitlines()][1:]
+    for row in rows:
+        assert len(row["margins"]) == len(row["results"])
+        assert all(m is None for m in row["margins"])
+
+
+def test_run_pairs_resumes_a_pre_m41b_checkpoint_without_margins(tmp_path,
+                                                                 monkeypatch):
+    """Every one of the 3,245 checkpoints on disk predates the margin key.
+    Resuming one must work — the results list stays the authority."""
+    calls = []
+    _patch_pool(monkeypatch, lambda a, b, n, seed=0, **k:
+                calls.append(n) or [0] * n)
+    pairs = [(("generic", "x"), ("generic", "y"), 4)]
+    ck = tmp_path / "legacy.jsonl"
+
+    mr.run_pairs(pairs, workers=2, seed=5, checkpoint=str(ck))
+    legacy = [json.loads(line) for line in ck.read_text().splitlines()]
+    for row in legacy[1:]:
+        row.pop("margins")                      # the pre-M41b shape, exactly
+    ck.write_text("\n".join(json.dumps(r) for r in legacy) + "\n")
+
+    before = len(calls)
+    resumed = mr.run_pairs(pairs, workers=2, seed=5, checkpoint=str(ck))
+    assert len(calls) == before                 # fully resumed, no new games
+    assert len(resumed[0]) == 4

@@ -52,7 +52,11 @@ BEDS = {
 # below is a deliberate tripwire: when the ship config changes, this script
 # must fail rather than quietly build beds carrying a stale rule stack. It
 # fired as designed on the M39 Ship A change (gacfr3 -> conserve).
-SHIP_FIXES = '"conserve,racemode2,racemode4"'
+# M42: refreshed to the M41 ogerpon ship's string. The tripwire had been stale
+# since that ship, so the next bed rebuild would have SystemExit'd -- which is
+# the design working, but the beds on disk were built under the older config
+# and any rebuild must re-read this line rather than bump it reflexively.
+SHIP_FIXES = '"conserve,planzero,ash,ashguard"'
 
 
 def build_one(name: str, checkpoint: str, deck: str) -> Path:

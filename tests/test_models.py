@@ -42,8 +42,17 @@ def test_prize_tiers():
 
 
 def test_card_id_sets():
-    assert library.POKEMON_CARD_IDS == {1, 2, 3, 4, 5, 9, 10}
+    # 11/12 are the M42 evolution line added to the stub (the pool previously
+    # held NO evolution cards, so nothing could exercise a basis check).
+    assert library.POKEMON_CARD_IDS == {1, 2, 3, 4, 5, 9, 10, 11, 12}
     assert library.ENERGY_CARD_IDS == {6, 8}
+
+
+def test_the_stub_evolution_line_is_wired_by_name():
+    assert library.CARDS[12].evolves_from == library.CARDS[11].name == "Stub Basis"
+    assert library.CARDS[11].basic and not library.CARDS[12].basic
+    # cards 1-10 keep NO such attributes, so every getattr default is unchanged
+    assert library.CARDS[1].name is None and library.CARDS[1].basic
 
 
 def test_known_attacks_filters_missing_table_entries():

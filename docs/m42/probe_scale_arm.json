@@ -1,0 +1,35 @@
+{
+  "arm": "generic-scale:alakazam_v2_h4",
+  "opp": "generic:grim_live",
+  "games": 20,
+  "counters": {
+    "prompts": 1674,
+    "fetch_prompts": 444,
+    "main_prompts": 1016,
+    "dead_basis_fetch.situation": 61,
+    "dead_basis_fetch.offered": 37,
+    "over_attach.situation": 124,
+    "over_attach.offered": 124,
+    "hand_scaler_blind.situation": 267,
+    "hand_scaler_blind.offered": 110,
+    "hand_scaler_blind.chose_bad": 110,
+    "hand_scaler_blind.attacked_anyway": 48,
+    "stadium_ignored.situation": 30,
+    "retreat_stranded.situation": 47,
+    "retreat_stranded.offered": 11,
+    "stadium_ignored.offered": 23,
+    "dead_basis_fetch.strict_situation": 2,
+    "stadium_ignored.chose_bad": 14
+  },
+  "detail": {
+    "over_attach": {},
+    "hand_scaler_blind": {
+      "Alakazam": 110
+    },
+    "retreat_stranded": {},
+    "dead_basis_fetch": {},
+    "stadium_ignored": {
+      "Spikemuth Gym": 14
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "m41b_subsample",
+  "question": "Is the alakazam width gain DATA HUNGER or lineage-specific? The ogerpon corpus (10,468 decisions) is under half the alakazam corpus (23,115) and the width columns read -1.99pp there against +2.78pp here. This trains the identical alakazam A/B on a corpus subsampled to 10,088 decisions -- within 4% of ogerpon's size. If the gain VANISHES, the 43 zero-init columns are simply data-hungry and the two results reconcile. If it SURVIVES at ogerpon's data volume, the effect is genuinely lineage-specific and the columns encode something alakazam uses and ogerpon does not.",
+  "arm": "model:checkpoints/m41b_sub_w143.pt:alakazam_v2_h4",
+  "control": "model:checkpoints/m41b_sub_w100.pt:alakazam_v2_h4",
+  "beds": [
+    {"name": "grim", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
+    {"name": "dragapult", "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 71,
+  "bars": {"pass": 0.02, "kill": -0.02}
+}

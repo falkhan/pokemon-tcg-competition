@@ -1,0 +1,14 @@
+{
+  "name": "m41b_oger_width",
+  "question": "Does the +2.78pp width gain reproduce on a DIFFERENT deck lineage? Arm and control are both fine-tuned from m41_ogerpon on the same re-encoded ogerpon rows for the same epochs, differing only in whether the 43 appended columns exist. This is the direct test of Part I's deck-agnostic claim: if the gain is a property of the ENCODER it should appear here too; if it was a property of the alakazam lineage it should not.",
+  "arm": "model:checkpoints/m41b_oger_w143.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "control": "model:checkpoints/m41b_oger_w100.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "beds": [
+    {"name": "grim", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
+    {"name": "dragapult", "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 51,
+  "bars": {"pass": 0.02, "kill": -0.02}
+}

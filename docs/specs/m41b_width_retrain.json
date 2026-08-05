@@ -1,0 +1,14 @@
+{
+  "name": "m41b_width_retrain",
+  "question": "Do the 43 appended encoder columns (M41 100-104, M42 105-114, M41b 115-142) make the net stronger once it is trained wide enough to see them? Arm and control are the SAME checkpoint fine-tuned on the SAME rows for the SAME epochs; the only difference is whether the columns exist. A null here means the columns do not pay, not that the student was blind.",
+  "arm": "model:checkpoints/m41b_arm_w143.pt:alakazam_v2_h4",
+  "control": "model:checkpoints/m41b_ctl_w100.pt:alakazam_v2_h4",
+  "beds": [
+    {"name": "grim", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
+    {"name": "dragapult", "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 21,
+  "bars": {"pass": 0.02, "kill": -0.02}
+}

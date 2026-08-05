@@ -1,0 +1,44 @@
+
+M42 perception probe: 20 games
+  arm model-pz:checkpoints/m41_ogerpon.pt:decks/ogerpon.csv
+  opp model:checkpoints/m39_bc_grim.pt:grim_live
+
+  prompts answered         1613
+  ...MAIN                   996
+  ...fetch/promote          310
+
+  [over_attach]
+         0  ( 0.0% of prompts)  a dead-energy ATTACH target was offered
+         0                    ...and attaching was optional (declining was legal)
+         0  ( 0.0% of those)  ...and WE ATTACHED ONTO IT ANYWAY
+
+  [hand_scaler_blind]
+         0  ( 0.0% of prompts)  our active carries a hand-scaling attack
+         0                    ...and OUR OWN damage model reads it as 0 with an ATTACK on the menu
+         0  ( 0.0% of those)  ...and the attack really was available — a prompt where 7 features read 0
+           of which we attacked anyway: 0 — the M41 617-of-617 signature (correct play through a dead feature)
+
+  [retreat_stranded]
+         0  ( 0.0% of prompts)  the active cannot pay its own retreat, a ready bench member waits
+         0                    ...and an ATTACH or RETREAT was on the menu to fix it
+         0  ( 0.0% of those)  ...and WE ENDED THE TURN in that state
+
+  [dead_basis_fetch]
+         0  ( 0.0% of prompts)  a menu offers an evolution whose basis is nowhere
+         0                    ...and a live (basis-less) Pokemon was on the same menu
+         0  ( 0.0% of those)  ...and WE TOOK THE DEAD EVOLUTION
+           strict (0 bench AND 0 basics in hand): 0 situations, 0 taken
+           where taken: KEEP 0 (fetch_value RAN and was outbid) / PROMOTE 0 (fetch_value never runs there)
+
+  [stadium_ignored]
+        32  (turns)             TURNS where a stadium PLAY was on the menu
+        23                    ...and the OPPONENT'S stadium was in play, so ours would remove it
+         0  ( 0.0% of those)  ...and THE TURN ENDED with theirs still out
+           our own stadium already out (not a defect): 0
+
+  foreign_target_opts         0  — no option addressed a foreign board through inPlayArea, so the encoders.py:207 target-resolution bug is latent, not live, on this pairing.
+
+  SITUATION NEVER OCCURS: over_attach, hand_scaler_blind, retreat_stranded, dead_basis_fetch
+  These ladders measured nothing. A fix for them cannot be credited on this pairing — run a deck where the board state exists, or drop the fix (M41 killed three levers on this reading).
+
+  counters -> docs/m42/probe_oger_pre.json

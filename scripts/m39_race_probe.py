@@ -57,11 +57,12 @@ RULES = (rp.PLAY_FIX_CONSERVE, rp.PLAY_FIX_RACEMODE2,
          rp.PLAY_FIX_RACEMODE4, rp.PLAY_FIX_RACEASH)
 
 
-def probe_bed(bed: str, games: int, seed: int, arm: str) -> Counter:
-    stats = Counter()
-    live = {"own_min": 60, "opp_min": 60}
-    orig = rp.apply_play_overrides
-
+def make_counting(stats: Counter, live: dict, orig):
+    """The probe's measurement core, extracted (unchanged) for the golden
+    fixtures in tests/test_probes_mechanism.py (M41b II.3a). Per MAIN prompt:
+    count race engagement, track the deck-race minima, and attribute a FIRE
+    to each rule whose SOLO removal changes the returned order — the module
+    docstring's per-rule diff."""
     def counting(obs, ranked, fixes):
         out = orig(obs, ranked, fixes)
         if (obs.select is None or obs.current is None
@@ -79,7 +80,11 @@ def probe_bed(bed: str, games: int, seed: int, arm: str) -> Counter:
             if rule in fixes and out != orig(obs, ranked, fixes - {rule}):
                 stats[f"fire_{rule}"] += 1
         return out
+    return counting
 
+
+def make_on_game(stats: Counter, live: dict):
+    """Per-game close-out for make_counting's live minima."""
     def on_game(g, result, seat_stats):
         # The CAUSAL claim P2 makes is about the deck race, not about win rate
         # -- so the probe measures the race directly. own_min/opp_min are the
@@ -90,12 +95,18 @@ def probe_bed(bed: str, games: int, seed: int, arm: str) -> Counter:
         stats["deckout_risk"] += live["own_min"] <= 0
         stats["opp_deckout"] += live["opp_min"] <= 0
         live["own_min"] = live["opp_min"] = 60
+    return on_game
 
-    rp.apply_play_overrides = counting
+
+def probe_bed(bed: str, games: int, seed: int, arm: str) -> Counter:
+    stats = Counter()
+    live = {"own_min": 60, "opp_min": 60}
+    orig = rp.apply_play_overrides
+    rp.apply_play_overrides = make_counting(stats, live, orig)
     try:
         a = parse_spec(f"{arm}:{NET}:decks/alakazam_v2_h4.csv")
         results = play_series(a, parse_spec(BEDS[bed]), games, seed=seed,
-                              on_game=on_game)
+                              on_game=make_on_game(stats, live))
     finally:
         rp.apply_play_overrides = orig
 

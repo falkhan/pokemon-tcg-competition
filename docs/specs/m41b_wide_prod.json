@@ -1,0 +1,14 @@
+{
+  "name": "m41b_wide_prod",
+  "question": "Does the longer-dose production candidate (14 epochs) beat its matched-dose narrow control? The 6-epoch arms were still climbing on val_acc, and M38's dose law (10 epochs overwrites) was measured on the NARROW encoder where there was nothing new to learn -- with 43 zero-init columns the right dose is an open question, so control and arm share the dose and differ only in width.",
+  "arm": "model:checkpoints/m41b_wide_prod.pt:alakazam_v2_h4",
+  "control": "model:checkpoints/m41b_ctl_prod.pt:alakazam_v2_h4",
+  "beds": [
+    {"name": "grim", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
+    {"name": "dragapult", "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 31,
+  "bars": {"pass": 0.02, "kill": -0.02}
+}

@@ -578,6 +578,22 @@ These are earned, not assumed. Violating one has cost a milestone at least once.
 > `plan_iter --mode ei` and `plan_iter relabel` remain wired but are dead recipes — they exist
 > so their results stay reproducible, not to be run again.
 
+> **Epoch amendment (M41b, 2026-08-04).** The M37 audit found the prize-term inversion was
+> systemic — 4 sites repo-wide, 1 known — and MILESTONES.md's EPOCH MARKER voids every
+> solver-backed number recorded before 2026-07-31. Three entries above are **pre-epoch** and
+> must not be read as verdicts on the post-fix substrate: the **M8.1 development-tier solver**
+> (routes through `score_leaf`), **override-style consumption of any eval signal** (two of its
+> three cells are solver-based), and **any improvement operator built on `score_leaf`'s
+> non-lethal ranking** (explicitly `score_leaf`). M40 S3's post-fix measurement — wrapping the
+> net in the solver = **+125 ELO [+90, +163]** — directly contradicts what those entries imply.
+> **M8.4 (MCTS on the classifier value head)** is voided differently: it never used
+> `score_leaf`, but it ran on the *classifier* head, which M12 found to be the wrong signal and
+> the E0-validated outcome-trained value has since replaced — substrate-superseded, untested on
+> the current one. The other entries (BC/DAgger/imitation rows) are post-epoch-valid and stand.
+> Consumption discipline is unchanged: search output as **labels** is open (BACKLOG #10);
+> override-style consumption on non-lethal turns stays dead until a new post-fix measurement
+> says otherwise.
+
 ---
 
 ## 16. Known gaps

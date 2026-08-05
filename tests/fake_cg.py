@@ -66,6 +66,23 @@ class CardType(IntEnum):
     TRAINER = 1
     BASIC_ENERGY = 2
     SPECIAL_ENERGY = 3
+    # M42: STADIUM at its REAL value (4) so the stadium forensics run in CI.
+    # The members above do NOT match the engine — the real enum is POKEMON 0,
+    # ITEM 1, TOOL 2, SUPPORTER 3, STADIUM 4, BASIC_ENERGY 5, SPECIAL_ENERGY 6,
+    # so this stub's BASIC_ENERGY/SPECIAL_ENERGY collide with the engine's
+    # TOOL/SUPPORTER. Nothing compares these across the boundary today, and
+    # renumbering would touch every test that names them, so only the
+    # non-colliding member is added here. Recorded in docs/M42.md.
+    STADIUM = 4
+
+
+class LogType(IntEnum):
+    # Real engine values (cg/api.py) for the members instruments compare on.
+    TURN_START = 2
+    TURN_END = 3
+    DRAW = 4
+    MOVE_CARD = 6
+    RESULT = 23
 
 
 class SelectContext(IntEnum):
@@ -96,10 +113,22 @@ def _attack(attack_id, damage, energies):
 
 
 def _card(card_id, card_type, *, weakness=None, resistance=None,
-          energy_type=EnergyType.COLORLESS, attacks=(), ex=False, mega_ex=False):
-    return SimpleNamespace(cardId=card_id, cardType=card_type, weakness=weakness,
+          energy_type=EnergyType.COLORLESS, attacks=(), ex=False, mega_ex=False,
+          name=None, basic=None, evolves_from=None):
+    """M42: `name` / `basic` / `evolves_from` are set ONLY when given, so cards
+    1-10 keep no such attributes at all and every `getattr(c, ..., default)`
+    consumer sees exactly what it saw before. Evolution relations are by NAME,
+    never by id (the decks/lucario.csv off-printing trap)."""
+    card = SimpleNamespace(cardId=card_id, cardType=card_type, weakness=weakness,
                            resistance=resistance, energyType=energy_type,
                            attacks=list(attacks), ex=ex, megaEx=mega_ex)
+    if name is not None:
+        card.name = name
+    if basic is not None:
+        card.basic = basic
+    if evolves_from is not None:
+        card.evolvesFrom = evolves_from
+    return card
 
 
 MISSING_ATTACK_ID = 999  # on cards' attack lists but absent from the attack table
@@ -139,6 +168,12 @@ _CARDS = [
     # 10: weak Fighting attacker — its 20 damage into card 2's resistance (-30)
     # goes negative, pinning the floored-vs-unfloored asymmetry
     _card(10, CardType.POKEMON, energy_type=EnergyType.FIGHTING, attacks=[107]),
+    # M42 evolution line — the pool had NO evolution cards at all, so nothing
+    # could exercise a basis-available check. 12 evolves from 11 BY NAME.
+    _card(11, CardType.POKEMON, energy_type=EnergyType.FIGHTING, attacks=[104],
+          name="Stub Basis", basic=True),
+    _card(12, CardType.POKEMON, energy_type=EnergyType.FIGHTING, attacks=[105],
+          name="Stub Evolution", basic=False, evolves_from="Stub Basis"),
 ]
 
 
@@ -189,7 +224,7 @@ def _install():
     for name, value in (
         ("EnergyType", EnergyType), ("AreaType", AreaType),
         ("OptionType", OptionType), ("CardType", CardType),
-        ("SelectContext", SelectContext),
+        ("SelectContext", SelectContext), ("LogType", LogType),
         ("all_attack", all_attack), ("all_card_data", all_card_data),
         ("to_observation_class", to_observation_class),
         ("search_begin", search_begin), ("search_step", search_step),

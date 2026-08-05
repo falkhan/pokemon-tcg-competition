@@ -1,0 +1,14 @@
+{
+  "name": "m41b_oger_width_v2",
+  "question": "Re-test of the ogerpon width replication on a panel with HEADROOM. The first attempt (14a4e4d20d5254b4) put 2 of 3 cells at ceiling -- ogerpon beats grim 0.99 and dragapult 0.98 -- so no gain could appear there. This panel was chosen by screening every available bed against the CONTROL (not the arm) at n=400 and keeping only cells in the 0.35-0.80 band: wall 0.435, bc_top 0.568, archaludon 0.743. Everything else on the roster reads 0.93-0.99 against this deck and is excluded as unmeasurable.",
+  "arm": "model:checkpoints/m41b_oger_w143.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "control": "model:checkpoints/m41b_oger_w100.pt:data/kaggle/ogerpon_356c16bd_deck.csv",
+  "beds": [
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
+    {"name": "bctop", "spec": "model:checkpoints/m39_bc_top.pt:data/kaggle/mirror_a4f0650b_deck.csv"},
+    {"name": "archaludon", "spec": "model:checkpoints/m39_bc_archaludon.pt:archaludon"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 61,
+  "bars": {"pass": 0.02, "kill": -0.02}
+}

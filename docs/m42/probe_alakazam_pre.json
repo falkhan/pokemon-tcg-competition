@@ -1,0 +1,32 @@
+{
+  "arm": "generic:alakazam_v2_h4",
+  "opp": "generic:grim_live",
+  "games": 20,
+  "counters": {
+    "prompts": 1825,
+    "fetch_prompts": 487,
+    "main_prompts": 1132,
+    "dead_basis_fetch.situation": 65,
+    "dead_basis_fetch.offered": 29,
+    "hand_scaler_blind.situation": 287,
+    "stadium_ignored.situation": 15,
+    "stadium_ignored.offered": 10,
+    "dead_basis_fetch.strict_situation": 7,
+    "over_attach.situation": 118,
+    "over_attach.offered": 118,
+    "retreat_stranded.situation": 64,
+    "retreat_stranded.offered": 10,
+    "hand_scaler_blind.offered": 68,
+    "hand_scaler_blind.chose_bad": 68,
+    "hand_scaler_blind.attacked_anyway": 10
+  },
+  "detail": {
+    "over_attach": {},
+    "hand_scaler_blind": {
+      "Alakazam": 68
+    },
+    "retreat_stranded": {},
+    "dead_basis_fetch": {},
+    "stadium_ignored": {}
+  }
+}

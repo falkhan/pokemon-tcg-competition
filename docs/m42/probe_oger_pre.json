@@ -1,0 +1,19 @@
+{
+  "arm": "model-pz:checkpoints/m41_ogerpon.pt:decks/ogerpon.csv",
+  "opp": "model:checkpoints/m39_bc_grim.pt:grim_live",
+  "games": 20,
+  "counters": {
+    "prompts": 1613,
+    "fetch_prompts": 310,
+    "main_prompts": 996,
+    "stadium_ignored.situation": 32,
+    "stadium_ignored.offered": 23
+  },
+  "detail": {
+    "over_attach": {},
+    "hand_scaler_blind": {},
+    "retreat_stranded": {},
+    "dead_basis_fetch": {},
+    "stadium_ignored": {}
+  }
+}

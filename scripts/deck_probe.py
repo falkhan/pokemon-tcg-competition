@@ -110,6 +110,26 @@ def ci95(p: float, n: int) -> float:
     return 1.96 * math.sqrt(max(p * (1 - p), 1e-9) / max(n, 1))
 
 
+def weighted_summary(rows: list[dict], candidates) -> list[tuple]:
+    """Share-weighted win rate per candidate: (weighted_wr, name, ci95, wsum).
+
+    Pure aggregation over the per-cell rows, split out of main() so the suite
+    can pin it on synthetic cells (M41b § II.3a golden fixtures). Candidates
+    with no share-carrying cells are dropped; the caller sorts for display.
+    """
+    summary = []
+    for cname in candidates:
+        cells = [r for r in rows if r["candidate"] == cname]
+        wsum = sum(r["share"] for r in cells)
+        if not wsum:
+            continue
+        weighted = sum(r["share"] * r["wr"] for r in cells) / wsum
+        var = sum((r["share"] / wsum) ** 2 * r["wr"] * (1 - r["wr"]) / r["n"]
+                  for r in cells)
+        summary.append((weighted, cname, 1.96 * math.sqrt(var), wsum))
+    return summary
+
+
 def run_cell(a: str, b: str, n: int, workers: int, seed: int) -> dict | None:
     cmd = [sys.executable, "-m", "rl.matchrunner", "play", "--a", a, "--b", b,
            "-n", str(n), "--workers", str(workers), "--seed", str(seed)]
@@ -191,16 +211,7 @@ def main() -> None:
     # ogerpon's is 3.6%, so dropping mirrors compared grim-minus-its-hardest-
     # matchup against everyone else's full slate. Facing your own archetype is
     # a real part of the field, and it measures ~0.5 anyway.
-    summary = []
-    for cname in cands:
-        cells = [r for r in rows if r["candidate"] == cname]
-        wsum = sum(r["share"] for r in cells)
-        if not wsum:
-            continue
-        weighted = sum(r["share"] * r["wr"] for r in cells) / wsum
-        var = sum((r["share"] / wsum) ** 2 * r["wr"] * (1 - r["wr"]) / r["n"]
-                  for r in cells)
-        summary.append((weighted, cname, 1.96 * math.sqrt(var), wsum))
+    summary = weighted_summary(rows, cands)
     for weighted, cname, ci, wsum in sorted(summary, reverse=True):
         print(f"  {cname:16s} {weighted:.3f} ±{ci:.3f}   "
               f"(covering {wsum:.1%} of the field)", flush=True)

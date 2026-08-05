@@ -1,0 +1,13 @@
+{
+  "name": "m41b_stageb_teacher_gap_full",
+  "question": "Same question at the FULL search budget M40 S3 measured its +125 ELO with (800 nodes / 400ms). Distillation runs the teacher offline, so the G6 latency gate that pins the shipped solved: spec to 120/50ms does not apply to a label source. This is the teacher Stage B would actually distil.",
+  "arm": "solved:checkpoints/m39_retain_b.pt:alakazam_v2_h4:800:400",
+  "control": "model:checkpoints/m39_retain_b.pt:alakazam_v2_h4",
+  "beds": [
+    {"name": "grim", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 11,
+  "bars": {"pass": 0.05, "kill": 0.0}
+}

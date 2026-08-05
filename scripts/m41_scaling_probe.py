@@ -69,6 +69,65 @@ def our_episodes(subs: list[int]) -> list[tuple[int, int]]:
     return out
 
 
+def tally_attack_turns(decisions, episode_id, attacker_id, per_card,
+                       turns, other_turns, model_says_can_attack) -> None:
+    """The measurement core, one episode at a time. THE UNIT IS THE TURN:
+    every MAIN prompt with ATTACK legal folds into its (episode, turn) record,
+    so a turn that ended in an attack can never read as a declined one.
+
+    ``decisions`` yields (obs_dict, action) pairs — iter_replay_decisions
+    output, pre-conversion. Mutates the two turn books and the
+    ``model_says_can_attack`` counter in place."""
+    for obs_dict, action in decisions:
+        try:
+            obs = to_observation_class(obs_dict)
+            st, sel = obs.current, obs.select
+            if st is None or sel is None or sel.context != SelectContext.MAIN:
+                continue
+            me = st.players[st.yourIndex]
+            op = st.players[1 - st.yourIndex]
+            mine = [p for p in (me.active or []) if p]
+            theirs = [p for p in (op.active or []) if p]
+            if not mine or not theirs:
+                continue
+            if not any(OptionType(o.type) == OptionType.ATTACK
+                       for o in sel.option):
+                continue                    # attacking not legal here
+
+            attacked = OptionType(sel.option[action[0]].type) == OptionType.ATTACK
+            key = (episode_id, int(st.turn))
+            book = turns if mine[0].id == attacker_id else other_turns
+            rec = book.setdefault(key, {"attacked": False, "lethal": False,
+                                        "hand": 0})
+            rec["attacked"] = rec["attacked"] or attacked
+            if mine[0].id != attacker_id:
+                continue
+
+            hand = len(me.hand or [])
+            # The hand at the LAST chance to attack this turn is what the
+            # attack would actually have done.
+            rec["hand"] = hand
+            if per_card * hand >= (theirs[0].hp or 0):
+                rec["lethal"] = True
+            model_says_can_attack[_best_damage(mine[0], theirs[0]) > 0] += 1
+        except Exception:  # noqa: BLE001 — forensics, not a rules engine
+            continue
+
+
+def summarize_turns(turns):
+    """(by_hand, total, lethal) aggregates from a per-turn book."""
+    by_hand = defaultdict(lambda: [0, 0])
+    total = [len(turns), sum(r["attacked"] for r in turns.values())]
+    lethal = [0, 0]
+    for rec in turns.values():
+        by_hand[rec["hand"]][0] += 1
+        by_hand[rec["hand"]][1] += rec["attacked"]
+        if rec["lethal"]:
+            lethal[0] += 1
+            lethal[1] += rec["attacked"]
+    return by_hand, total, lethal
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--subs", type=int, nargs="*", default=OUR_SUBS)
@@ -92,50 +151,13 @@ def main() -> None:
             steps = json.loads(gzip.decompress(path.read_bytes()))["steps"]
         except Exception:  # noqa: BLE001 — a corrupt cache entry is not fatal
             continue
-        for _i, obs_dict, action in iter_replay_decisions(steps, seat, drops):
-            try:
-                obs = to_observation_class(obs_dict)
-                st, sel = obs.current, obs.select
-                if st is None or sel is None or sel.context != SelectContext.MAIN:
-                    continue
-                me = st.players[st.yourIndex]
-                op = st.players[1 - st.yourIndex]
-                mine = [p for p in (me.active or []) if p]
-                theirs = [p for p in (op.active or []) if p]
-                if not mine or not theirs:
-                    continue
-                if not any(OptionType(o.type) == OptionType.ATTACK
-                           for o in sel.option):
-                    continue                    # attacking not legal here
+        tally_attack_turns(
+            ((od, act) for _i, od, act in
+             iter_replay_decisions(steps, seat, drops)),
+            episode_id, a.attacker, a.per_card,
+            turns, other_turns, model_says_can_attack)
 
-                attacked = OptionType(sel.option[action[0]].type) == OptionType.ATTACK
-                key = (episode_id, int(st.turn))
-                book = turns if mine[0].id == a.attacker else other_turns
-                rec = book.setdefault(key, {"attacked": False, "lethal": False,
-                                            "hand": 0})
-                rec["attacked"] = rec["attacked"] or attacked
-                if mine[0].id != a.attacker:
-                    continue
-
-                hand = len(me.hand or [])
-                # The hand at the LAST chance to attack this turn is what the
-                # attack would actually have done.
-                rec["hand"] = hand
-                if a.per_card * hand >= (theirs[0].hp or 0):
-                    rec["lethal"] = True
-                model_says_can_attack[_best_damage(mine[0], theirs[0]) > 0] += 1
-            except Exception:  # noqa: BLE001 — forensics, not a rules engine
-                continue
-
-    by_hand = defaultdict(lambda: [0, 0])
-    total = [len(turns), sum(r["attacked"] for r in turns.values())]
-    lethal = [0, 0]
-    for rec in turns.values():
-        by_hand[rec["hand"]][0] += 1
-        by_hand[rec["hand"]][1] += rec["attacked"]
-        if rec["lethal"]:
-            lethal[0] += 1
-            lethal[1] += rec["attacked"]
+    by_hand, total, lethal = summarize_turns(turns)
     other_attacker = [len(other_turns),
                       sum(r["attacked"] for r in other_turns.values())]
 

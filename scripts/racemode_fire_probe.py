@@ -35,6 +35,32 @@ RACE_FIXES = frozenset({rp.PLAY_FIX_RACEMODE, rp.PLAY_FIX_RACEMODER,
                         rp.PLAY_FIX_RACEMODE2, rp.PLAY_FIX_RACEMODE3})
 
 
+def record_decision(stats: Counter, obs, ranked, fixes, apply_fn):
+    """Measurement core: run the override, classify the decision, return the
+    (possibly reordered) pick order. `apply_fn` is the UNPATCHED
+    rl.plan.apply_play_overrides — a fire is isolated by re-running it with
+    the racemode names stripped and diffing the two orders. Golden-fixtured
+    in tests/test_probes_rule_mechanism.py."""
+    out = apply_fn(obs, ranked, fixes)
+    if not (fixes & RACE_FIXES) or obs.select is None \
+            or obs.current is None \
+            or obs.select.context != rp.SelectContext.MAIN:
+        return out
+    stats["main_prompts"] += 1
+    st = obs.current
+    me = st.players[st.yourIndex]
+    op = st.players[1 - st.yourIndex]
+    if rp._opp_board_ids(op) & rp._RACEMODE_OPP_IDS:
+        stats["trigger_true"] += 1
+        if (me.deckCount < op.deckCount - rp._RACEMODE_MARGIN
+                and rp._RACEMODE_DECK_LO < me.deckCount
+                <= rp._RACEMODE_DECK_HI):
+            stats["margin_open"] += 1
+        if out != apply_fn(obs, ranked, fixes - RACE_FIXES):
+            stats["o12_fires"] += 1
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bed", default="hop", choices=sorted(BEDS))
@@ -48,24 +74,7 @@ def main():
     orig = rp.apply_play_overrides
 
     def counting(obs, ranked, fixes):
-        out = orig(obs, ranked, fixes)
-        if not (fixes & RACE_FIXES) or obs.select is None \
-                or obs.current is None \
-                or obs.select.context != rp.SelectContext.MAIN:
-            return out
-        stats["main_prompts"] += 1
-        st = obs.current
-        me = st.players[st.yourIndex]
-        op = st.players[1 - st.yourIndex]
-        if rp._opp_board_ids(op) & rp._RACEMODE_OPP_IDS:
-            stats["trigger_true"] += 1
-            if (me.deckCount < op.deckCount - rp._RACEMODE_MARGIN
-                    and rp._RACEMODE_DECK_LO < me.deckCount
-                    <= rp._RACEMODE_DECK_HI):
-                stats["margin_open"] += 1
-            if out != orig(obs, ranked, fixes - RACE_FIXES):
-                stats["o12_fires"] += 1
-        return out
+        return record_decision(stats, obs, ranked, fixes, orig)
 
     rp.apply_play_overrides = counting
     try:

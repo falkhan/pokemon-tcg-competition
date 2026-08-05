@@ -1,0 +1,46 @@
+
+M42 perception probe: 20 games
+  arm generic:lucario_evolved
+  opp generic:festival_dipplin
+
+  prompts answered          883
+  ...MAIN                   502
+  ...fetch/promote          236
+
+  [over_attach]
+        90  (17.9% of prompts)  a dead-energy ATTACH target was offered
+        90                    ...and attaching was optional (declining was legal)
+         1  ( 1.1% of those)  ...and WE ATTACHED ONTO IT ANYWAY
+               1  Mega Lucario ex
+
+  [hand_scaler_blind]
+         0  ( 0.0% of prompts)  our active carries a hand-scaling attack
+         0                    ...and OUR OWN damage model reads it as 0 with an ATTACK on the menu
+         0  ( 0.0% of those)  ...and the attack really was available — a prompt where 7 features read 0
+           of which we attacked anyway: 0 — the M41 617-of-617 signature (correct play through a dead feature)
+
+  [retreat_stranded]
+       159  (31.7% of prompts)  the active cannot pay its own retreat, a ready bench member waits
+        53                    ...and an ATTACH or RETREAT was on the menu to fix it
+         0  ( 0.0% of those)  ...and WE ENDED THE TURN in that state
+
+  [dead_basis_fetch]
+         9  ( 3.8% of prompts)  a menu offers an evolution whose basis is nowhere
+         9                    ...and a live (basis-less) Pokemon was on the same menu
+         0  ( 0.0% of those)  ...and WE TOOK THE DEAD EVOLUTION
+           strict (0 bench AND 0 basics in hand): 3 situations, 0 taken
+           where taken: KEEP 0 (fetch_value RAN and was outbid) / PROMOTE 0 (fetch_value never runs there)
+
+  [stadium_ignored]
+         9  (turns)             TURNS where a stadium PLAY was on the menu
+         5                    ...and the OPPONENT'S stadium was in play, so ours would remove it
+         2  (40.0% of those)  ...and THE TURN ENDED with theirs still out
+           our own stadium already out (not a defect): 0
+               2  Festival Grounds
+
+  foreign_target_opts         0  — no option addressed a foreign board through inPlayArea, so the encoders.py:207 target-resolution bug is latent, not live, on this pairing.
+
+  SITUATION NEVER OCCURS: hand_scaler_blind
+  These ladders measured nothing. A fix for them cannot be credited on this pairing — run a deck where the board state exists, or drop the fix (M41 killed three levers on this reading).
+
+  counters -> docs/m42/probe_evo_pre.json

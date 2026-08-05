@@ -36,6 +36,38 @@ import rl.plan as rp  # noqa: E402
 from rl.matchrunner import _engine_game, make_pilot, parse_spec  # noqa: E402
 
 
+def record_decision(stats: Counter, targets: Counter, obs, ranked, out) -> None:
+    """Measurement core: classify ONE apply_play_overrides decision. `ranked`
+    is the model's order, `out` the post-override order; the funnel is
+    prompts -> trigger_true -> gust_offered -> fires (each step conditions on
+    the last). Golden-fixtured in tests/test_probes_rule_mechanism.py."""
+    try:
+        st = obs.current
+        if st is not None and obs.select is not None \
+                and obs.select.context == SelectContext.MAIN:
+            stats["prompts"] += 1
+            if rp._gustsnipe_target(st):
+                stats["trigger_true"] += 1
+                me = st.players[st.yourIndex]
+                hand = me.hand or []
+                offered = [i for i in ranked
+                           if obs.select.option[i].type == OptionType.PLAY
+                           and rp._hand_card_id(obs.select.option[i], hand)
+                           in rp.GUST_IDS]
+                if offered:
+                    stats["gust_offered"] += 1
+                    if out and out[0] != ranked[0]:
+                        stats["fires"] += 1
+                        op = st.players[1 - st.yourIndex]
+                        for p in (op.bench or ()):
+                            if p is None or p.id not in rp._CARD:
+                                continue
+                            if rp._CARD[p.id][4] >= rp._GUSTSNIPE_MIN_PRIZES:
+                                targets[f"{rp._CARD[p.id][0] or p.id}"] += 1
+    except Exception:  # noqa: BLE001 — a probe must never break the game
+        pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--arm", required=True, help="spec carrying the gustsnipe fix")
@@ -49,31 +81,7 @@ def main() -> None:
 
     def spy(obs, ranked, fixes):
         out = orig(obs, ranked, fixes)
-        try:
-            st = obs.current
-            if st is not None and obs.select is not None \
-                    and obs.select.context == SelectContext.MAIN:
-                stats["prompts"] += 1
-                if rp._gustsnipe_target(st):
-                    stats["trigger_true"] += 1
-                    me = st.players[st.yourIndex]
-                    hand = me.hand or []
-                    offered = [i for i in ranked
-                               if obs.select.option[i].type == OptionType.PLAY
-                               and rp._hand_card_id(obs.select.option[i], hand)
-                               in rp.GUST_IDS]
-                    if offered:
-                        stats["gust_offered"] += 1
-                        if out and out[0] != ranked[0]:
-                            stats["fires"] += 1
-                            op = st.players[1 - st.yourIndex]
-                            for p in (op.bench or ()):
-                                if p is None or p.id not in rp._CARD:
-                                    continue
-                                if rp._CARD[p.id][4] >= rp._GUSTSNIPE_MIN_PRIZES:
-                                    targets[f"{rp._CARD[p.id][0] or p.id}"] += 1
-        except Exception:  # noqa: BLE001 — a probe must never break the game
-            pass
+        record_decision(stats, targets, obs, ranked, out)
         return out
 
     # Patched around ONE make_pilot call so the counters bind to that pilot

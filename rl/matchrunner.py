@@ -169,6 +169,15 @@ _MODEL_FIX_KINDS = {
     #                battery's single variable vs `model-c-pkg` is the plan
     #                vector and nothing else.
     "model-pz": frozenset({"planzero"}),
+    # M42 O19 `deadenergy`, single-variable over the M40 Ship B package
+    # (conserve,racemode2,racemode4) — that is the Alakazam-lineage config the
+    # probe measured over-attaching 29 of 297 offers (9.8%, 440 damage
+    # forgone) while the rule pilot on the same deck did it 0.0% of the time.
+    # Pairs with `model-c-pkg` as the control.
+    "model-c-pkg-de": frozenset({"conserve", "racemode2", "racemode4",
+                                 "deadenergy"}),
+    # isolated mechanism cell, nothing else moving
+    "model-de": frozenset({"deadenergy"}),
     # M41 O18 `gustsnipe`, single-variable over model-pz — the ogerpon ship
     # candidate's config plus the one new rule, so the battery attributes it.
     "model-pz-snipe": frozenset({"planzero", "gustsnipe"}),
@@ -952,20 +961,59 @@ def _make_jobs(pairs: list[tuple], workers: int, seed_base: int = 1000) -> list[
     return jobs
 
 
-def _pair_worker(arg: tuple) -> tuple[int, int, list[int]]:
+#: One game's MARGIN, side-a-relative, as persisted per game (M41b § II.3c):
+#: [a prizes left, b prizes left, a deck count, b deck count]. `None` when the
+#: engine ended without a final state (an errored game).
+MARGIN_FIELDS = ("a_prizes", "b_prizes", "a_deck", "b_deck")
+
+
+def _pair_worker(arg: tuple) -> tuple[int, int, list[int], list]:
+    """One chunk: the per-game results AND their margins.
+
+    M41b § II.3c: `_engine_game` has always captured the end state, and
+    `_from_a_view` has always re-keyed it to side a, but the margin died here
+    — the worker returned bare win/loss ints, so every `--workers` battery
+    ever run discarded it (verified across 3,245 run files: zero carry it).
+    The `on_game` closure is built INSIDE the worker, so it never has to cross
+    the spawn boundary that forbids callables in `run_pairs`' job tuples.
+    """
     job_idx, (pair_idx, spec_a, spec_b, n, seed) = arg
-    return job_idx, pair_idx, play_series(spec_a, spec_b, n, seed=seed)
+    margins: list = []
+
+    def on_game(_g, _result, view):
+        final = view.get("final") or {}
+        prizes, decks = final.get("prizes"), final.get("decks")
+        margins.append([prizes[0], prizes[1], decks[0], decks[1]]
+                       if prizes and decks else None)
+
+    chunk = play_series(spec_a, spec_b, n, seed=seed, on_game=on_game)
+    # Index alignment is the whole contract: margins[i] MUST describe the game
+    # results[i] scored, or the analysis pairs an outcome with someone else's
+    # margin and reports a confident wrong correlation. A game_fn that never
+    # fires on_game (test seams) would otherwise short the list.
+    margins += [None] * (len(chunk) - len(margins))
+    return job_idx, pair_idx, chunk, margins[:len(chunk)]
 
 
-def _run_key(pairs: list[tuple], workers: int, seed: int) -> dict:
+def _run_key(pairs: list[tuple], workers: int, seed: int,
+             extra: dict | None = None) -> dict:
     """The checkpoint header — json-normalized so tuple/list mismatch can't
-    false-negative the resume validation."""
-    return json.loads(json.dumps(
-        {"pairs": pairs, "workers": workers, "seed": seed}))
+    false-negative the resume validation.
+
+    `extra` is stamped in verbatim when given (M41b § II.3d: the gate spec's
+    hash rides here, so a battery file carries the bar it was run under and
+    the existing header-mismatch refusal becomes the tamper check). Omitted
+    entirely when None, so every pre-M41b checkpoint still validates.
+    """
+    key = {"pairs": pairs, "workers": workers, "seed": seed}
+    if extra:
+        key["extra"] = extra
+    return json.loads(json.dumps(key))
 
 
 def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
-              seed: int = 0, checkpoint: str | None = None) -> list[list[int]]:
+              seed: int = 0, checkpoint: str | None = None,
+              key_extra: dict | None = None) -> list[list[int]]:
     """Run [(spec_a, spec_b, n_games), ...]; returns per-pair result lists.
 
     workers <= 1 runs in-process (required for an injected game_fn — callables
@@ -975,6 +1023,9 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
     seed offsets every chunk's instance seed (before M8.1 the CLI --seed was
     silently dropped on this path; note the engine's own RNG drives game
     variance either way — repeated runs are independent samples).
+
+    Each persisted chunk also carries `margins` — one MARGIN_FIELDS row per
+    game (M41b § II.3c). Old checkpoints have no such key and still resume.
 
     checkpoint (M8.1): a jsonl path. Line 1 pins the run key
     (pairs/workers/seed); each completed chunk appends one line as it
@@ -992,11 +1043,15 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
 
     jobs = _make_jobs(pairs, workers, seed_base=1000 + seed)
     results: list[list[int]] = [[] for _ in pairs]
+    # Per-game margins ride alongside results (M41b § II.3c). They are not
+    # returned — the return type is load-bearing for every caller — but they
+    # ARE persisted to the checkpoint, which is the analysis artifact.
+    margins: list[list] = [[] for _ in pairs]
     done: set[int] = set()
     fh = None
     if checkpoint:
         path = Path(checkpoint)
-        key = _run_key(pairs, workers, seed)
+        key = _run_key(pairs, workers, seed, key_extra)
         if path.exists() and path.read_text().strip():
             lines = [json.loads(line) for line in path.read_text().splitlines()
                      if line.strip()]
@@ -1006,6 +1061,11 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
             for row in lines[1:]:
                 done.add(row["job"])
                 results[row["pair"]].extend(row["results"])
+                # `margins` is absent in every pre-M41b checkpoint; resuming
+                # one must still work, so the results list stays the authority
+                # and margins are read only where they exist.
+                margins[row["pair"]].extend(
+                    row.get("margins") or [None] * len(row["results"]))
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(key) + "\n")
@@ -1016,12 +1076,14 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
         if pending:
             ctx = mp.get_context("spawn")
             with ctx.Pool(min(workers, len(pending))) as pool:
-                for job_idx, pair_idx, chunk in pool.imap_unordered(_pair_worker,
-                                                                    pending):
+                for job_idx, pair_idx, chunk, chunk_margins in \
+                        pool.imap_unordered(_pair_worker, pending):
                     results[pair_idx].extend(chunk)
+                    margins[pair_idx].extend(chunk_margins)
                     if fh is not None:
                         fh.write(json.dumps({"job": job_idx, "pair": pair_idx,
-                                             "results": chunk}) + "\n")
+                                             "results": chunk,
+                                             "margins": chunk_margins}) + "\n")
                         fh.flush()
     finally:
         if fh is not None:

@@ -4,6 +4,8 @@ Both modules build their FEAT matrix from the real data/cards_features.parquet
 and their combat tables from the fake engine; every encoding must be
 bit-identical (np.array_equal, no tolerance).
 """
+from types import SimpleNamespace
+
 import pytest
 
 np = pytest.importorskip("numpy")
@@ -236,7 +238,7 @@ def test_encode_option_v2_parity_and_ids():
         a_num, a_ids = old.encode_option_v2(opt, obs)
         b_num, b_ids = new.encode_option_v2(opt, obs)
         assert np.array_equal(a_num, b_num) and np.array_equal(a_ids, b_ids)
-        assert a_num.shape == (old.OPTION_M41_DIM,)
+        assert a_num.shape == (old.OPTION_M41B_DIM,)
         # the v1 prefix stays byte-identical (M16 block is additive)
         assert np.array_equal(a_num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.encode_option_v2(attach, obs)[1].tolist() == [0, 1]  # target = active card 1
@@ -475,11 +477,13 @@ def test_m27_block_is_additive_so_narrower_checkpoints_are_unaffected():
                       supporter_played=False)
     opt = option(OptionType.PLAY, area=AreaType.HAND, index=0)
     num, _ = old.encode_option_v2(opt, obs)
-    assert num.shape == (old.OPTION_M41_DIM,)
+    assert num.shape == (old.OPTION_M41B_DIM,)
     assert np.array_equal(num[:old.OPTION_DIM], old.encode_option(opt, obs))
     assert old.OPTION_M27_DIM == old.OPTION_V3_DIM + old.N_OPTION_PLAY_PRE
     assert old.OPTION_M28_DIM == old.OPTION_M27_DIM + old.N_OPTION_PHASE
     assert old.OPTION_M41_DIM == old.OPTION_M28_DIM + old.N_OPTION_ENERGY
+    assert old.OPTION_M42_DIM == old.OPTION_M41_DIM + old.N_OPTION_PERCEPT
+    assert old.OPTION_M41B_DIM == old.OPTION_M42_DIM + old.N_OPTION_M41B
 
 
 def test_the_m41_energy_block_is_zero_on_every_non_attach_option():
@@ -507,3 +511,313 @@ def test_the_m41_energy_block_fires_on_an_attach():
     assert block[0] == 0.0                       # not dead: {F}{C} still unpaid
     assert block[1] == pytest.approx(1 / 5.0)    # one attach short of the best
     assert block[3] == 0.0                       # not an own-energy scaler
+
+
+# --- M42 perception block (105..114) ----------------------------------------
+# Every slot answers to a measured rate on the Alakazam NEURAL ship where the
+# rule pilot, same deck same opponent, scored 0.0% (docs/M42.md 2026-08-04).
+
+EVOLVED = 12         # fake_cg 'Stub Evolution', evolves from 11 by NAME
+BASIS = 11           # fake_cg 'Stub Basis'
+
+
+def _m42(mod, opt, obs):
+    num, _ = mod.encode_option_v2(opt, obs)
+    return num[mod.OPTION_M41_DIM:mod.OPTION_M42_DIM]
+
+
+def test_m42_block_is_zero_on_option_types_it_does_not_describe():
+    """A stray write would shift what these columns mean for the next corpus."""
+    me = player(active=pokemon(1), hand=[hand_card(7)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    for opt in (option(OptionType.END), option(OptionType.ABILITY),
+                option(OptionType.RETREAT)):
+        for mod in (old, new):
+            assert not _m42(mod, opt, obs).any(), opt.type
+
+
+def test_m42_attack_slots_report_printed_damage_for_a_flat_attacker():
+    """Stub attack 101 prints 50 and does not scale: effective == printed, so
+    the understatement slot is 0 and both scaling flags are off."""
+    me = player(active=pokemon(1, energies=[FIGHTING]))
+    obs = observation(me=me, opponent=player(active=pokemon(4, hp=300)))
+    opt = option(OptionType.ATTACK, attack_id=102)     # 120, no weakness on 4
+    for mod in (old, new):
+        block = _m42(mod, opt, obs)
+        assert block[0] == pytest.approx(120 / 300.0)
+        assert block[1] == 0.0        # printed is the whole story
+        assert block[2] == 0.0 and block[3] == 0.0
+        assert block[4] == 0.0        # 120 does not KO 300
+
+
+def test_m42_attack_slots_see_through_a_printed_zero_scaler(monkeypatch):
+    """The defect the block exists for: stub attack 103 prints 0, and the net
+    measured 330 of 330 prompts where the engine offered an attack our own
+    damage model scored at zero."""
+    import rl.scaling as sc
+    monkeypatch.setitem(sc.SCALING_ATTACKS, 103, ("hand", 20, 0))
+    me = player(active=pokemon(5), hand=[hand_card(7)] * 6)
+    obs = observation(me=me, opponent=player(active=pokemon(4, hp=100)))
+    opt = option(OptionType.ATTACK, attack_id=103)
+    for mod in (old, new):
+        block = _m42(mod, opt, obs)
+        assert block[0] == pytest.approx(120 / 300.0)   # 20 x 6 cards in hand
+        assert block[1] == pytest.approx(120 / 300.0)   # printed says 0
+        assert block[2] == 1.0        # scales on HAND specifically
+        assert block[3] == 1.0
+        assert block[4] == 1.0        # 120 >= 100: a KO the printed model missed
+
+
+def test_m42_attach_slot_prices_a_card_out_of_the_hand(monkeypatch):
+    """Piotr's observation as a number: the energy leaves the hand, so a
+    hand-scaler loses per_unit damage on the same turn. 440 damage forgone
+    across 29 surplus attaches, measured."""
+    import rl.scaling as sc
+    monkeypatch.setitem(sc.SCALING_ATTACKS, 103, ("hand", 20, 0))
+    opt = option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE, in_play_index=0)
+    scaler = observation(me=player(active=pokemon(5)),
+                         opponent=player(active=pokemon(2)))
+    flat = observation(me=player(active=pokemon(1)),
+                       opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        assert _m42(mod, opt, scaler)[5] == pytest.approx(20 / 40.0)
+        assert _m42(mod, opt, flat)[5] == 0.0      # silent on flat attackers
+
+
+def test_m42_card_slots_separate_a_live_evolution_from_a_dead_one():
+    """The search submenu, where the shipped agent has no coverage of any kind
+    (apply_play_overrides returns early off MAIN)."""
+    opt = option(OptionType.CARD, area=AreaType.HAND, index=0)
+    dead = observation(me=player(hand=[hand_card(EVOLVED)], active=pokemon(1)),
+                       opponent=player(active=pokemon(2)))
+    live = observation(me=player(hand=[hand_card(EVOLVED), hand_card(BASIS)],
+                                 active=pokemon(1)),
+                       opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        assert _m42(mod, opt, dead)[6] == 0.0 and _m42(mod, opt, dead)[7] == 1.0
+        assert _m42(mod, opt, live)[6] == 1.0 and _m42(mod, opt, live)[7] == 0.0
+
+
+def test_m42_card_slots_never_call_an_in_play_pokemon_dead():
+    """A benched Kadabra does not need an Abra — it is already evolved. Without
+    this, 14 of 19 measured 'dead evolutions' were false positives and a rule
+    written against them would have refused to promote after a KO."""
+    opt = option(OptionType.CARD, area=AreaType.BENCH, index=0)
+    obs = observation(me=player(active=pokemon(1), bench=[pokemon(EVOLVED)]),
+                      opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        block = _m42(mod, opt, obs)
+        assert block[6] == 0.0 and block[7] == 0.0
+
+
+def test_m42_card_slot_counts_what_we_can_actually_bench():
+    """Piotr's exact trigger is this slot reading 0."""
+    opt = option(OptionType.CARD, area=AreaType.HAND, index=0)
+    bare = observation(me=player(active=pokemon(1), hand=[hand_card(EVOLVED)]),
+                       opponent=player(active=pokemon(2)))
+    stocked = observation(me=player(active=pokemon(1), bench=[pokemon(1)],
+                                    hand=[hand_card(EVOLVED), hand_card(BASIS)]),
+                          opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        assert _m42(mod, opt, bare)[8] == 0.0
+        assert _m42(mod, opt, stocked)[8] == pytest.approx(2 / 6.0)
+
+
+def test_m42_stadium_slot_fires_only_on_the_opponents_stadium(monkeypatch):
+    """M27 column 95 says 'is a stadium AND none is in play', which is exactly
+    0 in the situation that matters. Ownership is readable off Card.playerIndex
+    (verified: 6 of our own plays, 0 wrong-seat)."""
+    opt = option(OptionType.PLAY, area=AreaType.HAND, index=0)
+    ours, theirs = 4, 5
+
+    def _obs(out_id, owner):
+        stadium = [SimpleNamespace(id=out_id, playerIndex=owner)]
+        return observation(me=player(active=pokemon(1), hand=[hand_card(ours)]),
+                           opponent=player(active=pokemon(2)), stadium=stadium)
+
+    for mod in (old, new):
+        _kind_patch(monkeypatch, mod, {ours: "STADIUM", theirs: "STADIUM"})
+        assert _m42(mod, opt, _obs(theirs, 1))[9] == 1.0   # displaces theirs
+        assert _m42(mod, opt, _obs(theirs, 0))[9] == 0.0   # it is ours already
+        # same-name replacement is illegal, so it is never the opportunity
+        assert _m42(mod, opt, _obs(ours, 1))[9] == 0.0
+
+
+# --- M41b board/cost/matchup/econ block (115..143) ---------------------------
+# docs/M41b-plan.md Phase 1: the measured fix for the 879 real aliased option
+# pairs (an option carries its subject's card identity, never its live state
+# or board slot), the typed cost the encoder collapsed to its size, and the
+# state facts no v3 net could see (matchup, retreat, hand economics).
+
+
+def _m41b(mod, opt, obs):
+    num, _ = mod.encode_option_v2(opt, obs)
+    return num[mod.OPTION_M42_DIM:mod.OPTION_M41B_DIM]
+
+
+def test_m41b_board_and_cost_are_zero_on_types_they_do_not_describe():
+    """Board slots fill only for the six board-object types, cost only for
+    ATTACK — a stray write would shift the columns' meaning for the corpus."""
+    me = player(active=pokemon(1, energies=[FIGHTING]), hand=[hand_card(7)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    for opt in (option(OptionType.PLAY, index=0), option(OptionType.RETREAT),
+                option(OptionType.END)):
+        for mod in (old, new):
+            block = _m41b(mod, opt, obs)
+            assert not block[:20].any(), opt.type      # board AND cost stay 0
+    atk = option(OptionType.ATTACK, attack_id=101)
+    ability = option(OptionType.ABILITY, area=AreaType.ACTIVE, index=0)
+    for mod in (old, new):
+        assert not _m41b(mod, atk, obs)[:8].any()      # ATTACK: no board object
+        assert not _m41b(mod, ability, obs)[8:20].any()  # ABILITY: no cost
+
+
+def test_m41b_board_slots_break_a_real_aliased_pair():
+    """The disease itself, reproduced: two ABILITY options on the same card id
+    at different bench slots were IDENTICAL vectors at every trained width —
+    879 real pairs measured. The board block must split them."""
+    me = player(active=pokemon(1),
+                bench=[pokemon(3, hp=220, energies=[FIGHTING]),
+                       pokemon(3, hp=100)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    a0 = option(OptionType.ABILITY, area=AreaType.BENCH, index=0)
+    a1 = option(OptionType.ABILITY, area=AreaType.BENCH, index=1)
+    for mod in (old, new):
+        n0, _ = mod.encode_option_v2(a0, obs)
+        n1, _ = mod.encode_option_v2(a1, obs)
+        # the alias is real at the M42 width...
+        assert np.array_equal(n0[:mod.OPTION_M42_DIM], n1[:mod.OPTION_M42_DIM])
+        # ...and dead at this one
+        assert not np.array_equal(n0, n1)
+
+
+def test_m41b_board_slots_report_live_state():
+    me = player(active=pokemon(1, hp=120, max_hp=140,
+                               energies=[FIGHTING, FIGHTING],
+                               tools=[hand_card(7)]),
+                bench=[pokemon(3), None, pokemon(5, hp=60)],
+                hand=[hand_card(6)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    attach = option(OptionType.ATTACH, in_play_area=AreaType.ACTIVE,
+                    in_play_index=0)
+    ability = option(OptionType.ABILITY, area=AreaType.BENCH, index=2)
+    for mod in (old, new):
+        block = _m41b(mod, attach, obs)
+        assert block[0] == 1.0
+        assert block[1] == pytest.approx(120 / 140.0)
+        assert block[2] == pytest.approx(20 / 100.0)
+        assert block[3] == pytest.approx(2 / 5.0)
+        assert block[4] == pytest.approx(1 / 2.0)
+        assert block[5] == 1.0 and block[6] == 0.0
+        assert block[7] == 0.0                           # my own board
+        bench_block = _m41b(mod, ability, obs)
+        assert bench_block[0] == 1.0
+        assert bench_block[5] == 0.0
+        assert bench_block[6] == pytest.approx(2 / 4.0)
+
+
+def test_m41b_board_object_prefers_in_play_and_resolves_ownership():
+    """inPlayArea wins when both field pairs are set (EVOLVE: area/index is
+    the acted card in hand). A playerIndex naming the opponent reads the
+    OPPONENT'S board with is_opponents set — the 2026-08-04 amendment: the
+    kill probe found the residual 259 real aliases were ALL foreign-board
+    spread-damage/gust targets, so blindness there is the defect, and the
+    :207 trap (their index silently read on OUR board) stays impossible."""
+    me = player(active=pokemon(1), bench=[pokemon(3), pokemon(5, hp=60)],
+                hand=[hand_card(EVOLVED)])
+    obs = observation(me=me,
+                      opponent=player(active=pokemon(2),
+                                      bench=[pokemon(4, hp=70, max_hp=100,
+                                                     energies=[PSYCHIC])]))
+    evolve = option(OptionType.EVOLVE, area=AreaType.HAND, index=0,
+                    in_play_area=AreaType.BENCH, in_play_index=1)
+    foreign = option(OptionType.CARD, area=AreaType.BENCH, index=0,
+                     player_index=1)
+    hand_pick = option(OptionType.CARD, area=AreaType.HAND, index=0)
+    for mod in (old, new):
+        block = _m41b(mod, evolve, obs)
+        assert block[0] == 1.0 and block[6] == pytest.approx(1 / 4.0)
+        assert block[7] == 0.0                           # inPlay* is ours
+        their_block = _m41b(mod, foreign, obs)
+        assert their_block[0] == 1.0                     # their bench 0 ...
+        assert their_block[1] == pytest.approx(70 / 100.0)
+        assert their_block[3] == pytest.approx(1 / 5.0)
+        assert their_block[7] == 1.0                     # ... marked foreign
+        assert not _m41b(mod, hand_pick, obs)[:8].any()  # not a board zone
+
+
+def test_m41b_board_slots_break_a_foreign_aliased_pair():
+    """The residual disease: two spread-damage targets on the SAME card id at
+    different opponent bench slots with different hp were identical vectors.
+    (dragapult's bread and butter — DAMAGE context, measured 91 groups)."""
+    opp = player(active=pokemon(2),
+                 bench=[pokemon(4, hp=70), pokemon(4, hp=30)])
+    obs = observation(me=player(active=pokemon(1)), opponent=opp)
+    t0 = option(OptionType.CARD, area=AreaType.BENCH, index=0, player_index=1)
+    t1 = option(OptionType.CARD, area=AreaType.BENCH, index=1, player_index=1)
+    for mod in (old, new):
+        n0, _ = mod.encode_option_v2(t0, obs)
+        n1, _ = mod.encode_option_v2(t1, obs)
+        assert np.array_equal(n0[:mod.OPTION_M42_DIM], n1[:mod.OPTION_M42_DIM])
+        assert not np.array_equal(n0, n1)
+
+
+def test_m41b_typed_cost_splits_what_size_collapsed():
+    """Attacks 102 {F}{C} and 105 {F}{F} are both size 2 — the old encoding
+    read 0.400 for each. The histogram tells them apart. (The plan's
+    deficit/afford slots were census-killed: the engine never offers an
+    unaffordable ATTACK, so they read 0/1 on all 1,272 corpus options.)"""
+    me = player(active=pokemon(1, energies=[FIGHTING, WATER]))
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    fc = _m41b(old, option(OptionType.ATTACK, attack_id=102), obs)
+    ff = _m41b(old, option(OptionType.ATTACK, attack_id=105), obs)
+    for mod in (old, new):
+        assert np.array_equal(
+            _m41b(mod, option(OptionType.ATTACK, attack_id=102), obs), fc)
+        assert np.array_equal(
+            _m41b(mod, option(OptionType.ATTACK, attack_id=105), obs), ff)
+    assert fc[8 + int(FIGHTING)] == pytest.approx(1 / 3.0)
+    assert fc[8 + 0] == pytest.approx(1 / 3.0)           # the colorless slot
+    assert ff[8 + int(FIGHTING)] == pytest.approx(2 / 3.0)
+    assert not np.array_equal(fc[8:20], ff[8:20])
+
+
+def test_m41b_matchup_flags_fire_both_directions_and_per_menu():
+    """Card 2 resists FIGHTING (card 1's type); card 4 is PSYCHIC, which
+    card 1 is weak to. Identical for every option in the menu — the § 1c
+    contract these columns are documented under."""
+    vs_water = observation(me=player(active=pokemon(1)),
+                           opponent=player(active=pokemon(2)))
+    vs_psychic = observation(me=player(active=pokemon(1)),
+                             opponent=player(active=pokemon(4)))
+    for mod in (old, new):
+        for opt in (option(OptionType.END), option(OptionType.RETREAT)):
+            assert _m41b(mod, opt, vs_water)[20:24].tolist() == [0, 1, 0, 0]
+            assert _m41b(mod, opt, vs_psychic)[20:24].tolist() == [0, 0, 1, 0]
+    bare = observation(me=player(), opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        assert not _m41b(mod, option(OptionType.END), bare)[20:24].any()
+
+
+def test_m41b_econ_slots(monkeypatch):
+    """Hand and bench counts, retreat cost + payable. tests/fake_cg cards
+    carry NO retreatCost, so the cost slot reads 0 and payable reads 1 unless
+    the table is patched — pinned here so nobody assumes the column is
+    populated under the fake engine (the has_ability precedent, plan § 2)."""
+    import rl.combat
+    import tcg.library
+    me = player(active=pokemon(1, energies=[FIGHTING]),
+                bench=[pokemon(3), pokemon(5)],
+                hand=[hand_card(6), hand_card(7), hand_card(2)])
+    obs = observation(me=me, opponent=player(active=pokemon(2)))
+    for mod in (old, new):
+        block = _m41b(mod, option(OptionType.END), obs)
+        assert block[24] == 0.0 and block[25] == 1.0     # fake_cg: no cost
+        assert block[26] == pytest.approx(3 / 15.0)
+        assert block[27] == pytest.approx(2 / 5.0)
+    monkeypatch.setitem(rl.combat._RETREAT, 1, 2)
+    monkeypatch.setitem(tcg.library.RETREAT_COSTS, 1, 2)
+    for mod in (old, new):
+        block = _m41b(mod, option(OptionType.END), obs)
+        assert block[24] == pytest.approx(2 / 4.0)
+        assert block[25] == 0.0                          # one F < cost 2

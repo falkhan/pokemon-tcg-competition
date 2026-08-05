@@ -8,8 +8,8 @@ whole 1267-card pool and are readable without the engine, unlike `rl.combat`'s
 """
 import pytest
 
-from rl.scaling import (NOMINAL_UNITS, SCALING_ATTACKS, effective_damage,
-                        is_scaling, nominal_damage)
+from rl.scaling import (CURATED_ATTACKS, NOMINAL_UNITS, SCALING_ATTACKS,
+                        effective_damage, is_scaling, nominal_damage)
 from tcg.cardpool import attacks_by_card, cards
 
 
@@ -39,8 +39,17 @@ _PRINTED = {a["attackId"]: a["damage"]
 
 # --- the table points where it says it does --------------------------------
 
-def test_the_table_covers_exactly_the_documented_entries():
-    assert set(SCALING_ATTACKS) == set(EXPECTED_OWNER)
+def test_the_curated_entries_are_exactly_the_documented_ones():
+    """M42: this used to assert on SCALING_ATTACKS, which is now the MERGED
+    table (curated + text-derived, 63 entries against the real pool). Under
+    conftest's stub the derived half is empty, so the old assertion still
+    passed while being false in production — it was pinning the stub, not the
+    table. It now pins what it always meant: the hand-curated set.
+    `tests/test_scaling_derive.py` covers the merged table against the real
+    pool, in a subprocess."""
+    assert set(CURATED_ATTACKS) == set(EXPECTED_OWNER)
+    for aid, entry in CURATED_ATTACKS.items():
+        assert SCALING_ATTACKS[aid] == entry      # curated always wins
 
 
 @pytest.mark.parametrize("aid,name", sorted(EXPECTED_OWNER.items()))
@@ -65,8 +74,13 @@ def test_curated_attacks_really_do_scale():
 
 
 def test_modes_are_all_known():
-    valid = {"flat", "hand", "opp_nrg", "my_nrg", "both_nrg", "my_bench",
-             "bench_only", "team_nrg"}
+    # M42 added seven derivable modes. The list stays explicit rather than
+    # reading NOMINAL_UNITS, so adding a mode to one place and forgetting the
+    # other still fails here.
+    valid = {"flat", "hand", "opp_hand", "opp_nrg", "my_nrg", "both_nrg",
+             "my_bench", "bench_only", "opp_bench", "all_bench", "team_nrg",
+             "dmg_counters_self", "dmg_counters_opp", "prizes_taken_us",
+             "prizes_taken_opp"}
     for aid, (mode, _per, _base) in SCALING_ATTACKS.items():
         assert mode in valid, f"attack {aid} has unknown mode {mode!r}"
 

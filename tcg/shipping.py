@@ -19,6 +19,7 @@ Two agent kinds:
       pilot module we test — no drift-prone hand-copy). See docs/M6.md.
 """
 import argparse
+import ast
 import importlib.util
 import os
 import shutil
@@ -155,6 +156,103 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
     for name in names:
         shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
     np.save(str(rl_pkg / "card_features.npy"), FEAT)
+
+    # M41b § II.3e: the export gates ITSELF. `ship_verify` Tier-1 was a script
+    # someone had to remember to run, and M41 is what that costs — an export
+    # ran mid-edit and shipped a half-finished encoder, caught by a QC sweep
+    # that could easily have passed. A guard that travels with the dangerous
+    # action cannot be skipped by forgetting.
+    failures = verify_bundle(deck=deck)
+    if failures:
+        raise BundleError(
+            "export REFUSED to leave a shippable bundle:\n  - "
+            + "\n  - ".join(failures)
+            + "\n\nsubmission/ is now inconsistent; fix the cause and re-export."
+        )
+
+
+class BundleError(RuntimeError):
+    """A bundle invariant failed. Raised by `export`, never caught by it."""
+
+
+#: Kaggle's runtime has neither, and a module-level import of either on the
+#: shipped path is an immediate crash at agent start.
+BANNED_BUNDLE_IMPORTS = frozenset({"torch", "polars"})
+
+
+def verify_bundle(deck: str | None = None,
+                  base: Path = SUBMISSION) -> list[str]:
+    """The self-gating subset of `ship_verify` Tier-1: every invariant that is
+    checkable from the bundle ALONE, with no gate arguments.
+
+    Returns a list of human-readable failures ([] = clean). Deliberately not
+    the whole Tier-1: the corpus/serve-parity checks need the training shards
+    and stay in `scripts/ship_verify.py`, which the pre-ship battery runs.
+    What is here is exactly what has broken in practice — twin drift (M41),
+    a stale or missing artifact, and a deck that is not the deck.
+    """
+    fails: list[str] = []
+    rl_pkg = base / "rl"
+
+    # 1. twin parity: the bundled encoder MUST be the repo's, byte for byte.
+    for path in sorted(rl_pkg.glob("*.py")):
+        src = ROOT / "rl" / path.name
+        if not src.exists():
+            fails.append(f"submission/rl/{path.name} has no source in rl/")
+        elif path.read_bytes() != src.read_bytes():
+            fails.append(f"submission/rl/{path.name} differs from rl/{path.name}"
+                         " — the export ran against edited sources")
+
+    # 2. the artifacts the pilot cannot start without
+    for required in ("policy_weights.npz", "card_features.npy", "deck.csv",
+                     "main.py"):
+        if not (base / required).exists():
+            fails.append(f"missing bundle artifact: {required}")
+
+    # 3. the deck. Size is an invariant of ANY legal bundle, so it is checked
+    #    whether or not the caller named a deck; identity needs the name (the
+    #    DEFAULT_DECK fossil, §16.1, is why identity is worth checking at all).
+    if (base / "deck.csv").exists():
+        lines = [ln for ln in (base / "deck.csv").read_text().splitlines()
+                 if ln.strip()]
+        if len(lines) != 60:
+            fails.append(f"bundle deck has {len(lines)} cards, not 60")
+        if deck is not None:
+            try:
+                src_deck = deck_source(deck)
+            except Exception as exc:               # noqa: BLE001
+                fails.append(f"deck source {deck!r} did not resolve: {exc}")
+            else:
+                if src_deck.read_bytes() != (base / "deck.csv").read_bytes():
+                    fails.append(f"bundle deck.csv is not decks/{deck}")
+
+    # 4. bundle purity: nothing on the shipped path may import torch/polars
+    #    UNCONDITIONALLY. Guarded imports are the established pattern and are
+    #    correct — rl/encoders.py does `if _PARQUET.exists(): import polars`,
+    #    and the bundle ships card_features.npy precisely so that branch never
+    #    runs on Kaggle. A substring search flags that as a violation and would
+    #    block every export forever; only a MODULE-LEVEL import is the defect,
+    #    so the test is the ast, not the text. (Found by this check's own first
+    #    draft crying wolf on a live bundle.)
+    for path in sorted(rl_pkg.glob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except SyntaxError as exc:
+            fails.append(f"submission/rl/{path.name} does not parse: {exc}")
+            continue
+        for node in tree.body:                     # module level only
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            for name in names:
+                root = name.split(".")[0]
+                if root in BANNED_BUNDLE_IMPORTS:
+                    fails.append(
+                        f"submission/rl/{path.name}:{node.lineno} imports "
+                        f"{root!r} unconditionally — Kaggle has neither")
+    return fails
 
 
 # ---------------------------------------------------------------------------

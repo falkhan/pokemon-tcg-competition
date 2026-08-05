@@ -1,0 +1,44 @@
+{
+  "arm": "model-c-pkg-de:checkpoints/m39_retain_b.pt:decks/alakazam_v2_h4.csv",
+  "opp": "model:checkpoints/m39_bc_grim.pt:grim_live",
+  "games": 20,
+  "counters": {
+    "prompts": 1377,
+    "fetch_prompts": 360,
+    "main_prompts": 852,
+    "dead_basis_fetch.situation": 52,
+    "dead_basis_fetch.offered": 26,
+    "retreat_stranded.situation": 59,
+    "over_attach.situation": 309,
+    "over_attach.offered": 309,
+    "retreat_stranded.offered": 37,
+    "hand_scaler_blind.situation": 413,
+    "hand_scaler_blind.offered": 319,
+    "hand_scaler_blind.chose_bad": 319,
+    "hand_scaler_blind.attacked_anyway": 90,
+    "dead_basis_fetch.chose_bad": 7,
+    "dead_basis_fetch.in_KEEP": 7,
+    "stadium_ignored.situation": 26,
+    "stadium_ignored.offered": 12,
+    "dead_basis_fetch.strict_situation": 2,
+    "over_attach.chose_bad": 13,
+    "over_attach.damage_forgone": 200,
+    "stadium_ignored.chose_bad": 4
+  },
+  "detail": {
+    "over_attach": {
+      "Alakazam": 13
+    },
+    "hand_scaler_blind": {
+      "Alakazam": 319
+    },
+    "retreat_stranded": {},
+    "dead_basis_fetch": {
+      "Kadabra [KEEP]": 7,
+      "Alakazam [KEEP]": 2
+    },
+    "stadium_ignored": {
+      "Spikemuth Gym": 4
+    }
+  }
+}

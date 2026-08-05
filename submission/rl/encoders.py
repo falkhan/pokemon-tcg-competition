@@ -44,6 +44,25 @@ N_STATUS = 5         # poisoned/burned/asleep/paralyzed/confused
 
 BASIC_FIGHTING_ENERGY = 6  # card id; teacher's Mega Brave scales on discarded copies
 
+# M42 card FACTS for the perception block. Built from cg.api rather than FEAT
+# because the relations we need are by NAME, never by id: `evolves_from_id`
+# points at ONE printing and real decks run others (decks/lucario.csv runs the
+# off-printing Riolu). The `getattr` defaults follow rl/generic_pilot.py:20 —
+# tests/fake_cg predates these fields. Bundle-safe: cg.api is the engine, which
+# the submission always has (the rl/plan.py:29 precedent).
+_CARD_NAME: dict = {}
+_EVOLVES_FROM_NAME: dict = {}
+_IS_BASIC_CARD: dict = {}
+try:
+    from cg.api import all_card_data as _all_card_data
+
+    for _c in _all_card_data():
+        _CARD_NAME[_c.cardId] = getattr(_c, "name", None)
+        _EVOLVES_FROM_NAME[_c.cardId] = getattr(_c, "evolvesFrom", None)
+        _IS_BASIC_CARD[_c.cardId] = bool(getattr(_c, "basic", False))
+except Exception:      # noqa: BLE001 — encoders must import without the engine
+    pass               # (notebooks, feature-matrix builds); the block reads 0
+
 # NOTE: a per-card-id "revealed opponent cards" feature was tried and reverted — a probe
 # showed the opponent archetype is ALREADY ~98% identifiable from the pooled features below,
 # so it was redundant and only added overfitting. See docs/DECISIONS.md 2026-07-08.
@@ -251,7 +270,13 @@ _OT_RETREAT = 12     # OptionType.RETREAT
 _OT_ATTACK = 13      # OptionType.ATTACK
 _OT_END = 14         # OptionType.END
 _OT_ABILITY = 10     # OptionType.ABILITY
+_OT_CARD = 3         # OptionType.CARD   (M42: the search/promote submenu)
+_OT_TOOL_CARD = 4    # OptionType.TOOL_CARD  (M41b: board-object types)
+_OT_ENERGY = 6       # OptionType.ENERGY
+_OT_EVOLVE = 9       # OptionType.EVOLVE
 _AREA_HAND = 2       # AreaType.HAND
+_AREA_ACTIVE = 4     # AreaType.ACTIVE
+_AREA_BENCH = 5      # AreaType.BENCH
 
 # --- M27 play-precondition block (appended; the [:OPTION_V3_DIM] slice stays
 # byte-identical, so pinned OPTION_V3_DIM checkpoints consume the same numbers
@@ -310,6 +335,85 @@ DECK_LOW_AT = 15.0   # remaining-deck count at which "late game" reaches full we
 N_OPTION_ENERGY = 5
 OPTION_M41_DIM = OPTION_M28_DIM + N_OPTION_ENERGY
 MARGINAL_DAMAGE_SCALE = 60.0   # a big per-energy step; 30 is the modal one
+
+# --- M42 -------------------------------------------------------------------
+# The M41 block answered "is more energy on this target dead?". This one
+# answers the three questions the M42 probe measured the NET getting wrong on
+# the Alakazam ship while the rule pilot, on the identical deck and opponent,
+# got them right (`docs/M42.md`, 2026-08-04):
+#
+#   over_attach        net  9.8% (29/297)   rule pilot 0.0%   440 damage forgone
+#   dead_basis_fetch   net 12.1% ( 4/33)    rule pilot 0.0%
+#   stadium_ignored    net 50%   ( 5/10)    rule pilot 10%
+#
+# The heuristics already encode all three. The net inherits none of them,
+# because nothing in its inputs carries them — the same conclusion M41 reached
+# from the corpus side. These are the missing inputs, and they are all
+# option x state interactions, which the M28 block's own comment calls
+# expensive for this two-tower net to form and cheap for us to hand over.
+#
+# ATTACK 0-4, ATTACH 5, CARD 6-8, PLAY 9. Every slot is 0 on option types it
+# does not describe, so the type one-hot at columns 0-16 disambiguates.
+N_OPTION_PERCEPT = 10
+OPTION_M42_DIM = OPTION_M41_DIM + N_OPTION_PERCEPT
+EFFECTIVE_DAMAGE_SCALE = 300.0
+HAND_COST_SCALE = 40.0         # 20/card is our own case; 40 leaves headroom
+
+# --- M41b ------------------------------------------------------------------
+# The deck-agnostic gaps M42's review MEASURED (docs/M41b-plan.md):
+#
+#   879 real aliased option pairs across 407 of 5,319 menus — every one an
+#   option that carries its subject's card identity but never its LIVE state
+#   or board slot (CARD 415, ABILITY 192, ATTACH 169, ENERGY 57, EVOLVE 45,
+#   TOOL_CARD 1). The board block is the fix, and the aliasing probe keyed on
+#   this width must read real::* == 0 or a slot below is specified wrong.
+#
+#   1,069 of 1,556 attacks (69%) have a TYPED cost the encoder collapsed to
+#   its size — 52 distinct 3-cost tuples all encoded 0.600. The cost block
+#   hands over the histogram, the exact colorless-aware deficit, and the
+#   affordability boolean (`_can_afford` stays the boolean authority).
+#
+#   Type matchup and retreat/hand economics existed nowhere a v3 net can see
+#   (hand size is v4 state index 1625; retreat cost is read by NO decision
+#   feature). Both are per-menu constants living in the option block for
+#   slice safety — a softmax eats any additive contribution, so they can
+#   matter ONLY through score-head interactions; a linear probe reading them
+#   "dead" within one menu is measuring the wrong thing (plan § 1c).
+#
+# Layout, relative to OPTION_M42_DIM: board 0-7, cost 8-19, matchup 20-23,
+# econ 24-27. Board slots fill for the six option types whose subject sits on
+# a board; cost for ATTACK; matchup/econ for every option. Every slot is 0
+# on types it does not describe (test-pinned, the M42 pattern).
+#
+# Amendment (Piotr, 2026-08-04): the plan's first spec read only OUR board,
+# on the premise that foreign-board options do not occur — the kill probe
+# falsified it (259 residual real pairs, ALL foreign: DAMAGE/DAMAGE_COUNTER
+# spread-target and gust-SWITCH submenus address the OPPONENT's Pokemon via
+# area+playerIndex). The subject is now resolved on whichever board
+# playerIndex names, with `is_opponents` as slot 7 — ownership stays explicit,
+# never silently misread (the :207 trap this block must not inherit).
+N_OPTION_BOARD = 8     # has_object, hp frac, damage/100, energies/5, tools/2,
+                       # is_active, bench_index/4, is_opponents
+N_OPTION_COST = 12     # cost-by-type histogram /3. Unclipped: per-type
+                       # multiplicity reaches 5 only on all-colorless costs
+                       # (measured 2026-08-04: {1:1459, 2:493, 3:139, 4:18,
+                       # 5:2}), and a clip would alias 3-colorless against
+                       # 5-colorless. The plan's deficit + can_afford slots
+                       # were CENSUS-KILLED before any retrain (Piotr,
+                       # 2026-08-04): the engine never offers an unaffordable
+                       # ATTACK — deficit read 0 and afford read 1 on all
+                       # 1,272 corpus ATTACK options. Do not re-add them as
+                       # option features; affordability lives upstream of the
+                       # menu, by rule.
+N_OPTION_MATCHUP = 4   # opp weak/resists my type, my active weak/resists theirs
+N_OPTION_ECON = 4      # retreat cost /4, retreat payable, hand /15, bench /5
+N_OPTION_M41B = N_OPTION_BOARD + N_OPTION_COST + N_OPTION_MATCHUP + N_OPTION_ECON
+OPTION_M41B_DIM = OPTION_M42_DIM + N_OPTION_M41B
+# The six option types whose subject is a Pokémon on OUR board, per the plan's
+# replay measurement: ATTACH/EVOLVE/TOOL_CARD address it via inPlay*, the rest
+# via area/index. _option_board_object resolves either.
+_M41B_BOARD_TYPES = frozenset((_OT_CARD, _OT_TOOL_CARD, _OT_ENERGY,
+                               _OT_ATTACH, _OT_EVOLVE, _OT_ABILITY))
 
 
 def _race_features(state) -> np.ndarray:
@@ -518,6 +622,171 @@ def _attach_energy_ceiling(opt, obs) -> np.ndarray:
     return v
 
 
+def _board_units(obs) -> dict:
+    """The live counts `rl.scaling.effective_damage` needs to resolve a mode.
+
+    `_marginal_energy_damage` deliberately passes NONE of these — it asks an
+    energy-only question and must not let a hand-mode attack invent damage. The
+    M42 block asks the opposite question, so it supplies all of them.
+    """
+    st = obs.current
+    me = st.players[st.yourIndex]
+    opp = st.players[1 - st.yourIndex]
+    mine = [p for p in list(me.active or []) + list(me.bench or []) if p is not None]
+    return {
+        "hand_size": len(me.hand or ()),
+        "bench_size": len([p for p in (me.bench or ()) if p is not None]),
+        "team_energy": sum(len(p.energies or ()) for p in mine),
+        "opp_bench_size": len([p for p in (opp.bench or ()) if p is not None]),
+        "opp_hand_size": opp.handCount or 0,
+        "prizes_taken_us": max(0, 6 - len(opp.prize or ())),
+        "prizes_taken_opp": max(0, 6 - len(me.prize or ())),
+    }
+
+
+def _percept_attack(opt, obs) -> np.ndarray:
+    """M42 slots 0-4 for an ATTACK option: what this attack REALLY does here.
+
+    `_attack_extra` (columns 90-92) reads the PRINTED number, so on Alakazam's
+    `Powerful Hand` it is 0 and so is every feature downstream of it. The probe
+    measured that at 330 of 330 prompts where the engine offered the attack and
+    our own damage model scored the attacker at zero.
+
+    0. live effective damage, scaling resolved against the real board
+    1. how much the printed number UNDERSTATES it — derivable from slot 0 and
+       column 90, but handed over rather than left as an interaction
+    2. this attack scales on HAND SIZE specifically, which is the mode that
+       makes spending a card a damage decision
+    3. it scales on anything at all
+    4. it reaches a KO right now, judged on effective rather than printed damage
+    """
+    v = np.zeros(5, dtype=np.float32)
+    aid = getattr(opt, "attackId", None)
+    if aid is None:
+        return v
+    from rl.combat import _ATK, _CARD
+    from rl.scaling import SCALING_ATTACKS, effective_damage
+    st = obs.current
+    me = st.players[st.yourIndex]
+    opp = st.players[1 - st.yourIndex]
+    attacker = me.active[0] if me.active and me.active[0] is not None else None
+    defender = opp.active[0] if opp.active and opp.active[0] is not None else None
+    if attacker is None or defender is None or aid not in _ATK:
+        return v
+    printed = _ATK[aid][0]
+    dmg = effective_damage(aid, attacker, defender, **_board_units(obs))
+    # weakness / resistance, the same way _attack_extra applies them
+    atk_type = _CARD.get(attacker.id, (None, None, 0, (), 1))[2]
+    weak, res = _CARD.get(defender.id, (None, None, 0, (), 1))[:2]
+    if weak is not None and int(weak) == atk_type:
+        dmg *= 2
+    elif res is not None and int(res) == atk_type:
+        dmg = max(0, dmg - 30)
+    entry = SCALING_ATTACKS.get(aid)
+    v[0] = min(dmg, EFFECTIVE_DAMAGE_SCALE) / EFFECTIVE_DAMAGE_SCALE
+    v[1] = min(max(0, dmg - printed),
+               EFFECTIVE_DAMAGE_SCALE) / EFFECTIVE_DAMAGE_SCALE
+    v[2] = float(entry is not None and entry[0] == "hand")
+    v[3] = float(entry is not None)
+    v[4] = float(dmg >= (defender.hp or 0) > 0)
+    return v
+
+
+def _percept_attach_hand_cost(obs) -> float:
+    """M42 slot 5: damage this attach COSTS, when our attacker's damage formula
+    is its own hand size.
+
+    Piotr's replay observation as a number. The energy card leaves the hand, so
+    a hand-scaler loses exactly `per_unit` on the same turn: the probe measured
+    440 damage forgone across 29 surplus attaches on the Alakazam ship. Nothing
+    in the M41 block can say this — slot 4 there asks what one more energy
+    BUYS, and for a hand-scaler the answer is 0 while the true marginal value
+    is negative.
+    """
+    from rl.combat import _CARD
+    from rl.scaling import SCALING_ATTACKS
+    st = obs.current
+    me = st.players[st.yourIndex]
+    active = me.active[0] if me.active and me.active[0] is not None else None
+    if active is None:
+        return 0.0
+    per = 0
+    for aid in _CARD.get(active.id, (None, None, 0, (), 1))[3] or ():
+        entry = SCALING_ATTACKS.get(aid)
+        if entry is not None and entry[0] == "hand":
+            per = max(per, entry[1])
+    return min(per, HAND_COST_SCALE) / HAND_COST_SCALE
+
+
+def _percept_card(opt, obs) -> np.ndarray:
+    """M42 slots 6-8 for a CARD option — the search submenu, where the shipped
+    agent has NO coverage of any kind: `apply_play_overrides` returns early on
+    every non-MAIN context, so these prompts are raw argmax.
+
+    6. the option is an evolution and its basis IS on our board or in hand
+    7. ...and it is NOT — the dead fetch. Two slots rather than one signed
+       feature because "not an evolution" and "a dead evolution" must not share
+       a value with "a live one".
+    8. how many basics we can actually put down: benched Pokemon plus basics in
+       hand, which is Piotr's exact trigger at 0.
+
+    A Pokemon ALREADY IN PLAY is never dead — a benched Kadabra does not need
+    an Abra. Measured 2026-08-04: without that guard 14 of 19 "dead evolutions"
+    were promotions of benched bodies, pure false positives.
+    """
+    v = np.zeros(3, dtype=np.float32)
+    st = obs.current
+    me = st.players[st.yourIndex]
+    bench = [p for p in (me.bench or ()) if p is not None]
+    hand = [c for c in (me.hand or ()) if c is not None]
+    v[2] = min(len(bench) + sum(1 for c in hand
+                                if _IS_BASIC_CARD.get(c.id, False)), 6) / 6.0
+    if opt.index is None:
+        return v
+    area = int(opt.area) if opt.area is not None else _AREA_HAND
+    if area in (_AREA_ACTIVE, _AREA_BENCH):
+        return v                                  # already in play: never dead
+    player = opt.playerIndex if opt.playerIndex is not None else st.yourIndex
+    cid = _card_id_at(obs, area, opt.index, player)
+    basis = _EVOLVES_FROM_NAME.get(cid) if cid else None
+    if basis is None:
+        return v
+    names = {_CARD_NAME.get(p.id) for p in ([*(me.active or []), *bench])
+             if p is not None} | {_CARD_NAME.get(c.id) for c in hand}
+    v[0] = float(basis in names)
+    v[1] = float(basis not in names)
+    return v
+
+
+def _percept_stadium(card_id, obs) -> float:
+    """M42 slot 9: this PLAY would displace the OPPONENT'S stadium.
+
+    Ownership is readable — `cg.api.Card` carries `playerIndex`, verified
+    2026-08-04 against 6 of our own stadium plays with 0 wrong-seat
+    (`rl/determinize.py:56` calls it ambiguous; it is not, for this read). The
+    M27 precondition at column 95 only says "is a stadium AND none is in play",
+    which is exactly 0 in the situation that matters.
+
+    A same-name stadium cannot legally be played over itself (0 same-id offers
+    in 20 measured chances), so an identity match reads 0 rather than 1.
+    """
+    # `_play_kind()`, not a CardType int: the comment on that helper records
+    # that the fake engine numbers CardType differently and a silent int
+    # collision would encode the wrong precondition. Same reason here, and it
+    # keeps this in step with `_play_precondition`'s STADIUM branch.
+    if not card_id or _play_kind().get(int(card_id)) != "STADIUM":
+        return 0.0
+    st = obs.current
+    stadium = st.stadium or ()
+    if not stadium:
+        return 0.0
+    out = stadium[0]
+    owner = getattr(out, "playerIndex", None)
+    if owner is None or int(owner) == int(st.yourIndex):
+        return 0.0
+    return float(getattr(out, "id", None) != card_id)
+
+
 def _marginal_energy_damage(poke, opp_active) -> int:
     """Extra damage this Pokémon's best attack gains from ONE more of its own
     energy, on the CURRENT board. 0 for a flat attacker.
@@ -681,6 +950,117 @@ def _play_precondition(card_id, obs) -> np.ndarray:
     return v
 
 
+def _option_board_object(opt, obs):
+    """(pokemon, is_active, bench_index, is_opponents) for whichever board
+    Pokémon the option addresses, or (None, False, 0, False). inPlayArea wins
+    when both field pairs are set — for ATTACH/EVOLVE, area/index is the acted
+    card in hand, not the board object. Ownership is resolved EXPLICITLY on
+    the board playerIndex names (spread-damage and gust submenus address the
+    OPPONENT's Pokemon — measured 2026-08-04, amendment above), so the latent
+    :207 `inPlayArea`-vs-`playerIndex` misresolution is not inherited: a
+    foreign index is read on the foreign board, never silently on ours."""
+    st = obs.current
+    if opt.inPlayArea is not None and opt.inPlayIndex is not None:
+        # inPlay* carries no owner field; measured foreign count here is 0.
+        area, index, owner = int(opt.inPlayArea), opt.inPlayIndex, int(st.yourIndex)
+    elif opt.area is not None and opt.index is not None:
+        area, index = int(opt.area), opt.index
+        owner = int(opt.playerIndex) if opt.playerIndex is not None \
+            else int(st.yourIndex)
+    else:
+        return None, False, 0, False
+    board = st.players[owner]
+    zone = {_AREA_ACTIVE: board.active, _AREA_BENCH: board.bench}.get(area)
+    if zone is None or index >= len(zone):
+        return None, False, 0, False
+    poke = zone[index]
+    if poke is None:
+        return None, False, 0, False
+    is_active = area == _AREA_ACTIVE
+    return (poke, is_active, (0 if is_active else index),
+            owner != int(st.yourIndex))
+
+
+def _percept_board(opt, obs) -> np.ndarray:
+    """M41b slots 0-7: the subject's LIVE state — the fix for all 879 real
+    aliased pairs, whose shared cause is an option carrying card identity but
+    never hp/energies/tools or which board slot. bench_index is not needed to
+    break the aliasing (live state does that); it is the join to the per-slot
+    state block at 173 + slot*87 that the net currently cannot make.
+    is_opponents marks a foreign subject (spread-damage / gust submenus) so
+    "damage their bench 2" can never read as "act on my bench 2"."""
+    v = np.zeros(N_OPTION_BOARD, dtype=np.float32)
+    poke, is_active, bench_index, is_opponents = _option_board_object(opt, obs)
+    if poke is None:
+        return v
+    max_hp = max(1, poke.maxHp or 1)
+    v[0] = 1.0
+    v[1] = (poke.hp or 0) / max_hp
+    v[2] = min(max(0, max_hp - (poke.hp or 0)), 100) / 100.0
+    v[3] = min(len(poke.energies or ()), 5) / 5.0
+    v[4] = min(len(getattr(poke, "tools", ()) or ()), 2) / 2.0
+    v[5] = float(is_active)
+    v[6] = bench_index / 4.0
+    v[7] = float(is_opponents)
+    return v
+
+
+def _percept_cost(opt, obs) -> np.ndarray:
+    """M41b slots 8-19 for an ATTACK option: the TYPED cost the encoder only
+    ever saw the size of (1,069 of 1,556 attacks; 52 distinct 3-cost tuples
+    all read 0.600). Histogram by EnergyType. The plan's deficit/affordability
+    slots died in the census — see the N_OPTION_COST comment."""
+    v = np.zeros(N_OPTION_COST, dtype=np.float32)
+    aid = getattr(opt, "attackId", None)
+    if aid is None or aid not in _ATK:
+        return v
+    for c in _ATK[aid][1]:
+        v[int(c)] += 1.0 / 3.0
+    return v
+
+
+def _percept_matchup(obs) -> np.ndarray:
+    """M41b slots 20-23: weakness/resistance between the two ACTIVES, both
+    directions. Identical for every option in a menu (a state feature living
+    in the option block for slice safety — plan § 1c records why, and why a
+    within-menu read of these columns is meaningless)."""
+    v = np.zeros(N_OPTION_MATCHUP, dtype=np.float32)
+    st = obs.current
+    me = st.players[st.yourIndex]
+    opp = st.players[1 - st.yourIndex]
+    mine = me.active[0] if me.active and me.active[0] is not None else None
+    theirs = opp.active[0] if opp.active and opp.active[0] is not None else None
+    if mine is None or theirs is None:
+        return v
+    my_weak, my_res, my_type = _CARD.get(mine.id, (None, None, 0, (), 1))[:3]
+    op_weak, op_res, op_type = _CARD.get(theirs.id, (None, None, 0, (), 1))[:3]
+    v[0] = float(op_weak is not None and int(op_weak) == my_type)
+    v[1] = float(op_res is not None and int(op_res) == my_type)
+    v[2] = float(my_weak is not None and int(my_weak) == op_type)
+    v[3] = float(my_res is not None and int(my_res) == op_type)
+    return v
+
+
+def _percept_econ(obs) -> np.ndarray:
+    """M41b slots 24-27: retreat + hand economics. Retreat cost is in FEAT and
+    `rl/combat._RETREAT` but read by NO decision feature today; hand size
+    exists only as v4 state index 1625 (invisible to every v3 net); bench
+    count has no scalar anywhere. Per-menu constants, same § 1c contract as
+    the matchup block."""
+    from rl.combat import _RETREAT
+    v = np.zeros(N_OPTION_ECON, dtype=np.float32)
+    st = obs.current
+    me = st.players[st.yourIndex]
+    active = me.active[0] if me.active and me.active[0] is not None else None
+    if active is not None:
+        retreat_cost = _RETREAT.get(active.id, 0)
+        v[0] = min(retreat_cost, 4) / 4.0
+        v[1] = float(len(active.energies or ()) >= retreat_cost)
+    v[2] = min(len(me.hand or ()), 15) / 15.0
+    v[3] = len([p for p in (me.bench or ()) if p is not None]) / 5.0
+    return v
+
+
 def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
     """(numeric OPTION_V3_DIM f32, [acted_id, target_id] i32, 0 = none).
 
@@ -698,8 +1078,19 @@ def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
 
     M41: appends N_OPTION_ENERGY energy-ceiling slots for ATTACH options; the
     `[:OPTION_M28_DIM]` prefix stays byte-identical, so every live bundle
-    truncates the new columns away and serves exactly what it served before."""
-    num = np.zeros(OPTION_M41_DIM, dtype=np.float32)
+    truncates the new columns away and serves exactly what it served before.
+
+    M42: appends N_OPTION_PERCEPT slots — effective damage for ATTACK, the
+    hand-size cost of an ATTACH, evolution-basis availability for CARD, and
+    stadium displacement for PLAY. Same contract: `[:OPTION_M41_DIM]` is
+    byte-identical, proven over 23,409 real options by
+    `scripts/m42_column_safety.py`.
+
+    M41b: appends N_OPTION_M41B slots — the subject's live board state (the
+    879-real-aliased-pairs fix), the typed attack cost, active-vs-active type
+    matchup, and retreat/hand economics. Same contract: `[:OPTION_M42_DIM]`
+    byte-identical, sixth use of append-and-slice."""
+    num = np.zeros(OPTION_M41B_DIM, dtype=np.float32)
     num[:OPTION_DIM] = encode_option(opt, obs)
     your_index = obs.current.yourIndex
     card_id = opt.cardId
@@ -717,17 +1108,30 @@ def encode_option_v2(opt, obs) -> tuple[np.ndarray, np.ndarray]:
         target_id = _card_id_at(obs, opt.inPlayArea, opt.inPlayIndex, your_index)
     if int(opt.type) == _OT_ATTACK:
         num[OPTION_DIM:OPTION_DIM + 3] = _attack_extra(opt.attackId, obs)
+        num[OPTION_M41_DIM:OPTION_M41_DIM + 5] = _percept_attack(opt, obs)
     elif int(opt.type) == _OT_ATTACH and opt.inPlayArea is not None:
         num[OPTION_DIM:OPTION_DIM + 3] = _attach_extra(opt, obs)
         num[OPTION_M28_DIM:OPTION_M41_DIM] = _attach_energy_ceiling(opt, obs)
+        num[OPTION_M41_DIM + 5] = _percept_attach_hand_cost(obs)
     elif int(opt.type) == _OT_RETREAT:
         num[OPTION_DIM:OPTION_DIM + 3] = _retreat_extra(obs)
     elif getattr(opt, "number", None) is not None:
         num[OPTION_DIM + 3] = min(float(opt.number), 10.0) / 10.0
+    if int(opt.type) == _OT_CARD:
+        num[OPTION_M41_DIM + 6:OPTION_M41_DIM + 9] = _percept_card(opt, obs)
     if int(opt.type) == _OT_PLAY:
         num[OPTION_V3_DIM:OPTION_M27_DIM] = _play_precondition(card_id, obs)
+        num[OPTION_M41_DIM + 9] = _percept_stadium(card_id, obs)
     # bounded, not open-ended: the M41 energy block now sits after this one
     num[OPTION_M27_DIM:OPTION_M28_DIM] = _phase_interaction(opt, obs)
+    # M41b block — board 0-7 / cost 8-19 / matchup 20-23 / econ 24-27,
+    # relative to OPTION_M42_DIM.
+    if int(opt.type) in _M41B_BOARD_TYPES:
+        num[OPTION_M42_DIM:OPTION_M42_DIM + 8] = _percept_board(opt, obs)
+    if int(opt.type) == _OT_ATTACK:
+        num[OPTION_M42_DIM + 8:OPTION_M42_DIM + 20] = _percept_cost(opt, obs)
+    num[OPTION_M42_DIM + 20:OPTION_M42_DIM + 24] = _percept_matchup(obs)
+    num[OPTION_M42_DIM + 24:OPTION_M42_DIM + 28] = _percept_econ(obs)
     ids = np.array([card_id or 0, target_id or 0], dtype=np.int32)
     return num, ids
 

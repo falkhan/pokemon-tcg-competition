@@ -140,7 +140,11 @@ def _attach_recipient_value(card, me, op_active, scaling: bool = False):
     # claims — the live ep-85607769/86469359 overfeeding at the source).
     board_ids = {p.id for p in (list(me.active or []) + list(me.bench or []))
                  if p is not None}
-    energy_gap = _turns_to_ready(profile, op_active, board_ids)
+    # M42: `scaling` was accepted here and then dropped on this line, so the
+    # recipient ladder still asked the PRINTED-damage question — on a printed-0
+    # attacker _turns_to_ready is UNREACHABLE at every energy count, which is
+    # the same blind spot M41 traced through seven features.
+    energy_gap = _turns_to_ready(profile, op_active, board_ids, scaling)
     if energy_gap == 0:
         return 50                          # ATTACH_RECIPIENT_CHARGED
     quality = min(_attacker_quality(profile.id, scaling), 300)  # ATTACKER_QUALITY_CAP
@@ -182,7 +186,7 @@ def score_option(o, obs, fixes: frozenset = frozenset()):
         return score_attack(o, my_active, op_active, op.bench, scaling=scaling,
                             hand_size=hand_n, bench_size=bench_n,
                             team_energy=team_nrg)
-    if t == OptionType.ATTACH: return score_attach(o, obs, me)
+    if t == OptionType.ATTACH: return score_attach(o, obs, me, fixes)
     if t == OptionType.ABILITY: return 3000
     if t == OptionType.EVOLVE: return 2800
     if t == OptionType.PLAY: return score_play(o, obs, fixes)
@@ -386,8 +390,27 @@ def score_play(o, obs, fixes: frozenset = frozenset()):
     base = 2200 - 200 * max(0, hand - 4)  # taper as the hand grows past ~4
     return max(400, base)
 
-def score_attach(o, obs, me):
+def score_attach(o, obs, me, fixes: frozenset = frozenset()):
+    """M42 `scaling`: the M41 work threaded effective damage through the attack
+    scorer and the card ladders but NOT through here — `score_option` called
+    `score_attach(o, obs, me)` with no fixes at all, so the one path that
+    decides where energy GOES still asked the printed-damage question. On a
+    printed-0 scaler that has two consequences, both measured:
+
+      * tier 2's `_ATK[a][0] > 0` filter finds no damaging attack, so our own
+        win condition is scored 400 as a "non-attacker";
+      * tier 3 is gated on `_turns_to_ready == 0`, which is UNREACHABLE at
+        every energy count, so the anti-over-attach surplus penalty -- the only
+        such cap anywhere in the codebase -- can never fire on the exact card
+        it was needed for.
+
+    OPT-IN, like every other `scaling` consumer. The probe measures the default
+    rule pilot over-attaching 0.0% of the time (`docs/M42.md`), so there is no
+    defect here to justify moving the shipped rules agent or the corpus the net
+    learns from; this makes the `generic-scale` / `solver-scale` arms correct
+    end to end, which is what they were built for."""
     my_index = obs.current.yourIndex
+    scaling = "scaling" in fixes
 
     opponent = obs.current.players[1 - my_index]
     opponent_active_card = opponent.active[0] if opponent.active else None
@@ -419,8 +442,14 @@ def score_attach(o, obs, me):
 
     # 2) Otherwise is target a real attacker that still needs energy?
 
-    damaging = [(_ATK[a][0], len(_ATK[a][1])) for a in _CARD[target_pokemon.id][3]
-                if a in _ATK and _ATK[a][0] > 0
+    def _dmg(aid):
+        if not scaling:
+            return _ATK[aid][0]
+        from rl.scaling import nominal_damage
+        return nominal_damage(aid)       # printed unless the text really scales
+
+    damaging = [(_dmg(a), len(_ATK[a][1])) for a in _CARD[target_pokemon.id][3]
+                if a in _ATK and _dmg(a) > 0
                 and _attack_available(a, my_board_ids)]
 
     if not damaging:
@@ -430,13 +459,25 @@ def score_attach(o, obs, me):
     bonus = min(best_dmg, 300) // 100
 
     if _turns_to_ready(target_pokemon, opponent_active_card,
-                       board_ids=my_board_ids) == 0:
+                       board_ids=my_board_ids, scaling=scaling) == 0:
         # The BEST attack is charged (M7.2b — was the cheapest, which stopped
         # charging a 2-cost 270 attacker after its 1-cost 130 was paid).
         # M19: penalize per SURPLUS energy so the least-fed charged target
         # wins the tier and heavy surplus drops below NON_ATTACKER — the flat
         # 600 kept feeding a 1-cost Solrock 3+ energies live. Constants
         # mirrored from tcg/constants.py — change BOTH.
+        #
+        # M42: turning `scaling` on makes this branch REACHABLE on printed-0
+        # attackers for the first time, which drags in the other half of the
+        # M41 confusion. Teal Mask Ogerpon ex is paid at 3 energy and gains
+        # +30 damage for every further attachment, so "charged" is not
+        # "saturated" and the surplus penalty would punish correct play. That
+        # false positive was killed in `rl/postmortem.py` on 2026-08-03 and the
+        # fix was never carried into the pilot; it is carried now, and only on
+        # the path that can reach it.
+        from rl.combat import scales_on_own_energy
+        if scaling and scales_on_own_energy(target_pokemon.id):
+            return 600 + bonus
         best_cost = min(c for d, c in damaging if d == best_dmg)
         surplus = len(getattr(target_pokemon, "energies", ()) or ()) - best_cost
         return 600 + bonus - 150 * min(max(surplus, 0), 3)

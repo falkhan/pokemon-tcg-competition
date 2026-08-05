@@ -52,17 +52,13 @@ ARMS = {                      # the three Ship A candidates
 CONSERVE = frozenset({rp.PLAY_FIX_CONSERVE})
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--bed", default="wall", choices=sorted(BEDS))
-    ap.add_argument("--arm", default="conserve", choices=sorted(ARMS))
-    ap.add_argument("-n", "--games", type=int, default=40)
-    ap.add_argument("--seed", type=int, default=5)
-    args = ap.parse_args()
-
-    stats = Counter()
-    orig = rp.apply_play_overrides
-
+def make_counting(stats: Counter, orig):
+    """The probe's measurement core, extracted (unchanged) so the golden
+    fixtures in tests/test_probes_mechanism.py can pin it on constructed
+    observations (M41b II.3a). Classifies ONE apply_play_overrides call:
+    count the MAIN prompt, track the deck floor, and isolate a real FIRE by
+    re-running the identical call without the conserve fix — the same diff
+    that defines a fire in the module docstring."""
     def counting(obs, ranked, fixes):
         out = orig(obs, ranked, fixes)
         if obs.select is None or obs.current is None \
@@ -78,8 +74,20 @@ def main() -> int:
             if fixes & CONSERVE and out != orig(obs, ranked, fixes - CONSERVE):
                 stats["conserve_fires"] += 1    # the demote changed the order
         return out
+    return counting
 
-    rp.apply_play_overrides = counting
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bed", default="wall", choices=sorted(BEDS))
+    ap.add_argument("--arm", default="conserve", choices=sorted(ARMS))
+    ap.add_argument("-n", "--games", type=int, default=40)
+    ap.add_argument("--seed", type=int, default=5)
+    args = ap.parse_args()
+
+    stats = Counter()
+    orig = rp.apply_play_overrides
+    rp.apply_play_overrides = make_counting(stats, orig)
     try:
         a = parse_spec(f"{ARMS[args.arm]}:{NET}:decks/alakazam_v2_h4.csv")
         b = parse_spec(BEDS[args.bed])
