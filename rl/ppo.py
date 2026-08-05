@@ -513,6 +513,9 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         _, defect_rate = collect(
             games_per_iter, str(work), workers, decks_file=decks_file,
             pool=pool, race_shaping=race_shaping, shaping=shaping,
+            # M43: the value potential is the FROZEN START's head, never the
+            # moving learner — same anchor the KL term uses.
+            phi_ckpt=(str(CKPT_DIR / start) if shaping == "value" else None),
             defect_penalty=defect_penalty,
             plan_tau=plan_tau, plan_dirichlet=plan_dirichlet,
             plan_ppo=plan_coef > 0, gust_boost=gust_boost,
@@ -584,9 +587,10 @@ if __name__ == "__main__":
                         "(the M2 diffusion signature, seen again in attempt 1)")
     p.add_argument("--race-shaping", type=float, default=0.0,
                    help="potential-based setup-shaping coef for the collector")
-    p.add_argument("--shaping", choices=["race", "dev"], default="race",
-                   help="shaping potential: race delta (M7.4b) or the M8.3 "
-                        "dev potential (race+ready+evo+bench)")
+    p.add_argument("--shaping", choices=["race", "dev", "value"], default="race",
+                   help="shaping potential: race delta (M7.4b), the M8.3 "
+                        "dev potential (race+ready+evo+bench), or the frozen "
+                        "start's own V(s) (M43 — BACKLOG #13(c) step 2)")
     p.add_argument("--eval-every", type=int, default=5,
                    help="iterations between evals (M8.3 decay probes use 2)")
     p.add_argument("--defect-penalty", type=float, default=0.0,
