@@ -1,0 +1,14 @@
+{
+  "name": "m41b_wide_vs_champion",
+  "question": "The question that decides whether this is shippable: does the wide candidate beat the LIVE CHAMPION LINEAGE (cont3) itself, not merely a same-dose control? cont3 is the working lineage after retain_b was retired for a live regression, so this is the comparison a ship decision rests on.",
+  "arm": "model:checkpoints/m41b_wide_prod.pt:alakazam_v2_h4",
+  "control": "model:checkpoints/m38_w9294_cont3.pt:alakazam_v2_h4",
+  "beds": [
+    {"name": "grim", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
+    {"name": "wall", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
+    {"name": "dragapult", "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"}
+  ],
+  "n_per_cell": 3000,
+  "seed": 41,
+  "bars": {"pass": 0.02, "kill": -0.02}
+}
