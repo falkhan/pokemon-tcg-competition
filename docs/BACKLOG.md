@@ -77,6 +77,14 @@ they're picked up.
 
 ## The deck question, RE-OPENED by the leaderboard census (2026-08-03)
 
+**STATUS 2026-08-05: resolved in practice by M41/M41b** — option (b) shipped
+as a second live arm (`m41_ogerpon` on `decks/ogerpon.csv`, sub 55221491,
+re-shipped as 55265105) without abandoning the alakazam line. M41b then
+measured the residual as PILOT strength, not deck strength (ogerpon deck
+0.940 vs grim under a rule pilot, 0.562 under the alakazam-trained wide
+candidate), which is M43 Lane B's target. The analysis below stays as the
+record of the decision's evidence base.
+
 Origin: `notebooks/leaderboard_decks.ipynb` / `scripts/leaderboard_decks.py`,
 first survey of what the top of the ladder actually plays (top 250, 222
 labeled). Full numbers in the M40 diary entry of the same date.
@@ -268,7 +276,11 @@ self-play become the M40 agenda rather than more harvesting.
    a value net — ours is old-lineage prize-phobic (see gen-2 item), so v1
    must use outcome (seat_won) as the advantage proxy.
 2. **Offline best-response via self-play harvest vs the loss-family beds
-   ("manufacture the vs-loss corpus").** Evidence: BC-init + best-response
+   ("manufacture the vs-loss corpus").** **PARTIALLY PICKED UP by M43 as
+   Lane B** (2026-08-05): self-play rows manufactured for the OGERPON
+   corpus gap via `m40_s2_collect`, with the two ingredients the M39 arm
+   lacked — retention mixing and α=0.25 — combined for the first time.
+   Evidence: BC-init + best-response
    RL vs a FIXED opponent took an exploiter from 42%→90% vs ByteRL (arXiv
    2404.16689); adding synthetic self-play data drove the Showdown agent's
    jump from ~58% to 64–80% win rates. Our translation needs NO new infra:
@@ -335,7 +347,12 @@ self-play become the M40 agenda rather than more harvesting.
 6. **Value-net retrain on the harvest corpus** (merge with the existing
    "gen-2 collect + value-net retrain" item, re-scoped by the M38
    post-mortem away from solver-teacher data). Now also the enabler for
-   proper advantages in #1 and #5.
+   proper advantages in #1 and #5. **RESOLVED INTO A MEASUREMENT by M40 E0
+   + M43 Phase 0** (2026-08-05): every BC net already trains a value head
+   (`plan_iter train`'s 0.5·Huber term); E0 is the instrument, and M43's
+   0.3 step runs it on `m41b_wide_prod` with pre-registered consequences
+   (pass → GAE critic + Φ; kill → `m39_retain_b` warm start). A dedicated
+   retrain is only scheduled if both heads fail their consumers.
 7. **Online PPO best-response.** The strongest exploiter evidence (#2's
    ByteRL result) used PPO fine-tuning, and M28 left partial infra
    (`scripts/m28_c1_ppo.sh` — audit its state before writing this off).
@@ -386,7 +403,16 @@ self-play become the M40 agenda rather than more harvesting.
    our collectors train on executed actions), replay buffer + iteration
    loop, population management, and a gate that survives X5.
 
-10. **DISTIL THE SEARCH — the cheap 80% of #9, and the next thing to try.**
+10. ~~**DISTIL THE SEARCH — the cheap 80% of #9, and the next thing to
+   try.**~~ **DEAD — M41b Stage B (2026-08-04).** Both teacher budgets
+   INCONCLUSIVE; the effect is matchup-specific (wall +4.3pp twice-
+   replicated, grim NEGATIVE at both budgets — and grim is where the live
+   loss mass is). Killer arithmetic: at X5's 0.20 retention a +1.06pp
+   teacher edge yields ~0.2pp in the student ⇒ ~1,000,000 games/cell to
+   detect. Sharper reason it died: the solver's edge is substantially the
+   value of features we had already built and never trained on (the M41b
+   width retrain captured that directly). Do not re-run without a
+   qualitatively better teacher. Original entry:
    Collect a corpus whose labels are the **composite's** actions rather than
    the bare net's, and fine-tune on it. That is AZ's inner loop run once:
    no MCTS, no belief states, no engine work. `scripts/m40_s2_collect.py`
@@ -428,8 +454,14 @@ self-play become the M40 agenda rather than more harvesting.
    `score_siblings`/`solve_turn_line(dev=True)` path M12 built).
 
 13. **BC-the-meta -> clone population -> PPO with SHAPED rewards** (Piotr,
-   2026-08-04; the "what if the teacher is weak" lane). Three parts with
-   very different standing — the value of this entry is keeping them apart.
+   2026-08-04; the "what if the teacher is weak" lane). **PART (c) PICKED
+   UP by M43 as Lane A** (2026-08-05, `docs/M43-plan.md`): the
+   falsification order below runs verbatim — A-base (outcome reward,
+   KL-anchored) vs A-phi (`--shaping value`, Φ = the frozen start's V(s),
+   landed in `rl/collector.py`/`rl/ppo.py` with the M43 plan commit);
+   event bonuses stay banned. Parts (a)/(b) stay parked as written. Three
+   parts with very different standing — the value of this entry is keeping
+   them apart.
 
    **(a) BC across meta decks — population construction, NOT a strength
    lever.** As a strength lever it is foreclosed: imitation is exhausted at

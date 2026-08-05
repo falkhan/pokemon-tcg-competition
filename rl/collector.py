@@ -93,6 +93,47 @@ def _dev_potential(obs) -> float:
             + 0.15 * min(bench, 3) / 3.0)
 
 
+def _load_phi_net(phi_ckpt, learner_sd):
+    """M43 Lane A: the value-shaping potential net — the run's FROZEN START
+    checkpoint (Phi must not track the moving learner, or the shaping reward
+    is non-stationary). Phi reuses the learner's encoded tensors, so the
+    checkpoint must share the learner's architecture exactly."""
+    import torch
+    from rl.ppo import _load_model
+    net = _load_model(Path(phi_ckpt))
+    net.eval()
+    for p in net.parameters():
+        p.requires_grad_(False)
+    phi_sd = net.state_dict()
+    if (set(phi_sd) != set(learner_sd)
+            or any(phi_sd[k].shape != learner_sd[k].shape for k in learner_sd)):
+        raise ValueError(
+            f"--shaping value: {phi_ckpt} does not share the learner's "
+            "architecture. Phi is evaluated on the learner's own encodings, "
+            "so the frozen start of the SAME run is the only valid phi net.")
+    return net
+
+
+def _value_potential(phi_net, sc, sids, opts, oids, plan) -> float:
+    """Phi = V(s) from the frozen-start net (BACKLOG #13(c) step 2): the
+    trained value head as the principled 'board advantage' potential.
+    F = coef * (phi' - phi) telescopes out of the return exactly like the
+    race/dev potentials — same shaping site, same convention."""
+    import torch
+    from rl.ppo import _forward
+    with torch.no_grad():
+        _, value = _forward(
+            phi_net,
+            torch.from_numpy(sc).unsqueeze(0),
+            None if sids is None else
+            torch.from_numpy(sids.astype(np.int64)).unsqueeze(0),
+            torch.from_numpy(opts).unsqueeze(0),
+            None if oids is None else
+            torch.from_numpy(oids.astype(np.int64)).unsqueeze(0),
+            None if plan is None else torch.from_numpy(plan).unsqueeze(0))
+    return float(value)
+
+
 def _is_over_attach(obs, option) -> bool:
     """M20: the sampled action attaches energy to a Pokémon whose charged-best
     attack is ALREADY paid (rl/combat._turns_to_ready == 0 — same primitive as
@@ -243,7 +284,8 @@ _BOSS_ID = 1182       # Boss's Orders (rl/plan.GUST_IDS)
 def _play_worker(args: tuple) -> tuple:
     (worker_id, n_games, checkpoint, learn_deck_name, learn_decks, specs, weights,
      out_dir, seed, race_shaping, shaping, defect_penalty,
-     plan_tau, plan_dirichlet, plan_ppo, gust_boost, plan_zero) = args
+     plan_tau, plan_dirichlet, plan_ppo, gust_boost, plan_zero,
+     phi_ckpt) = args
 
     import random
     import torch
@@ -287,6 +329,8 @@ def _play_worker(args: tuple) -> tuple:
         learner = OptionScorerV2() if is_v2 else OptionScorer()
     learner.load_state_dict(sd)
     learner.eval()
+    phi_net = (_load_phi_net(phi_ckpt, sd)
+               if race_shaping and shaping == "value" else None)
     fixed_deck = _deck(learn_deck_name)
     pstate = {"key": None, "vec": None}     # v3 turn-scoped plan (reset per game)
     memory = None
@@ -479,8 +523,11 @@ def _play_worker(args: tuple) -> tuple:
                     # Potential-based setup shaping (M7-plan §3b): phi = the race
                     # delta; F = coef*(phi' - phi) telescopes out of the return,
                     # so it credits board development without changing the
-                    # optimal policy.
-                    phi = (_dev_potential(obs) if shaping == "dev"
+                    # optimal policy. M43: `value` swaps in the frozen start's
+                    # own V(s) as the potential.
+                    phi = (_value_potential(phi_net, sc, sids, opts, oids, plan)
+                           if phi_net is not None
+                           else _dev_potential(obs) if shaping == "dev"
                            else float(_race_features(obs.current)[7]))
                     if prev_phi is not None:
                         reward += race_shaping * (phi - prev_phi)
@@ -570,7 +617,8 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
             plan_tau: float = 0.0, plan_dirichlet: float = 0.0,
             plan_ppo: bool = False,
             gust_boost: float = 0.0,
-            plan_zero: bool = False) -> tuple[list[str], float]:
+            plan_zero: bool = False,
+            phi_ckpt: str | None = None) -> tuple[list[str], float]:
     """Collect n_games across n_workers, learning policy vs an opponent pool.
 
     decks_file: population.json — the learner samples a deck per game from it
@@ -585,17 +633,26 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
     twin of rl/plan.py's `planzero` SERVE fix. Mutually exclusive with
     plan_tau/plan_ppo, which exist to explore and train the very head this
     turns off.
+    phi_ckpt (M43): the FROZEN START checkpoint whose value head serves as the
+    `value` shaping potential — required when shaping == "value", explicit so
+    a PPO loop cannot silently hand the moving learner to Phi.
     Returns (shard paths, defect rate per game)."""
     if plan_zero and (plan_tau > 0 or plan_ppo):
         raise ValueError("plan_zero cannot combine with plan_tau/plan_ppo — "
                          "they explore and train the plan head this disables")
+    if race_shaping and shaping == "value" and not phi_ckpt:
+        raise ValueError("shaping='value' needs an explicit phi_ckpt (the "
+                         "run's FROZEN START) — defaulting to the current "
+                         "checkpoint would make the potential track the "
+                         "moving learner")
     out_dir.mkdir(parents=True, exist_ok=True)
     specs, weights = pool if pool is not None else default_pool(checkpoint, learn_deck)
     learn_decks = _load_population(decks_file) if decks_file else None
     per = [n_games // n_workers + (1 if i < n_games % n_workers else 0) for i in range(n_workers)]
     jobs = [(i, per[i], checkpoint, learn_deck, learn_decks, specs, weights,
              str(out_dir), 1000 + i, race_shaping, shaping, defect_penalty,
-             plan_tau, plan_dirichlet, plan_ppo, gust_boost, plan_zero)
+             plan_tau, plan_dirichlet, plan_ppo, gust_boost, plan_zero,
+             phi_ckpt)
             for i in range(n_workers) if per[i] > 0]
 
     ctx = mp.get_context("spawn")
@@ -622,6 +679,13 @@ if __name__ == "__main__":
     p.add_argument("--decks", type=str, default=None,
                    help="population.json for per-game learner deck sampling")
     p.add_argument("--race-shaping", type=float, default=0.0)
+    p.add_argument("--shaping", choices=["race", "dev", "value"], default="race",
+                   help="shaping potential: race delta, the M8.3 dev "
+                        "potential, or the frozen start's V(s) (M43)")
+    p.add_argument("--phi-ckpt", type=str, default=None,
+                   help="M43: frozen checkpoint for --shaping value "
+                        "(default: --checkpoint, which IS frozen in a "
+                        "standalone collect)")
     p.add_argument("--learn-deck", type=str, default=LEARN_DECK,
                    help="learner's fixed deck (M20 probe: lucario)")
     p.add_argument("--defect-penalty", type=float, default=0.0,
@@ -651,6 +715,10 @@ if __name__ == "__main__":
                             learn_deck=args.learn_deck, pool=pool_arg,
                             decks_file=args.decks,
                             race_shaping=args.race_shaping,
+                            shaping=args.shaping,
+                            phi_ckpt=(args.phi_ckpt or
+                                      (args.checkpoint
+                                       if args.shaping == "value" else None)),
                             defect_penalty=args.defect_penalty,
                             plan_tau=args.plan_tau,
                             plan_dirichlet=args.plan_dirichlet,

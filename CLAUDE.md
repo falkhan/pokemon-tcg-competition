@@ -71,4 +71,10 @@ When running a pipeline to ship a new model use hermes integration to send perio
     the new submission id + label to the `MODELS` dict in
     `notebooks/model_monitor.ipynb` (and a `DECK_META` entry if the deck is
     new) as part of the ship commit — the monitor is the live tracking surface.
-  - ALWAYS before an important review, change or shipping, review `verify-before-consequential-actions.md`.
+  - ALWAYS before an important review, change or shipping, re-verify against
+    the standing rules above: offline gate passed → export → `scripts/ship_verify.py`
+    → `scripts/qc_battery.py` → STOP for Piotr's manual replay review and
+    explicit go → `MODELS` dict update in the ship commit. (Amended
+    2026-08-05: this line previously pointed at
+    `verify-before-consequential-actions.md`, a file that never existed in
+    the repo.)
