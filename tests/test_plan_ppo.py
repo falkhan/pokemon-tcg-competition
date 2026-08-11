@@ -169,6 +169,54 @@ def test_parse_pool_past_token_dropped_when_no_checkpoints(tmp_path,
     assert weights == pytest.approx([1.0])
 
 
+# --- M43 review finding #2: past= must not cross tag namespaces --------------
+# Checkpoints save as ppo{_tag}_it{NNNN}.pt (rl/ppo.py). Before the fix the
+# glob was ppo_*it*.pt, which pooled promoted selves across ALL tags
+# alphabetically — running arm A after arm B fed B's selves into A's pool and
+# broke the single-variable comparison the hashed gate specs exist to make.
+
+def _touch_checkpoints(tmp_path, names):
+    ckpts = tmp_path / "checkpoints"
+    ckpts.mkdir()
+    for name in names:
+        (ckpts / name).touch()
+    return ckpts
+
+
+def test_parse_pool_past_token_scopes_to_the_run_tag(tmp_path, monkeypatch):
+    import rl.collector as collector
+    monkeypatch.setattr(collector, "ROOT", tmp_path)
+    ckpts = _touch_checkpoints(tmp_path, [
+        "ppo_it0001.pt", "ppo_a_it0001.pt", "ppo_a_it0002.pt",
+        "ppo_b_it0001.pt"])
+    specs, _ = parse_pool(["past=1"], checkpoint="ck.pt",
+                          learn_deck="lucario", tag="a")
+    assert [s[1] for s in specs] == [str(ckpts / "ppo_a_it0001.pt"),
+                                     str(ckpts / "ppo_a_it0002.pt")]
+
+
+def test_parse_pool_past_token_untagged_sees_only_untagged(tmp_path,
+                                                           monkeypatch):
+    import rl.collector as collector
+    monkeypatch.setattr(collector, "ROOT", tmp_path)
+    ckpts = _touch_checkpoints(tmp_path, [
+        "ppo_it0001.pt", "ppo_a_it0001.pt", "ppo_b_it0001.pt"])
+    specs, _ = parse_pool(["past=1"], checkpoint="ck.pt",
+                          learn_deck="lucario")
+    assert [s[1] for s in specs] == [str(ckpts / "ppo_it0001.pt")]
+
+
+def test_parse_pool_past_token_tag_with_no_matches_is_dropped(tmp_path,
+                                                              monkeypatch):
+    import rl.collector as collector
+    monkeypatch.setattr(collector, "ROOT", tmp_path)
+    _touch_checkpoints(tmp_path, ["ppo_b_it0001.pt"])
+    specs, weights = parse_pool(["past=0.5", "solver:lucario=0.5"],
+                                checkpoint="ck.pt", tag="a")
+    assert specs == [("solver", "lucario")]
+    assert weights == pytest.approx([1.0])
+
+
 # --- M22b: resolved-identity dedupe -----------------------------------------
 # B3's mixture declared `solver:.../deck_20dcd3130bc0.csv=0.30` and
 # `solver:lucario=0.15` as two opponents. They are one — that csv is

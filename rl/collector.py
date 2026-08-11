@@ -159,13 +159,17 @@ def _is_over_attach(obs, option) -> bool:
 
 
 def parse_pool(items: list[str], checkpoint: str,
-               learn_deck: str = LEARN_DECK) -> tuple[list, list]:
+               learn_deck: str = LEARN_DECK, tag: str = "") -> tuple[list, list]:
     """M21 curriculum: parse "spec=weight" strings into (specs, weights).
 
     Spec syntax is rl/matchrunner.parse_spec, plus two tokens:
       mirror=w  -> the CURRENT checkpoint piloting learn_deck (re-resolve each
                    iteration so 'mirror' tracks the live policy)
-      past=w    -> the recent promoted selves (default_pool tail), weight split
+      past=w    -> the recent promoted selves OF THIS RUN's tag, weight split.
+                   `tag` scopes the glob to ppo_<tag>_it*.pt (untagged runs
+                   see only ppo_it*.pt) — without it, past= pooled promoted
+                   selves across ALL tags alphabetically, cross-contaminating
+                   concurrently-gated arms (M43 review finding #2)
     Weights are normalized; deck csv paths work anywhere a deck name does
     (rl/matchrunner.resolve_deck)."""
     from rl.matchrunner import parse_spec
@@ -177,7 +181,8 @@ def parse_pool(items: list[str], checkpoint: str,
             specs.append(("model", str(checkpoint), learn_deck))
             weights.append(w)
         elif spec_s == "past":
-            past = sorted(Path(ROOT / "checkpoints").glob("ppo_*it*.pt"))[-3:]
+            prefix = f"ppo_{tag}_it" if tag else "ppo_it"
+            past = sorted(Path(ROOT / "checkpoints").glob(prefix + "*.pt"))[-3:]
             if not past:
                 continue                     # no promoted selves yet — drop
             for p in past:
