@@ -1,5 +1,9 @@
 .kaggle
-.claude
+# Local Claude Code state stays ignored; the SessionStart hook and shared
+# settings are committed so remote sessions get their environment prepared.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
 .venv
 
 
