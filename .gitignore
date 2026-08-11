@@ -5,6 +5,8 @@
 !.claude/settings.json
 !.claude/hooks/
 .venv
+.pytest_cache/
+.idea/
 
 
 # Local data
@@ -19,8 +21,10 @@ reference/
 runs/**
 pokemon-tcg-ai-battle
 __pycache__/
-# Rule-agent bundle: main.py + deck.csv are committed source; cg/ (via `cg` above)
-# and rl/ are regenerated from the project by `rl.export --agent rules`.
+# Rule-agent bundle: main.py + deck.csv are committed source; cg/ stays tracked
+# (kept in-repo deliberately — fresh clones must be runnable; see
+# docs/m43-ppo-pipeline-review.md) and rl/ is regenerated from the project by
+# `rl.export --agent rules`.
 submission_rules/rl/
 
 # Competition-provided files: rules PDFs and the original card database.
