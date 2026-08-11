@@ -37,9 +37,10 @@ That is the central open problem.
   greedily at collection — so gust plans are never sampled. This is the standing hypothesis
   for why the shipped agent *never plays Boss's Orders*, including a game-winning gust.
 - **Annealed KL** (→ 0 across legs) and an **interleaved opponent-mixture curriculum**, using
-  the `collect(pool=...)` path that already exists but is never passed by `rl/ppo.py`.
+  the `collect(pool=...)` path. (Landed: `rl/ppo.py` has passed `pool=` from
+  `--opponents`/`--opponent-schedule` since M21.)
 
-M21 target is 0.50–0.53; the bar stays 0.55.
+M21 target was 0.50–0.53; the bar stays 0.55.
 
 ---
 
