@@ -76,3 +76,23 @@ def test_gate_fix_package_unknown_kind_is_none_not_empty():
 def test_export_signature_carries_fixes():
     import inspect
     assert "fixes" in inspect.signature(shp.export).parameters
+
+
+def test_ship_verify_3b_success_path_formats(tmp_path, monkeypatch):
+    """The 3b equality check's success/detail f-string executes end-to-end —
+    caught live 2026-08-12: a NameError in the detail string survived unit
+    tests that only covered gate_fix_package."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    ROOT = Path(shp.__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [sys.executable, "scripts/ship_verify.py",
+         "--checkpoint", "definitely_missing.pt", "--deck", "alakazam_v2_h4",
+         "--corpus", str(tmp_path),
+         "--gate-arm", "model-c-pkgz:checkpoints/x.pt:alakazam_v2_h4"],
+        cwd=ROOT, capture_output=True, text=True, timeout=300)
+    # the run FAILS (missing checkpoint/corpus) but must not crash: 3b's
+    # verdict line prints with both sets formatted
+    assert "3b. gate/ship fix-set equality" in proc.stdout
+    assert "NameError" not in proc.stderr

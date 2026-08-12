@@ -267,6 +267,7 @@ def main() -> int:
             check(False, "3b. gate/ship fix-set equality",
                   "no fix string in the bundle to compare")
         else:
+            kind = args.gate_arm.split(":", 1)[0]
             check(set(names) == set(gated), "3b. gate/ship fix-set equality",
                   f"gate[{kind}]={sorted(gated)} bundle={sorted(names)}")
 
