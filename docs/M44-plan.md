@@ -4,6 +4,15 @@
 execution start, after Piotr's review of this draft. Nothing below is a
 registered bar yet.
 
+**AMENDMENT (2026-08-12, Piotr): the competition ends 2026-08-16 — M44
+compresses to ONE round** (3 legs ~6h + league + gate), champion ships
+2026-08-13 evening at the latest so it accrues 2+ days of ladder games.
+D2's "2 rounds pre-registered" is superseded: round 2 runs only if the
+round-1 champion ships early and time clearly allows. Also shipped
+alongside (Piotr's call, same date): `m43b_oger_wide` on one of the day's
+spare slots — the Lane B live A/B the ceilinged offline battery couldn't
+resolve.
+
 ## The directive
 
 Piotr (2026-08-12): *"explore the possibility of 2 pilots playing each

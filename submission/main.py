@@ -170,7 +170,7 @@ _LOG_NET = os.environ.get("PKM_AGENT_LOG", "1") != "0"
 _ATTACH_FIXES = frozenset(
     f for f in os.environ.get(
         "PKM_ATTACH_FIXES",
-        "conserve,planzero,ash,ashguard").split(",") if f)
+        "planzero").split(",") if f)
 # M40 S6: `planzero` is a SERVE fix, not a reranker — it changes what the trunk
 # is FED, so it is read out here rather than passed to apply_*_overrides (which
 # ignore it harmlessly). See rl/plan.py O14 for why the plan head is
