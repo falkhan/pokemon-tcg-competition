@@ -480,7 +480,18 @@ self-play become the M40 agenda rather than more harvesting.
    falsification order below runs verbatim — A-base (outcome reward,
    KL-anchored) vs A-phi (`--shaping value`, Φ = the frozen start's V(s),
    landed in `rl/collector.py`/`rl/ppo.py` with the M43 plan commit);
-   event bonuses stay banned. Parts (a)/(b) stay parked as written. Three
+   event bonuses stay banned. Parts (a)/(b) stay parked as written.
+   **OUTCOME (2026-08-12, M43 executed):** step (1) supporter-credit hole
+   reads CLOSED under the retain_b-warm-started critic (adv-by-type
+   play_supporter ≈ +0.01..+0.05 all leg); step (2) resolved as **"no
+   valid Φ exists yet"** — the wide head E0-kills (0.455), retain_b's head
+   passes standalone (0.723) but FAILS transplanted onto the wide body
+   (0.559): the head is body-specific, so A-phi was dropped by rule 0.c
+   and the shaping infrastructure (now the invariant form) awaits a net
+   whose OWN head passes E0. The A-base premise itself is **VALIDATED:
+   +3.72pp pooled z=5.93 over the frozen start on the 25-bed roster**
+   (`m43_laneA_base_r1`), wall_d1 +19.75pp — honest PPO is live-positive
+   offline for the first time; live A/B pending. Three
    parts with very different standing — the value of this entry is keeping
    them apart.
 
