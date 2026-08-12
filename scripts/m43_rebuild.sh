@@ -23,13 +23,21 @@ hermes_ping () { hermes send -t telegram "[m43-rebuild] $1" 2>/dev/null || true;
 
 build_corpus () {   # out  hash  min-score  extra-flags...
   local out="$1" hash="$2" band="$3"; shift 3
-  if [ -f "$out/deck_registry.json" ] || ls "$out"/*.npz >/dev/null 2>&1; then
+  # shards are the done-marker — a failed build can leave deck_registry.json
+  # behind with zero shards (the dragapult sync-gap did exactly that)
+  if ls "$out"/*.npz >/dev/null 2>&1; then
     echo "=== $out exists — skipping build"; return
   fi
+  rm -rf "$out"
   echo "=== build $out (hash $hash, min-score $band) $(date)"
   uv run python -m rl.replay_bc build --deck-hash "$hash" \
     --min-score "$band" --hand-aware --out "$out" "$@" \
     2>&1 | tee "runs/m43_build_$(basename "$out").log" | tail -3
+  if ! ls "$out"/*.npz >/dev/null 2>&1; then
+    echo "=== FATAL: $out built ZERO shards — check hash/band against opp_decks"
+    hermes_ping "R2 FAILED: $out built zero shards"
+    exit 1
+  fi
 }
 
 slice_corpus () {   # src dst
