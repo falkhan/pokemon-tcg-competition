@@ -1,11 +1,12 @@
 # RL Agent Architecture — Pokémon TCG AI Battle (Kaggle `cabt`)
 
-How the agent is actually built, as of **M20 (2026-07-19)**.
+How the agent is actually built, as of **M41b (2026-08-05; last full rewrite at M20 —
+§1 refreshed 2026-08-11, later sections may lag)**.
 
 > **Living doc.** This file describes the system as it *is*. What we tried, measured, and
-> changed our minds about lives in the milestone diaries (`docs/M0.md` … `docs/M20.md`) and,
-> in fast-index form, `docs/DECISIONS.md`. When a measurement contradicts this file, add a
-> DECISIONS entry and update the relevant section here.
+> changed our minds about lives in the milestone diaries (`docs/M0.md` … `docs/M43-plan.md`)
+> and, in fast-index form, `docs/DECISIONS.md`. When a measurement contradicts this file, add
+> a DECISIONS entry and update the relevant section here.
 >
 > **This document was rewritten at M20.** The original (M0-era, last touched at M7 planning)
 > described a design we have since measured our way out of — see §2 for what changed and why.
@@ -16,17 +17,16 @@ How the agent is actually built, as of **M20 (2026-07-19)**.
 
 | | |
 |---|---|
-| **Champion** | `checkpoints/ppo_best_m20legB.pt` + `decks/lucario.csv` |
-| **Live submission** | Kaggle **54836093** (M20, 2026-07-19) |
-| **Mirror strength** | **0.488** pooled n=800 vs `solver:lucario` — the campaign's best neural result |
-| **Meta co-gate** | ~0.494 (parity with the previous champion) |
-| **Campaign bar** | ≥0.55 vs `solver:lucario` — **still unmet, 6.2pp short** |
-| **Best settled live score** | M16 at 519.8, vs the pure-rules bundle's **548.6** |
+| **Live arms (M41b, a deliberate two-deck A/B)** | sub **55265099** = `checkpoints/m41b_wide_prod.pt` (encoder width 143) + `decks/alakazam_v2_h4.csv` · sub **55265105** = `checkpoints/m41_ogerpon.pt` + `decks/ogerpon.csv` (unchanged re-ship) |
+| **Key offline number** | m41b_wide_prod **+6.17pp z=8.77** vs the previous champion `cont3` (width component +2.78pp, 3/3 seeds) — a bed delta; X5 (M40) voids bed *absolutes*, read live at n≥45 per G-10 |
+| **Campaign bar** | **implied ELO 1000** on the live leaderboard (since M39); the M8-era 0.55-vs-`solver:lucario` bar is pre-fix era (M37 audit) and was re-pinned in M38 G2 |
+| **Best settled live** | implied ELO **817** (M30 / M35); most recent resolved reads: M39 Ship A **780.4**, M40 floor **659.7** |
 
-The neural track has not yet beaten our own rules-based submission on the live leaderboard.
-That is the central open problem.
+Imitation is exhausted (M39 ceiling result; M40 X5; M41b Stage B) — the campaign's open
+problem is learning through *games*, which is what M43 (in flight, `docs/M43-plan.md`)
+measures: a self-play corpus lane and the campaign's first honest PPO lane.
 
-**In flight — M21** (`docs/M21-plan.md`, branch `feature/m21`), which will change §5 and §7.4:
+**Landed in M21** (`docs/M21.md`; kept here because it introduced §5's and §7.4's current shape):
 
 - **Encoder v4** — the v3 state ignores the entire `obs.logs[]` event stream (the observable
   proxy for the opponent's hidden hand), face-up prize ids, special-energy identity, and the
@@ -37,9 +37,10 @@ That is the central open problem.
   greedily at collection — so gust plans are never sampled. This is the standing hypothesis
   for why the shipped agent *never plays Boss's Orders*, including a game-winning gust.
 - **Annealed KL** (→ 0 across legs) and an **interleaved opponent-mixture curriculum**, using
-  the `collect(pool=...)` path that already exists but is never passed by `rl/ppo.py`.
+  the `collect(pool=...)` path. (Landed: `rl/ppo.py` has passed `pool=` from
+  `--opponents`/`--opponent-schedule` since M21.)
 
-M21 target is 0.50–0.53; the bar stays 0.55.
+M21 target was 0.50–0.53; the bar stays 0.55.
 
 ---
 

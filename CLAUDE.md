@@ -8,19 +8,22 @@ When running a pipeline to ship a new model use hermes integration to send perio
 
 ## Project shape
 - `rl/` — reinforcement learning core: `plan.py`, `plan_iter.py`, `policy.py`,
-  `rank.py`, `matchrunner.py`, `turn_solver.py`, `setup_value.py`, `bc.py`,
-  `combat.py`, `encoders.py`, `kaggle_ingest.py`, `replay_bc.py`.
-  (There is no `rl/network.py` — the net lives in `rl/policy.py` and
-  `tcg/network.py`.)
+  `ppo.py`, `collector.py`, `rank.py`, `matchrunner.py`, `turn_solver.py`,
+  `setup_value.py`, `bc.py`, `combat.py`, `encoders.py`, `kaggle_ingest.py`,
+  `replay_bc.py`. (There is no `rl/network.py` — the net lives in
+  `rl/policy.py` and `tcg/network.py`. PPO lives in `rl/ppo.py` +
+  `rl/collector.py`; `tcg/ppo.py` is a frozen parity twin, not the pipeline.)
 - `tcg/` — the readable refactor + shipping: `combat.py`, `pilot.py`,
   `network.py`, `shipping.py` (`tcg.shipping` is the live export/gate path).
 - `submission/` — the shippable agent (`main.py` plus the bundled `rl/`
-  package: `rl/encoders.py`, `rl/combat.py`, `rl/plan.py`, `rl/memory.py`) —
-  what's actually submitted to the competition. `submission/rl/*` must stay
-  byte-identical to `rl/*`; the export regenerates it.
+  package: `rl/encoders.py`, `rl/combat.py`, `rl/plan.py`, `rl/memory.py`,
+  `rl/scaling.py` — the `TWIN_FILES` list in `scripts/ship_verify.py` is
+  authoritative) — what's actually submitted to the competition.
+  `submission/rl/*` must stay byte-identical to `rl/*`; the export
+  regenerates it.
 - `tests/` — pytest suite (`test_*.py`).
-- `docs/` — milestone records M0–M14, plans, decisions (`DECISIONS.md`,
-  `MILESTONES.md`).
+- `docs/` — milestone records M0 onward (plans `MXX-plan.md`, diaries
+  `MXX.md`), decisions (`DECISIONS.md`, `MILESTONES.md`, `BACKLOG.md`).
 
 ## Build / run conventions
 - Use `uv` for Python (`uv run`, not bare `pip install`). pyproject.toml present.

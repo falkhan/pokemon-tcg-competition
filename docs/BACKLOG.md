@@ -37,6 +37,29 @@ they're picked up.
   re-justify the tier against a race-closing policy before it returns in
   gen 2.
 
+## From the M43 pipeline review (2026-08-11, docs/m43-ppo-pipeline-review.md)
+
+- **Gate-vs-shipped fix-set equality (review finding #4).** The gate battery
+  measures the `model-c-pkgz:` spec token, but the shipped fix set is a
+  hardcoded default string in the tracked `submission/main.py` — currently
+  `"conserve,planzero,ash,ashguard"` — and `tcg.shipping export` neither takes
+  a `--fixes` flag nor regenerates `main.py`. Remediation (on the box, before
+  the next ship): add `--fixes` to the export that templates the string into
+  `submission/main.py`, and extend `scripts/ship_verify.py` to require the
+  shipped set to EQUAL the gated token's package, not merely contain valid
+  names.
+- **Potential shaping is not the invariant form (review finding #5).** The
+  collector applies `F = coef·(Φ(s′) − Φ(s))` with no γ and no terminal Φ
+  subtraction, leaving a `coef·(Φ_last − Φ_first)` residual — pay for ending
+  in a high-value state. With Φ = V(s) (M43 A-phi) the residual grows exactly
+  where the arm matters. Either move to `F = γΦ(s′) − Φ(s)` with Φ(terminal)=0,
+  or pre-register the residual as intended, BEFORE Lane A launches; a
+  reward-math change mid-flight would invalidate the hashed specs.
+- **`--shaping-coef` alias (review finding #6).** `--race-shaping` is the
+  coefficient for every potential; add the neutral alias at M43 execution
+  (keep the old spelling accepted — pre-registered command lines must keep
+  parsing).
+
 ## From the M37 audit (logged, not scheduled)
 
 - ~~**Silent fix-name ignore**~~ **DONE — M39, as a PRE-SHIP check rather

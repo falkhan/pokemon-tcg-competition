@@ -1,13 +1,14 @@
-"""Self-play PPO from the bc_v1 warm start (docs/M2 plan, Phase 1).
+"""Self-play PPO — the campaign's live RL trainer (M2 origin, M20 KL anchor,
+M21 opponent curriculum + plan surrogate, M23 vs_teacher promotion, M43 value
+shaping).
 
-Division of labor (same as M1):
-  Claude scaffold (done):  shard loading, per-(game,seat) trajectory slicing,
-                           padded/masked batching, the iteration loop, opponent-pool
-                           evaluation + promotion gate, TensorBoard, checkpoints.
-  PIOTR (the core):        compute_gae() and ppo_update() — marked with
-                           NotImplementedError below. This is the RL heart of M2.
+Split with rl/collector.py: this module owns the iteration loop, GAE
+(compute_gae), the clipped update (ppo_update), evaluation + promotion, and
+checkpoints; the collector owns rollout workers, reward shaping, and the
+opponent pool. tcg/ppo.py is a frozen M8-era parity twin of the pure
+functions only (pinned by tests/test_ppo.py), not the pipeline.
 
-Run one iteration end-to-end (will stop at your NotImplementedError):
+Run one iteration end-to-end:
   python -m rl.ppo --iterations 1
 """
 import argparse
@@ -429,6 +430,7 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           value_ckpt: str | None = None, decks_file: str | None = None,
           eval_deck: str = "kyogre", entropy_coef: float = ENTROPY_COEF,
           race_shaping: float = 0.0, shaping: str = "race",
+          phi_ckpt: str | None = None,
           defect_penalty: float = 0.0, kl_coef: float = 0.0,
           learn_deck: str | None = None, tag: str = "", eval_games: int = 200,
           opponents: list[str] | None = None,
@@ -506,16 +508,20 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         work = CKPT_DIR / f"ppo_current{suffix}.pt"
         torch.save(model.state_dict(), work)
         mix = _mix_for(it)
-        pool = (parse_pool(mix, str(work), learn_deck or "kyogre")
+        pool = (parse_pool(mix, str(work), learn_deck or "kyogre", tag=tag)
                 if mix else None)
         if mix:
             print(f"iter {it}: opponent mix {mix}", flush=True)
         _, defect_rate = collect(
             games_per_iter, str(work), workers, decks_file=decks_file,
             pool=pool, race_shaping=race_shaping, shaping=shaping,
-            # M43: the value potential is the FROZEN START's head, never the
-            # moving learner — same anchor the KL term uses.
-            phi_ckpt=(str(CKPT_DIR / start) if shaping == "value" else None),
+            # M43: the value potential defaults to the FROZEN START's head,
+            # never the moving learner — same anchor the KL term uses.
+            # --phi-ckpt overrides it for the Phase-0 branch where the critic
+            # warm-starts from a different checkpoint (--value-ckpt) and Phi
+            # must follow.
+            phi_ckpt=(str(CKPT_DIR / (phi_ckpt or start))
+                      if shaping == "value" else None),
             defect_penalty=defect_penalty,
             plan_tau=plan_tau, plan_dirichlet=plan_dirichlet,
             plan_ppo=plan_coef > 0, gust_boost=gust_boost,
@@ -591,6 +597,12 @@ if __name__ == "__main__":
                    help="shaping potential: race delta (M7.4b), the M8.3 "
                         "dev potential (race+ready+evo+bench), or the frozen "
                         "start's own V(s) (M43 — BACKLOG #13(c) step 2)")
+    p.add_argument("--phi-ckpt", type=str, default=None,
+                   help="checkpoint whose value head serves as the Phi "
+                        "potential under --shaping value (default: --start). "
+                        "Set it alongside --value-ckpt so Phi follows the "
+                        "critic's warm start instead of silently staying on "
+                        "--start")
     p.add_argument("--eval-every", type=int, default=5,
                    help="iterations between evals (M8.3 decay probes use 2)")
     p.add_argument("--defect-penalty", type=float, default=0.0,
@@ -633,10 +645,19 @@ if __name__ == "__main__":
                    help="M21: linear kl_coef target at the last iter "
                         "(anneal to 0 = pure self-play by leg end)")
     args = p.parse_args()
+    if args.shaping != "race" and args.race_shaping == 0:
+        # A non-default potential with a zero coefficient is always a mistake:
+        # the collector builds no phi net and the leg silently runs unshaped
+        # (rl/collector.py gates on `race_shaping and shaping == ...`).
+        p.error(f"--shaping {args.shaping} is a no-op without "
+                "--race-shaping > 0")
+    if args.phi_ckpt and args.shaping != "value":
+        p.error("--phi-ckpt only applies under --shaping value")
     train(args.iterations, args.games_per_iter, args.workers, lr=args.lr,
           start=args.start, value_ckpt=args.value_ckpt, decks_file=args.decks,
           eval_deck=args.eval_deck, entropy_coef=args.entropy_coef,
           race_shaping=args.race_shaping, shaping=args.shaping,
+          phi_ckpt=args.phi_ckpt,
           eval_every=args.eval_every, defect_penalty=args.defect_penalty,
           kl_coef=args.kl_coef, learn_deck=args.learn_deck, tag=args.tag,
           eval_games=args.eval_games, opponents=args.opponents,
