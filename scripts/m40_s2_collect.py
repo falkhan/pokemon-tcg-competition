@@ -91,6 +91,12 @@ BEDS = {
     "garchomp_d2": "model:checkpoints/m40_bed_garchomp_d2.pt:data/kaggle/garchomp_c7b3253f_deck.csv",
     "rocket_d1": "model:checkpoints/m40_bed_rocket_d1.pt:data/kaggle/rocket_59e27a5e_deck.csv",
     "rocket_d2": "model:checkpoints/m40_bed_rocket_d2.pt:data/kaggle/rocket_59e27a5e_deck.csv",
+    # M43 Lane B: the ogerpon self-play mirror — the pre-registered B1 pool
+    # (docs/M43-plan.md B1: "grim_d1–d3, topgrim, wall_d1–d3, ogerpon mirror")
+    # names it, but it was never added here. `model-pz` matches the live
+    # ogerpon ship config (sub 55265105), same on-distribution rationale as
+    # DEFAULT_ARM's `model-c-pkgz`.
+    "oger_mirror": "model-pz:checkpoints/m41_ogerpon.pt:decks/ogerpon.csv",
     # composites — budget is per-spec since M40 S3. Phase 3 measured the wrap
     # INERT against our pilot (comp ≈ plain on the grim grid), so composites
     # earn no place in the pool; kept only as specs for instrument work.

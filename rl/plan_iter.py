@@ -42,7 +42,7 @@ from rl.encoders import (N_CONTEXTS, N_OPTION_TYPES, N_STATE_IDS_V3,
                          encode_state_v2, encode_state_v3)
 from rl.plan import (PLAN_DIM, derive_plan, encode_plan, enumerate_plans,
                      match_candidate)
-from rl.policy import OptionScorerV3
+from rl.policy import OptionScorerV3, resolve_device
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -1068,7 +1068,8 @@ def train(data_dirs: list, name: str, init: str | None = None,
           outcome_weight: float | None = None,
           advantage_ckpt: str | None = None,
           advantage_beta: float = 1.0,
-          seed: int | None = None) -> None:
+          seed: int | None = None,
+          device: str = "auto") -> None:
     """Supervised: CE(policy) + 0.5*Huber(value) + plan_weight*CE(plan head)
     over rows with plan_labels >= 0. Best-val-acc checkpointing (train_v2's
     ritual); reports policy AND plan-head validation accuracy."""
@@ -1178,8 +1179,15 @@ def train(data_dirs: list, name: str, init: str | None = None,
                                extra_dim=extra_dim)
         print(f"fresh V3 (n_state_ids={model.n_state_ids}, "
               f"option_dim={model.option_dim}, extra_dim={extra_dim})")
+    dev = resolve_device(device)
+    model.to(dev)
+    if dev.type != "cpu":
+        print(f"training on {dev}")
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
     best_acc = 0.0
+
+    def _to_dev(batch):
+        return [t.to(dev) if isinstance(t, torch.Tensor) else t for t in batch]
 
     def evaluate():
         model.eval()
@@ -1187,7 +1195,7 @@ def train(data_dirs: list, name: str, init: str | None = None,
         with torch.no_grad():
             for batch in val_dl:
                 (states, plans, sids, options, oids, valid, labels, _, _,
-                 cands, cvalid, plabels, _) = batch
+                 cands, cvalid, plabels, _) = _to_dev(batch)
                 logits, _ = model(states, plans, sids, options, oids)
                 logits = logits.masked_fill(~valid, -1e9)
                 correct += (logits.argmax(dim=1) == labels).sum().item()
@@ -1220,7 +1228,7 @@ def train(data_dirs: list, name: str, init: str | None = None,
         running = 0.0
         for batch in train_dl:
             (states, plans, sids, options, oids, valid, labels, results, _,
-             cands, cvalid, plabels, weights) = batch
+             cands, cvalid, plabels, weights) = _to_dev(batch)
             opt.zero_grad()
             logits, value = model(states, plans, sids, options, oids)
             logits = logits.masked_fill(~valid, -1e9)
@@ -1244,7 +1252,9 @@ def train(data_dirs: list, name: str, init: str | None = None,
         if acc > best_acc:
             best_acc = acc
             (ROOT / "checkpoints").mkdir(exist_ok=True)
-            torch.save(model.state_dict(),
+            # always save CPU tensors: every consumer loads map_location="cpu"
+            torch.save({k: v.detach().cpu()
+                        for k, v in model.state_dict().items()},
                        ROOT / "checkpoints" / f"{name}.pt")
 
 
@@ -1431,6 +1441,12 @@ if __name__ == "__main__":
                         "AND so independent draws are possible. G-13 measured "
                         "a 10-12pp training lottery, so a single-draw A/B "
                         "cannot separate an effect from the draw.")
+    t.add_argument("--device", type=str, default="auto",
+                   choices=["auto", "cpu", "cuda"],
+                   help="M43: training device (auto = cuda when available). "
+                        "Checkpoints are saved as CPU tensors either way; "
+                        "cuda runs are NOT bit-reproducible vs cpu under the "
+                        "same --seed")
     r = sub.add_parser("relabel", help="M18a: write disagreement-weighted "
                                        "sibling shard dirs (<dir><suffix>)")
     r.add_argument("--data", type=str, nargs="+", required=True)
@@ -1464,7 +1480,7 @@ if __name__ == "__main__":
         train(args.data, args.name, init=args.init, init_v2=args.init_v2,
               init_v3h=args.init_v3h, init_v3o=args.init_v3o,
               init_v3m=args.init_v3m, init_wide=args.init_wide,
-              seed=args.seed,
+              seed=args.seed, device=args.device,
               epochs=args.epochs, lr=args.lr,
               batch_size=args.batch_size, plan_weight=args.plan_weight,
               uniform_weights=args.uniform_weights,

@@ -22,6 +22,7 @@ import argparse
 import ast
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -87,11 +88,36 @@ def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:
     print(f"exported RULE agent (generic pilot) paired with deck '{deck}' -> {SUBMISSION_RULES}")
 
 
-def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> None:
+def _set_bundle_fixes(fixes: str) -> None:
+    """M43 review finding #4: pin the bundle's fix package to the GATED one.
+
+    The gate measures a matchrunner kind token's package (e.g. `model-c-pkgz`
+    = conserve,racemode2,racemode4,planzero) while the shipped bundle reads
+    the PKM_ATTACH_FIXES default hardcoded in submission/main.py — two
+    unlinked copies that have already diverged once. `--fixes` templates the
+    gated package into the default; scripts/ship_verify.py --gate-arm then
+    verifies the equality with the same regex."""
+    main_py = SUBMISSION / "main.py"
+    src = main_py.read_text(encoding="utf-8")
+    pattern = re.compile(r'("PKM_ATTACH_FIXES",\s*\n?\s*")([^"]*)(")')
+    if not pattern.search(src):
+        raise BundleError(
+            f"--fixes: PKM_ATTACH_FIXES default not found in {main_py} — the "
+            "template anchor moved; refusing a bundle whose fix set cannot "
+            "be pinned to the gated one")
+    src = pattern.sub(lambda m: m.group(1) + fixes + m.group(3), src, count=1)
+    main_py.write_text(src, encoding="utf-8")
+    print(f"pinned bundle fix set: {fixes or '(none)'}")
+
+
+def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK,
+           fixes: str | None = None) -> None:
     """Neural bundle. Arch is detected from the checkpoint: `embedding.weight`
     means OptionScorerV2 (M7.3+), whose bundle also ships the ACTUAL encoder
     modules (rl/encoders.py + rl/combat.py) and the feature matrix they load —
-    submission/main.py replays v2 only, so v1 exports are legacy artifacts."""
+    submission/main.py replays v2 only, so v1 exports are legacy artifacts.
+    `fixes` (M43): comma-joined fix names to template into main.py's
+    PKM_ATTACH_FIXES default — pass the gated arm's package."""
     import torch
 
     from tcg.encoders import FEAT
@@ -156,6 +182,9 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK) -> No
     for name in names:
         shutil.copy(str(ROOT / "rl" / name), str(rl_pkg / name))
     np.save(str(rl_pkg / "card_features.npy"), FEAT)
+
+    if fixes is not None:
+        _set_bundle_fixes(fixes)
 
     # M41b § II.3e: the export gates ITSELF. `ship_verify` Tier-1 was a script
     # someone had to remember to run, and M41 is what that costs — an export
@@ -542,14 +571,23 @@ if __name__ == "__main__":
     export_parser.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     export_parser.add_argument("--deck", default=None,
                                help="deck name in decks/ (defaults: neural=kyogre, rules=lucario)")
+    export_parser.add_argument("--fixes", default=None,
+                               help="M43: comma-joined fix names templated "
+                                    "into main.py's PKM_ATTACH_FIXES default "
+                                    "(pass the GATED arm's package; neural "
+                                    "bundles only)")
     gate_parser = sub.add_parser("gate", help="run the pre-submission gates")
     gate_parser.add_argument("--agent", choices=["neural", "rules"], default="neural")
     args = parser.parse_args()
 
     if args.cmd == "export":
         if args.agent == "rules":
+            if args.fixes is not None:
+                parser.error("--fixes only applies to --agent neural "
+                             "(the rules bundle reads no fix string)")
             export_rules(args.deck or DEFAULT_RULES_DECK)
         else:
-            export(args.checkpoint, args.deck or DEFAULT_DECK)
+            export(args.checkpoint, args.deck or DEFAULT_DECK,
+                   fixes=args.fixes)
     else:
         (main_rules if args.agent == "rules" else main_neural)()

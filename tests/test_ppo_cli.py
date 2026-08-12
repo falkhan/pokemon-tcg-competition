@@ -61,3 +61,50 @@ def test_help_documents_phi_ckpt():
 def test_train_accepts_phi_ckpt_kwarg():
     from rl.ppo import train
     assert "phi_ckpt" in inspect.signature(train).parameters
+
+
+# --- M43 review finding #6: the neutral --shaping-coef alias ---------------
+
+def test_shaping_coef_is_an_alias_for_race_shaping():
+    # both spellings must reach the same dest; the misnomer stays accepted so
+    # pre-registered command lines keep parsing. Exercised via the inert-
+    # shaping guard: --shaping value + a zero coef under EITHER spelling is
+    # the p.error path, a nonzero alias value passes the parser (and then
+    # fails later on the missing checkpoint, rc != 2).
+    proc = _run_cli("--shaping", "value", "--shaping-coef", "0",
+                    "--iterations", "1")
+    assert proc.returncode == 2
+    assert "no-op without --race-shaping" in proc.stderr
+
+
+def test_shaping_coef_absent_keeps_race_shaping_default():
+    # the alias uses default=SUPPRESS; if it ever grew its own default it
+    # would silently overwrite --race-shaping's 0.0 (last-added action wins)
+    proc = _run_cli("--shaping", "value", "--iterations", "1")
+    assert proc.returncode == 2
+    assert "no-op without --race-shaping" in proc.stderr
+
+
+def test_help_documents_shaping_coef_and_device():
+    proc = _run_cli("--help")
+    assert proc.returncode == 0
+    assert "--shaping-coef" in proc.stdout
+    assert "--device" in proc.stdout
+
+
+# --- M43: GPU device plumbing ----------------------------------------------
+
+def test_train_accepts_device_kwarg():
+    from rl.plan_iter import train as plan_train
+    from rl.ppo import train as ppo_train
+    assert "device" in inspect.signature(ppo_train).parameters
+    assert "device" in inspect.signature(plan_train).parameters
+
+
+def test_resolve_device():
+    import torch
+
+    from rl.policy import resolve_device
+    assert resolve_device("cpu").type == "cpu"
+    expected = "cuda" if torch.cuda.is_available() else "cpu"
+    assert resolve_device("auto").type == expected

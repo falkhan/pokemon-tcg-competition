@@ -265,3 +265,53 @@ Which slot ships if both lanes pass (ogerpon, alakazam, or both) is
 - Both live subs stay up through Phase 0 accrual (default yes, until the
   45-game reads complete); a Lane B ship replaces 55265105 only after its
   read.
+
+## Amendment — 2026-08-12: box migration; spec r1 re-registration
+
+The project moved to a new machine (i7-11800H, RTX 3070; the old box is
+unavailable). The migrated clone carries the full git history, the raw
+Kaggle cache (5,807 episodes through 2026-08-03), checkpoints through ~M33
+and the tracked ship bundle — but none of the M38+ artifacts this plan
+assumed: `m41b_wide_prod.pt`, `m41_ogerpon.pt`, `m39_retain_b.pt`, all 21
+gate-bed checkpoints, the three harvested loss-family deck CSVs, the ogerpon
+live corpus and the retention shards. Piotr's call (2026-08-12): **rebuild
+locally from the documented recipes** rather than treat the plan as blocked.
+
+What that changes, and what it does not:
+
+1. **`m41_ogerpon.pt` is recovered EXACTLY, not rebuilt** — sub 55265105 is
+   a re-ship of the tracked M41 bundle (`submission/policy_weights.npz`,
+   commit `3db93a8`; `submission/deck.csv` md5-equals `decks/ogerpon.csv`).
+   Lane B's init and control are therefore the live weights, bit-for-bit.
+2. **`m41b_wide_prod.pt` and every bed are NEW G-13 DRAWS** rebuilt from the
+   recipes in `docs/M38.md`/`M39.md`/`M41b.md` and
+   `scripts/m39_build_panels.sh` / `m40_build_lossfam_beds.sh` /
+   `m40_build_topgrim_panel.sh` on the refreshed cache. Bed absolutes were
+   already void (X5); the same-battery arm-minus-control design is
+   unaffected. The Lane A control is the rebuilt wide net — the same net the
+   arm trains from — so the delta remains a clean single-variable read. The
+   caveat: it is NOT bit-identical to what sub 55265099 serves; Phase 0's
+   live read (consequence 0.a) speaks about the live net, the gates about
+   the rebuilt one.
+3. **Spec hashes**: the r0 hashes (`9da112f64aaa77f8` laneB,
+   `c21d3351e44de0e9` laneA_base, `ad5930925ddf024b` laneA_phi) were
+   registered against the old box's weights and are **void**. The specs are
+   re-registered as `*_r1` (same arms, beds, n, seed, bars — only the name
+   and a non-hashed `note` changed): laneB_r1 `249a36090018c78f`,
+   laneA_base_r1 `b01885e1111300ed`, laneA_phi_r1 `b7ab4a2513acf803`.
+   Registered BEFORE any bed was rebuilt or any gate run.
+4. **"Retention shards" in B3** is read as the lineage's own live corpus
+   (`data/bc_m43_oger_w143`), which is already the first `--data` term —
+   M39's retention arms mixed the lineage's own training corpus into the
+   fine-tune, and for `m41_ogerpon` that corpus IS the live ogerpon corpus.
+   The alternative reading (cross-deck alakazam shards) has no precedent and
+   risks deck-context contamination. Flagged for Piotr's review.
+5. **`m39_bc_top` family is not rebuilt** — it appears in no M43 spec and no
+   Lane B pool. `m39_retain_b.pt` is rebuilt only if E0 actually KILLS.
+6. **Deferred fixes landed with this amendment** (commit on `feature/m43`):
+   the invariant shaping form (BACKLOG #5 — `F = γΦ(s′) − Φ(s)`,
+   Φ(terminal)=0, closing the `coef·(Φ_last − Φ_first)` residual BEFORE any
+   Lane A collection), `--shaping-coef` alias (#6), `tcg.shipping export
+   --fixes` + `ship_verify --gate-arm` set-equality (#4), and `--device`
+   GPU plumbing for the two trainers (collection/eval/serving stay CPU;
+   checkpoints save CPU tensors).

@@ -7,6 +7,30 @@ measurement changes the plan.
 
 ---
 
+### 2026-08-12 · M43.1: box migration — recipes are the artifact; spec hashes are void on substrate change
+**Observation:** the project moved to a new laptop and the M38+ artifact
+chain (both lane starts, all 21 gate beds, the loss-family deck CSVs, the
+ogerpon corpus, retention shards) exists only on the old box. But the repo
+itself carries everything needed to reconstruct it: every bed recipe is a
+committed script or diary command, and the exact live ogerpon net is
+recoverable bit-for-bit from the tracked ship bundle
+(`submission/policy_weights.npz`, commit `3db93a8` — sub 55265105 re-ships
+it). Only `m41b_wide_prod` is a genuine re-draw (its w143 export was never
+committed).
+**Pivot:** rebuild locally (Piotr's call) instead of blocking; the three M43
+specs re-registered as `*_r1` (r0 hashes void — registered against weights
+that no longer exist; arms/beds/n/seed/bars unchanged) BEFORE any rebuild or
+gate. The two "deferred to the box" review findings (#5 non-telescoping
+shaping, #4 fix-set divergence) are now fixed in code since the box they
+waited for is this one. Standing lesson recorded: **ship exports that are
+worth re-serving must be committed** — the tracked bundle turned a rebuild
+into a recovery for one lane and nothing could do the same for the other.
+**Also:** GPU training plumbed (`--device auto` on the two trainers; RTX
+3070 cuts the 14-epoch trains to minutes; checkpoints stay CPU tensors;
+collection/eval/serving untouched). The review's s2-sampler "width crash"
+was re-verified and does not exist (M27 width shim in `OptionScorerV3.forward`
+covers it); only the missing `oger_mirror` bed was real.
+
 ### 2026-08-11 · M43 prep: pipeline review — three CLI-layer defects fixed, two reward/ship defects deferred to the box
 **Observation:** a full review of the PPO path against the M43 pre-registration
 (`docs/m43-ppo-pipeline-review.md`) found the plan's own Phase-0 kill branch

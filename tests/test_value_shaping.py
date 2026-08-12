@@ -4,7 +4,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from rl.collector import _load_phi_net, _value_potential, collect
+from rl.collector import SHAPING_GAMMA, _load_phi_net, _shaping_step, _value_potential, collect
 from rl.encoders import N_CONTEXTS, N_STATE_IDS_V3, OPTION_V3_DIM, STATE_V2_DIM
 from rl.plan import PLAN_DIM
 from rl.policy import OptionScorerV3
@@ -58,3 +58,51 @@ def test_collect_value_shaping_requires_explicit_phi_ckpt(tmp_path):
     with pytest.raises(ValueError, match="FROZEN START"):
         collect(1, "checkpoints/whatever.pt", 1, out_dir=tmp_path,
                 race_shaping=0.1, shaping="value")
+
+
+# --- the invariant shaping form (M43 review finding #5) ------------------
+
+def test_shaping_gamma_pins_ppo_gamma():
+    """SHAPING_GAMMA is a copy (ppo.py imports the collector, so the collector
+    cannot import it back); this test is the pin that keeps them equal."""
+    from rl.ppo import GAMMA
+    assert SHAPING_GAMMA == GAMMA
+
+
+def test_shaping_step_form():
+    # each increment is exactly coef * (gamma*phi' - phi)
+    assert _shaping_step(0.4, 0.7, 0.05) == pytest.approx(
+        0.05 * (SHAPING_GAMMA * 0.7 - 0.4))
+    assert _shaping_step(0.4, 0.7, 0.05, gamma=0.5) == pytest.approx(
+        0.05 * (0.5 * 0.7 - 0.4))
+
+
+def test_shaping_terminal_term_zeroes_the_potential():
+    # F_T with phi(terminal)=0 is -coef*phi_last regardless of gamma
+    assert _shaping_step(0.83, 0.0, 0.05) == pytest.approx(-0.05 * 0.83)
+    assert _shaping_step(-0.6, 0.0, 0.05, gamma=0.1) == pytest.approx(0.05 * 0.6)
+
+
+def test_shaping_telescopes_at_gamma_one():
+    # undiscounted sum over any phi sequence (incl. the terminal step)
+    # collapses to -coef*phi_0 — no residual for ending in a high-phi state
+    rng = np.random.default_rng(7)
+    phis = rng.uniform(-1.0, 1.0, size=40)
+    coef = 0.05
+    total = sum(_shaping_step(phis[i - 1], phis[i], coef, gamma=1.0)
+                for i in range(1, len(phis)))
+    total += _shaping_step(phis[-1], 0.0, coef, gamma=1.0)
+    assert total == pytest.approx(-coef * phis[0])
+
+
+def test_shaping_telescopes_discounted():
+    # with per-step discounting, sum_t gamma^t * F_t = -coef*phi_0 exactly
+    # (each phi_t appears once as +gamma^t*coef*gamma*phi_t and once as
+    # -gamma^(t+1)*coef*phi_t)
+    rng = np.random.default_rng(11)
+    phis = rng.uniform(-1.0, 1.0, size=25)
+    coef, g = 0.05, SHAPING_GAMMA
+    steps = [_shaping_step(phis[i - 1], phis[i], coef) for i in range(1, len(phis))]
+    steps.append(_shaping_step(phis[-1], 0.0, coef))
+    total = sum((g ** t) * f for t, f in enumerate(steps))
+    assert total == pytest.approx(-coef * phis[0])
