@@ -180,6 +180,18 @@ def input_parity_checks(npz_path: Path, main_src: str,
     return out
 
 
+def gate_fix_package(arm: str) -> frozenset | None:
+    """M43 review finding #4: the fix package a gated arm spec token ran
+    with. Kind prefix -> rl/matchrunner's _MODEL_FIX_KINDS package; bare
+    'model' = no fixes; None = unknown kind (a verification failure, not a
+    silent pass)."""
+    from rl.matchrunner import _MODEL_FIX_KINDS
+    kind = arm.split(":", 1)[0]
+    if kind == "model":
+        return frozenset()
+    return _MODEL_FIX_KINDS.get(kind)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkpoint", required=True)
@@ -190,6 +202,13 @@ def main() -> int:
     # `plan_iter train` was given for this checkpoint.
     ap.add_argument("--corpus", required=True, nargs="+", type=Path,
                     help="shard dirs this checkpoint was trained on")
+    # M43 review finding #4: the gate measures a matchrunner kind token's fix
+    # package while the bundle reads main.py's hardcoded default — unlinked
+    # copies that have already diverged once. Pass the gated arm spec (e.g.
+    # 'model-c-pkgz:checkpoints/x.pt:alakazam_v2_h4') to require EQUALITY.
+    ap.add_argument("--gate-arm", default=None,
+                    help="gated arm spec token; its kind's fix package must "
+                         "equal the bundle's PKM_ATTACH_FIXES set")
     args = ap.parse_args()
     fails: list[str] = []
 
@@ -223,6 +242,7 @@ def main() -> int:
     import rl.plan as rp
     main_src = (SUBMISSION / "main.py").read_text(encoding="utf-8")
     m = re.search(r'"PKM_ATTACH_FIXES",\s*\n?\s*"([^"]*)"', main_src)
+    names = None
     if not m:
         check(False, "fix string found in submission/main.py")
     else:
@@ -234,6 +254,22 @@ def main() -> int:
         check(not unknown, "every fix name resolves",
               f"[{', '.join(names)}]" if not unknown
               else f"UNRECOGNISED: {unknown} (would be SILENTLY dropped)")
+
+    # 3b. gate/ship fix-set EQUALITY (M43 review finding #4). Check 3 proves
+    #     the names parse; this proves they are the SAME SET the gate ran.
+    if args.gate_arm:
+        gated = gate_fix_package(args.gate_arm)
+        if gated is None:
+            check(False, "3b. gate/ship fix-set equality",
+                  f"unknown spec kind '{args.gate_arm.split(':', 1)[0]}' "
+                  "(not in _MODEL_FIX_KINDS)")
+        elif names is None:
+            check(False, "3b. gate/ship fix-set equality",
+                  "no fix string in the bundle to compare")
+        else:
+            kind = args.gate_arm.split(":", 1)[0]
+            check(set(names) == set(gated), "3b. gate/ship fix-set equality",
+                  f"gate[{kind}]={sorted(gated)} bundle={sorted(names)}")
 
     # 4. weights are the gated checkpoint's, not a stale or random export
     import numpy as np

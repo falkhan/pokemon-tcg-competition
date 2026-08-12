@@ -23,9 +23,11 @@ M7.4b additions:
 - encoders-v2 checkpoints (embedding.weight in the state dict) are auto-detected:
   decisions are encoded with encode_state_v2/encode_option_v2 and shards gain
   state_ids / option_ids / deck_idx columns (rl/ppo.py trains OptionScorerV2 on them);
-- optional potential-based race shaping (docs/M7-plan.md §3b): reward +=
-  coef * (phi_t - phi_{t-1}) with phi = the race-delta feature, so SETUP actions get
-  credit without corrupting the optimal policy (the shaping telescopes out of returns).
+- optional potential-based race shaping (docs/M7-plan.md §3b; invariant form since
+  the M43 review): reward += coef * (gamma*phi_t - phi_{t-1}) plus a closing
+  terminal step at phi = 0, so the shaping telescopes out of the discounted
+  return exactly and SETUP actions get credit without corrupting the optimal
+  policy.
 
 Shard layout = BC fields + PPO fields (actions/logprobs/values/rewards/players
 [+ state_ids/option_ids/deck_idx for v2]); see rl/ppo.py load_shards. `players` is
@@ -44,6 +46,8 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "data" / "ppo"
 DECK_DIR = ROOT / "decks"
 PRIZE_SHAPING = 0.1
+SHAPING_GAMMA = 0.99            # MUST equal rl.ppo.GAMMA (pinned by test; ppo.py
+                                # imports this module, so importing it back would cycle)
 LEARN_DECK = "kyogre"           # the deck the learning policy pilots (our champion base)
 
 
@@ -74,6 +78,20 @@ def default_pool(checkpoint: str, learn_deck: str = LEARN_DECK):
         weights.append(0.1 / len(past))
     w = np.array(weights, dtype=np.float64)
     return specs, (w / w.sum()).tolist()
+
+
+def _shaping_step(prev_phi: float, phi: float, coef: float,
+                  gamma: float = SHAPING_GAMMA) -> float:
+    """One potential-based shaping increment, F = coef * (gamma*phi(s') - phi(s)).
+
+    The invariant (Ng et al. 1999) form the M43 review required: with
+    phi(terminal) = 0 — pass phi=0.0 for the terminal step — the discounted
+    shaping sum telescopes to -coef*phi(s0), which is action-independent, so
+    the optimal policy is unchanged. The pre-M43 form (no gamma, no terminal
+    step) left a coef*(phi_last - phi_first) residual that paid the agent for
+    ENDING in a high-potential state.
+    """
+    return coef * (gamma * phi - prev_phi)
 
 
 def _dev_potential(obs) -> float:
@@ -117,8 +135,8 @@ def _load_phi_net(phi_ckpt, learner_sd):
 def _value_potential(phi_net, sc, sids, opts, oids, plan) -> float:
     """Phi = V(s) from the frozen-start net (BACKLOG #13(c) step 2): the
     trained value head as the principled 'board advantage' potential.
-    F = coef * (phi' - phi) telescopes out of the return exactly like the
-    race/dev potentials — same shaping site, same convention."""
+    Fed through the same _shaping_step site as the race/dev potentials
+    (F = coef * (gamma*phi' - phi), terminal phi = 0)."""
     import torch
     from rl.ppo import _forward
     with torch.no_grad():
@@ -525,17 +543,18 @@ def _play_worker(args: tuple) -> tuple:
                     reward -= defect_penalty
                     n_defects += 1
                 if race_shaping:
-                    # Potential-based setup shaping (M7-plan §3b): phi = the race
-                    # delta; F = coef*(phi' - phi) telescopes out of the return,
-                    # so it credits board development without changing the
-                    # optimal policy. M43: `value` swaps in the frozen start's
-                    # own V(s) as the potential.
+                    # Potential-based setup shaping (M7-plan §3b, invariant form
+                    # per the M43 review): phi = the race delta, the dev tier,
+                    # or (`value`, M43) the frozen start's own V(s). Each step
+                    # adds F = coef*(gamma*phi' - phi); the terminal step below
+                    # closes the telescope at phi(terminal) = 0. Kept on the
+                    # arriving row, one step late, same as the prize shaping.
                     phi = (_value_potential(phi_net, sc, sids, opts, oids, plan)
                            if phi_net is not None
                            else _dev_potential(obs) if shaping == "dev"
                            else float(_race_features(obs.current)[7]))
                     if prev_phi is not None:
-                        reward += race_shaping * (phi - prev_phi)
+                        reward += _shaping_step(prev_phi, phi, race_shaping)
                     prev_phi = phi
                 rows.append(dict(state=sc, state_ids=sids, opts=opts, option_ids=oids,
                                  action=action, logprob=logprob, value=value,
@@ -548,6 +567,9 @@ def _play_worker(args: tuple) -> tuple:
         battle_finish()
         if rows:                                        # terminal reward on learner's last row
             rows[-1]["reward"] += 0.0 if result == 2 else (1.0 if result == learn_seat else -1.0)
+            if race_shaping and prev_phi is not None:
+                # close the shaping telescope: F_T = coef*(gamma*0 - phi_last)
+                rows[-1]["reward"] += _shaping_step(prev_phi, 0.0, race_shaping)
 
         for r in rows:
             cols["states"].append(r["state"]); cols["options"].append(r["opts"])

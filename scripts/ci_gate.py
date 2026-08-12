@@ -36,15 +36,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 #: Tolerated by NAME. Each needs a reason and an owner, not a shrug.
-#:   test_meta_eval x3 — pre-existing selection/budget drift on clean main
-#:   test_network   x1 — Windows-only tempfile PermissionError in np.savez
-KNOWN_FAILURES = {
-    "tests/test_meta_eval.py::TestSelection::test_keeps_the_genuine_tail",
-    "tests/test_meta_eval.py::TestSelection::"
-    "test_include_mirror_restores_the_old_behaviour",
-    "tests/test_meta_eval.py::TestBudget::test_whole_budget_goes_to_the_survivors",
-    "tests/test_network.py::test_v2_save_npz_round_trips",
-}
+#: EMPTY since M43.1 (2026-08-12, the Linux box migration): the 3
+#: test_meta_eval drift failures and the Windows-only test_network tempfile
+#: PermissionError all pass here — the gate itself flagged them for removal.
+KNOWN_FAILURES: set[str] = set()
 
 
 def _run(cmd: list[str]) -> tuple[int, str]:

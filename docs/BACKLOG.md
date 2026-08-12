@@ -39,26 +39,24 @@ they're picked up.
 
 ## From the M43 pipeline review (2026-08-11, docs/m43-ppo-pipeline-review.md)
 
-- **Gate-vs-shipped fix-set equality (review finding #4).** The gate battery
-  measures the `model-c-pkgz:` spec token, but the shipped fix set is a
-  hardcoded default string in the tracked `submission/main.py` — currently
-  `"conserve,planzero,ash,ashguard"` — and `tcg.shipping export` neither takes
-  a `--fixes` flag nor regenerates `main.py`. Remediation (on the box, before
-  the next ship): add `--fixes` to the export that templates the string into
-  `submission/main.py`, and extend `scripts/ship_verify.py` to require the
-  shipped set to EQUAL the gated token's package, not merely contain valid
-  names.
-- **Potential shaping is not the invariant form (review finding #5).** The
-  collector applies `F = coef·(Φ(s′) − Φ(s))` with no γ and no terminal Φ
-  subtraction, leaving a `coef·(Φ_last − Φ_first)` residual — pay for ending
-  in a high-value state. With Φ = V(s) (M43 A-phi) the residual grows exactly
-  where the arm matters. Either move to `F = γΦ(s′) − Φ(s)` with Φ(terminal)=0,
-  or pre-register the residual as intended, BEFORE Lane A launches; a
-  reward-math change mid-flight would invalidate the hashed specs.
-- **`--shaping-coef` alias (review finding #6).** `--race-shaping` is the
-  coefficient for every potential; add the neutral alias at M43 execution
-  (keep the old spelling accepted — pre-registered command lines must keep
-  parsing).
+- ~~**Gate-vs-shipped fix-set equality (review finding #4).**~~ **DONE —
+  M43.1 (2026-08-12):** `tcg.shipping export --fixes` templates the gated
+  package into `submission/main.py` (hard-fails if the anchor moved;
+  threaded through `build_submission.sh`), and `scripts/ship_verify.py
+  --gate-arm <spec token>` check 3b requires SET EQUALITY with the kind's
+  `_MODEL_FIX_KINDS` package (unknown kind = FAIL). Tests:
+  `tests/test_fixset_equality.py`.
+- ~~**Potential shaping is not the invariant form (review finding #5).**~~
+  **DONE — M43.1 (2026-08-12), before any Lane A collection:**
+  `rl/collector._shaping_step` applies `F = coef·(γΦ(s′) − Φ(s))` with a
+  closing terminal step at Φ=0 (`SHAPING_GAMMA` pinned to `rl.ppo.GAMMA` by
+  test). The specs were re-registered as `*_r1` in the same commit (the
+  migration voided the r0 hashes anyway), so no mid-flight invalidation.
+  Tests: telescoping identities in `tests/test_value_shaping.py`.
+- ~~**`--shaping-coef` alias (review finding #6).**~~ **DONE — M43.1
+  (2026-08-12):** alias added with `dest=race_shaping` and
+  `default=SUPPRESS`; both spellings parse, pre-registered command lines
+  unaffected. Tests in `tests/test_ppo_cli.py`.
 
 ## From the M37 audit (logged, not scheduled)
 
@@ -482,7 +480,18 @@ self-play become the M40 agenda rather than more harvesting.
    falsification order below runs verbatim — A-base (outcome reward,
    KL-anchored) vs A-phi (`--shaping value`, Φ = the frozen start's V(s),
    landed in `rl/collector.py`/`rl/ppo.py` with the M43 plan commit);
-   event bonuses stay banned. Parts (a)/(b) stay parked as written. Three
+   event bonuses stay banned. Parts (a)/(b) stay parked as written.
+   **OUTCOME (2026-08-12, M43 executed):** step (1) supporter-credit hole
+   reads CLOSED under the retain_b-warm-started critic (adv-by-type
+   play_supporter ≈ +0.01..+0.05 all leg); step (2) resolved as **"no
+   valid Φ exists yet"** — the wide head E0-kills (0.455), retain_b's head
+   passes standalone (0.723) but FAILS transplanted onto the wide body
+   (0.559): the head is body-specific, so A-phi was dropped by rule 0.c
+   and the shaping infrastructure (now the invariant form) awaits a net
+   whose OWN head passes E0. The A-base premise itself is **VALIDATED:
+   +3.72pp pooled z=5.93 over the frozen start on the 25-bed roster**
+   (`m43_laneA_base_r1`), wall_d1 +19.75pp — honest PPO is live-positive
+   offline for the first time; live A/B pending. Three
    parts with very different standing — the value of this entry is keeping
    them apart.
 

@@ -20,7 +20,8 @@ import torch
 import torch.nn.functional as F
 
 from rl.collector import collect
-from rl.policy import OptionScorer, OptionScorerV2, OptionScorerV3
+from rl.policy import (OptionScorer, OptionScorerV2, OptionScorerV3,
+                       resolve_device)
 
 ROOT = Path(__file__).resolve().parent.parent
 PPO_DIR = ROOT / "data" / "ppo"
@@ -226,11 +227,20 @@ def _forward(model, states, state_ids, options, option_ids, plans):
     (the parity tests drive rl models through tcg's update and vice versa)."""
     if hasattr(model, "plan_enc"):
         if plans is None:                      # v2-era shards under a v3 net
-            plans = torch.zeros(len(states), model.plan_dim)
+            plans = torch.zeros(len(states), model.plan_dim,
+                                device=states.device)
         return model(states, plans, state_ids, options, option_ids)
     if state_ids is None:
         return model(states, options)
     return model(states, state_ids, options, option_ids)
+
+
+def _to_device(device, *tensors):
+    """Move a collated batch to the training device (None = leave on CPU,
+    the historical behavior — keeps the tcg/ppo.py parity twin comparable)."""
+    if device is None:
+        return tensors
+    return tuple(t.to(device) if t is not None else None for t in tensors)
 
 
 def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
@@ -238,7 +248,7 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
                returns: np.ndarray, epochs: int = 4, batch_size: int = 256,
                entropy_coef: float = ENTROPY_COEF,
                ref_model=None, kl_coef: float = 0.0,
-               plan_coef: float = 0.0) -> dict:
+               plan_coef: float = 0.0, device=None) -> dict:
     """The clipped PPO update over all collected decisions.
 
     Per minibatch (use collate_ppo above; shuffle rows each epoch):
@@ -269,7 +279,7 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
         for i in range(0, n, batch_size):
             rows = perm[i:i + batch_size]
             states, state_ids, options, option_ids, plans, valid, actions, old_lp, adv_b, ret_b = \
-                collate_ppo(data, rows, adv, returns)
+                _to_device(device, *collate_ppo(data, rows, adv, returns))
             logits, value = _forward(model, states, state_ids, options,
                                      option_ids, plans)
             logits = logits.masked_fill(~valid, -1e9)
@@ -302,7 +312,8 @@ def ppo_update(model: OptionScorer, opt: torch.optim.Optimizer,
                 # entropy bonus guards against collapse instead.
                 pb = collate_plan(data, rows)
                 if pb is not None:
-                    sub, cands, pvalid, pactions, p_old_lp = pb
+                    sub, cands, pvalid, pactions, p_old_lp = \
+                        _to_device(device, *pb)
                     plan_logits = model.plan_logits(states[sub],
                                                     None if state_ids is None
                                                     else state_ids[sub], cands)
@@ -438,7 +449,8 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           plan_tau: float = 0.0, plan_dirichlet: float = 0.0,
           plan_coef: float = 0.0, gust_boost: float = 0.0,
           entropy_anneal_to: float | None = None,
-          kl_anneal_to: float | None = None):
+          kl_anneal_to: float | None = None,
+          device: str = "auto"):
     """M21 additions (all default-off = the M20 recipe exactly):
     opponents        — 'spec=weight' mixture for the collector (rl/collector
                        parse_pool syntax incl. mirror=/past= tokens)
@@ -478,14 +490,20 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
     if not best_path.exists():
         shutil.copy(CKPT_DIR / start, best_path)       # the start is the initial champion
 
+    dev = resolve_device(device)
+    if dev.type != "cpu":
+        print(f"training on {dev} (updates only; collection/eval stay CPU)",
+              flush=True)
     model = _load_model(CKPT_DIR / start)
     if value_ckpt:
         loaded = warm_start_value(model, Path(value_ckpt))
         print(f"critic warm-start from {value_ckpt}: {loaded}", flush=True)
+    model.to(dev)
     ref_model = None
     if kl_coef:
         # M20 leg B: the KL anchor is the FROZEN start policy.
         ref_model = _load_model(CKPT_DIR / start)
+        ref_model.to(dev)
         ref_model.eval()
         for p_ in ref_model.parameters():
             p_.requires_grad_(False)
@@ -506,7 +524,9 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         for old in PPO_DIR.glob("ppo_shard_*.npz"):
             old.unlink()                                # on-policy: stale data is poison
         work = CKPT_DIR / f"ppo_current{suffix}.pt"
-        torch.save(model.state_dict(), work)
+        # CPU tensors: the spawn workers (and every other consumer) load on CPU
+        cpu_sd = {k: v.detach().cpu() for k, v in model.state_dict().items()}
+        torch.save(cpu_sd, work)
         mix = _mix_for(it)
         pool = (parse_pool(mix, str(work), learn_deck or "kyogre", tag=tag)
                 if mix else None)
@@ -551,7 +571,7 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         stats = ppo_update(model, opt, data, advantages, returns,
                            entropy_coef=ec_it,
                            ref_model=ref_model, kl_coef=kl_it,
-                           plan_coef=plan_coef)
+                           plan_coef=plan_coef, device=dev)
         for k, v in stats.items():
             writer.add_scalar(f"train/{k}", v, it)
         writer.add_scalar("train/entropy_coef", ec_it, it)
@@ -571,8 +591,10 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             print(f"iter {it}: vs_solver {wr:.1%}  vs_teacher {wr_teacher:.1%}")
             if wr_teacher > best_wr:
                 best_wr = wr_teacher
-                torch.save(model.state_dict(), best_path)
-                torch.save(model.state_dict(), CKPT_DIR / f"ppo{suffix}_it{it:04d}.pt")
+                cpu_sd = {k: v.detach().cpu()
+                          for k, v in model.state_dict().items()}
+                torch.save(cpu_sd, best_path)
+                torch.save(cpu_sd, CKPT_DIR / f"ppo{suffix}_it{it:04d}.pt")
                 print(f"iter {it}: PROMOTED (best vs_teacher {wr_teacher:.1%})")
 
 
@@ -593,6 +615,12 @@ if __name__ == "__main__":
                         "(the M2 diffusion signature, seen again in attempt 1)")
     p.add_argument("--race-shaping", type=float, default=0.0,
                    help="potential-based setup-shaping coef for the collector")
+    p.add_argument("--shaping-coef", dest="race_shaping", type=float,
+                   default=argparse.SUPPRESS,
+                   help="neutral alias for --race-shaping (M43: the coef "
+                        "applies to whichever potential --shaping selects, "
+                        "not just the race delta). SUPPRESS keeps the "
+                        "original's 0.0 default when the alias is absent")
     p.add_argument("--shaping", choices=["race", "dev", "value"], default="race",
                    help="shaping potential: race delta (M7.4b), the M8.3 "
                         "dev potential (race+ready+evo+bench), or the frozen "
@@ -644,6 +672,12 @@ if __name__ == "__main__":
     p.add_argument("--kl-anneal-to", type=float, default=None,
                    help="M21: linear kl_coef target at the last iter "
                         "(anneal to 0 = pure self-play by leg end)")
+    p.add_argument("--device", type=str, default="auto",
+                   choices=["auto", "cpu", "cuda"],
+                   help="M43: device for the PPO update (auto = cuda when "
+                        "available). Collection and eval stay CPU; "
+                        "checkpoints are saved as CPU tensors either way; "
+                        "cuda runs are NOT bit-reproducible vs cpu")
     args = p.parse_args()
     if args.shaping != "race" and args.race_shaping == 0:
         # A non-default potential with a zero coefficient is always a mistake:
@@ -665,4 +699,5 @@ if __name__ == "__main__":
           plan_dirichlet=args.plan_dirichlet, plan_coef=args.plan_coef,
           gust_boost=args.gust_boost,
           entropy_anneal_to=args.entropy_anneal_to,
-          kl_anneal_to=args.kl_anneal_to)
+          kl_anneal_to=args.kl_anneal_to,
+          device=args.device)

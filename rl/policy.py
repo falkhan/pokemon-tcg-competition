@@ -15,6 +15,17 @@ from .encoders import (EMBED_DIM, N_CARD_IDS, N_CONTEXTS, N_OPTION_IDS,
                        STATE_V2_DIM)
 
 
+def resolve_device(spec: str = "auto") -> torch.device:
+    """M43: '--device auto' -> cuda when available, else cpu; 'cpu'/'cuda'
+    pass through. Training-side only — collection workers, matchrunner and
+    the shipped bundle stay CPU. NOTE: cuda changes reduction order, so a
+    seeded run does not reproduce a CPU run bit-for-bit (acceptable: G-13
+    treats training as a lottery and gates on panels, not single draws)."""
+    if spec == "auto":
+        spec = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.device(spec)
+
+
 class OptionScorer(nn.Module):
     """score(state, context, option_i) for each option i; plus V(state)."""
 

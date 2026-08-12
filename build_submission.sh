@@ -16,12 +16,14 @@ AGENT="neural"
 MESSAGE=""
 CHECKPOINT=""
 DECK=""
+FIXES=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --agent)      AGENT="$2"; shift 2 ;;
         --message)    MESSAGE="$2"; shift 2 ;;
         --checkpoint) CHECKPOINT="$2"; shift 2 ;;
         --deck)       DECK="$2"; shift 2 ;;
+        --fixes)      FIXES="$2"; shift 2 ;;   # M43: gated fix package -> main.py
         *) echo "unknown option: $1" >&2; exit 2 ;;
     esac
 done
@@ -65,6 +67,7 @@ fi
 EXPORT_ARGS=(--agent "$AGENT")
 [[ -n "$CHECKPOINT" ]] && EXPORT_ARGS+=(--checkpoint "$CHECKPOINT")
 EXPORT_ARGS+=(--deck "$DECK")
+[[ -n "$FIXES" ]] && EXPORT_ARGS+=(--fixes "$FIXES")
 
 echo "\e[36m[1/3] Export artifacts (tcg.shipping export ${EXPORT_ARGS[*]})\e[0m"
 "${PY[@]}" -m tcg.shipping export "${EXPORT_ARGS[@]}"

@@ -1,30 +1,91 @@
 {
-  "name": "m43_laneB",
-  "question": "does closing ogerpon's ~13k-row corpus gap with manufactured self-play rows (retention-mixed, alpha=0.25) make the width-143 retrain pay on ogerpon?",
-  "arm": "model-pz:checkpoints/m43b_oger_wide.pt:decks/ogerpon.csv",
-  "control": "model-pz:checkpoints/m41_ogerpon.pt:decks/ogerpon.csv",
-  "beds": [
-    {"name": "tuned", "spec": "rule:tuned:lucario"},
-    {"name": "wall_d1", "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"},
-    {"name": "wall_d2", "spec": "model:checkpoints/m39_bed_wall_d2.pt:greattusk_wall"},
-    {"name": "wall_d3", "spec": "model:checkpoints/m39_bed_wall_d3.pt:greattusk_wall"},
-    {"name": "grim_d1", "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"},
-    {"name": "grim_d2", "spec": "model:checkpoints/m39_bc_grim_b.pt:grim_live"},
-    {"name": "grim_d3", "spec": "model:checkpoints/m39_bed_grim_d3.pt:grim_live"},
-    {"name": "topgrim_d1", "spec": "model:checkpoints/m39_bc_topgrim.pt:grim_live"},
-    {"name": "topgrim_d2", "spec": "model:checkpoints/m40_bed_topgrim_d2.pt:grim_live"},
-    {"name": "topgrim_d3", "spec": "model:checkpoints/m40_bed_topgrim_d3.pt:grim_live"},
-    {"name": "dragapult_d1", "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"},
-    {"name": "dragapult_d2", "spec": "model:checkpoints/m40_bed_dragapult_d2.pt:data/kaggle/dragapult_3631d393_deck.csv"},
-    {"name": "dragapult_d3", "spec": "model:checkpoints/m40_bed_dragapult_d3.pt:data/kaggle/dragapult_3631d393_deck.csv"},
-    {"name": "garchomp_d1", "spec": "model:checkpoints/m40_bed_garchomp_d1.pt:data/kaggle/garchomp_c7b3253f_deck.csv"},
-    {"name": "garchomp_d2", "spec": "model:checkpoints/m40_bed_garchomp_d2.pt:data/kaggle/garchomp_c7b3253f_deck.csv"},
-    {"name": "garchomp_d3", "spec": "model:checkpoints/m40_bed_garchomp_d3.pt:data/kaggle/garchomp_c7b3253f_deck.csv"},
-    {"name": "rocket_d1", "spec": "model:checkpoints/m40_bed_rocket_d1.pt:data/kaggle/rocket_59e27a5e_deck.csv"},
-    {"name": "rocket_d2", "spec": "model:checkpoints/m40_bed_rocket_d2.pt:data/kaggle/rocket_59e27a5e_deck.csv"},
-    {"name": "rocket_d3", "spec": "model:checkpoints/m40_bed_rocket_d3.pt:data/kaggle/rocket_59e27a5e_deck.csv"}
-  ],
-  "n_per_cell": 1000,
-  "seed": 1,
-  "bars": {"pass": 0.02, "kill": 0.0}
+ "name": "m43_laneB_r1",
+ "question": "does closing ogerpon's ~13k-row corpus gap with manufactured self-play rows (retention-mixed, alpha=0.25) make the width-143 retrain pay on ogerpon?",
+ "arm": "model-pz:checkpoints/m43b_oger_wide.pt:decks/ogerpon.csv",
+ "control": "model-pz:checkpoints/m41_ogerpon.pt:decks/ogerpon.csv",
+ "beds": [
+  {
+   "name": "tuned",
+   "spec": "rule:tuned:lucario"
+  },
+  {
+   "name": "wall_d1",
+   "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"
+  },
+  {
+   "name": "wall_d2",
+   "spec": "model:checkpoints/m39_bed_wall_d2.pt:greattusk_wall"
+  },
+  {
+   "name": "wall_d3",
+   "spec": "model:checkpoints/m39_bed_wall_d3.pt:greattusk_wall"
+  },
+  {
+   "name": "grim_d1",
+   "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"
+  },
+  {
+   "name": "grim_d2",
+   "spec": "model:checkpoints/m39_bc_grim_b.pt:grim_live"
+  },
+  {
+   "name": "grim_d3",
+   "spec": "model:checkpoints/m39_bed_grim_d3.pt:grim_live"
+  },
+  {
+   "name": "topgrim_d1",
+   "spec": "model:checkpoints/m39_bc_topgrim.pt:grim_live"
+  },
+  {
+   "name": "topgrim_d2",
+   "spec": "model:checkpoints/m40_bed_topgrim_d2.pt:grim_live"
+  },
+  {
+   "name": "topgrim_d3",
+   "spec": "model:checkpoints/m40_bed_topgrim_d3.pt:grim_live"
+  },
+  {
+   "name": "dragapult_d1",
+   "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  },
+  {
+   "name": "dragapult_d2",
+   "spec": "model:checkpoints/m40_bed_dragapult_d2.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  },
+  {
+   "name": "dragapult_d3",
+   "spec": "model:checkpoints/m40_bed_dragapult_d3.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  },
+  {
+   "name": "garchomp_d1",
+   "spec": "model:checkpoints/m40_bed_garchomp_d1.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  },
+  {
+   "name": "garchomp_d2",
+   "spec": "model:checkpoints/m40_bed_garchomp_d2.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  },
+  {
+   "name": "garchomp_d3",
+   "spec": "model:checkpoints/m40_bed_garchomp_d3.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  },
+  {
+   "name": "rocket_d1",
+   "spec": "model:checkpoints/m40_bed_rocket_d1.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  },
+  {
+   "name": "rocket_d2",
+   "spec": "model:checkpoints/m40_bed_rocket_d2.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  },
+  {
+   "name": "rocket_d3",
+   "spec": "model:checkpoints/m40_bed_rocket_d3.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  }
+ ],
+ "n_per_cell": 1000,
+ "seed": 1,
+ "bars": {
+  "pass": 0.02,
+  "kill": 0.0
+ },
+ "note": "r1 (2026-08-12): box migration \u2014 the project moved to a new machine; every bed/lane checkpoint referenced here is a LOCAL REBUILD from the documented recipes (m41_ogerpon recovered exactly from the tracked ship bundle; all others are new G-13 draws). The r0 hash was registered against the old box's weights and is VOID; paths are unchanged. See docs/M43-plan.md amendment + docs/M43.md manifest."
 }
