@@ -1,0 +1,18 @@
+{
+  "name": "m44_league",
+  "note": "docs/M44-plan.md r4 roster. Pair L joins after the Step 4 seed pick (best-of-3 vs tuned, n=400). md5 pins are the cell-cache identity: a promoted leg updates net+md5 here DELIBERATELY, which rotates that pair's cell digest and replays only its rows.",
+  "players": [
+    {"id": "K", "spec": "model-c-pkgz:checkpoints/ppo_best_m43a_base.pt:alakazam_v2_h4",
+     "net": "checkpoints/ppo_best_m43a_base.pt",
+     "md5": "749e0c8cd368b7bb33f4beb84c165178", "deck": "alakazam_v2_h4"},
+    {"id": "O", "spec": "model-pz:checkpoints/m41_ogerpon.pt:ogerpon",
+     "net": "checkpoints/m41_ogerpon.pt",
+     "md5": "4eae59d049787b658438cfeea38794b9", "deck": "ogerpon"},
+    {"id": "G", "spec": "model-pz:checkpoints/m39_bc_grim.pt:grim_live",
+     "net": "checkpoints/m39_bc_grim.pt",
+     "md5": "ddd079e812868b8eea890b7d43e81d32", "deck": "grim_live"},
+    {"id": "tuned", "spec": "rule:tuned:lucario", "deck": "lucario",
+     "anchor": true, "pin": 1000},
+    {"id": "iono", "spec": "rule:iono", "deck": "iono", "anchor": true}
+  ]
+}

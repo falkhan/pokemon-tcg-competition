@@ -191,7 +191,10 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK,
     # ran mid-edit and shipped a half-finished encoder, caught by a QC sweep
     # that could easily have passed. A guard that travels with the dangerous
     # action cannot be skipped by forgetting.
-    failures = verify_bundle(deck=deck)
+    # base= passed explicitly: the default is bound at definition time, so a
+    # caller that redirects the module-global SUBMISSION (m39_build_qc_beds)
+    # would otherwise have its bed verified against the real ship directory.
+    failures = verify_bundle(deck=deck, base=SUBMISSION)
     if failures:
         raise BundleError(
             "export REFUSED to leave a shippable bundle:\n  - "

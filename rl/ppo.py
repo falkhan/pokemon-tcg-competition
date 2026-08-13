@@ -12,6 +12,7 @@ Run one iteration end-to-end:
   python -m rl.ppo --iterations 1
 """
 import argparse
+import os
 import shutil
 from pathlib import Path
 
@@ -436,6 +437,36 @@ def _solver_opponent(deck: str, instance: str):
     return agent
 
 
+def _save_train_state(path: Path, model, opt, next_it: int, best_wr: float,
+                      meta: dict) -> None:
+    """M44 3a: everything a killed leg needs to continue — model + optimizer
+    state, the first iteration NOT yet run, the promotion bar, and the run
+    identity (`meta`). Atomic: <path>.tmp then os.replace, so a SIGKILL
+    mid-save leaves the previous state intact."""
+    state = {"model": {k: v.detach().cpu() for k, v in model.state_dict().items()},
+             "opt": opt.state_dict(),
+             "next_it": next_it, "best_wr": best_wr, "meta": meta}
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    torch.save(state, tmp)
+    os.replace(tmp, path)
+
+
+def _load_train_state(path: Path, meta: dict) -> dict:
+    """M44 3b: load + refuse on identity mismatch. start/iterations/learn_deck
+    must match the CLI exactly (a resumed leg is the SAME leg); `opponents` is
+    stored for the record but not enforced — the pool legitimately updates as
+    other league legs complete."""
+    if not path.exists():
+        raise FileNotFoundError(f"--resume: no state file {path}")
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    for k in ("start", "iterations", "learn_deck"):
+        if state["meta"].get(k) != meta.get(k):
+            raise ValueError(
+                f"--resume meta mismatch on {k!r}: state has "
+                f"{state['meta'].get(k)!r}, CLI has {meta.get(k)!r}")
+    return state
+
+
 def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           lr: float = 1e-4, eval_every: int = 5, start: str = "bc_v1.pt",
           value_ckpt: str | None = None, decks_file: str | None = None,
@@ -450,7 +481,7 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
           plan_coef: float = 0.0, gust_boost: float = 0.0,
           entropy_anneal_to: float | None = None,
           kl_anneal_to: float | None = None,
-          device: str = "auto"):
+          device: str = "auto", resume: bool = False):
     """M21 additions (all default-off = the M20 recipe exactly):
     opponents        — 'spec=weight' mixture for the collector (rl/collector
                        parse_pool syntax incl. mirror=/past= tokens)
@@ -487,7 +518,19 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
     suffix = f"_{tag}" if tag else ""       # M20: namespace runs so the M8-era
     writer = SummaryWriter(str(ROOT / "runs" / f"ppo{suffix}"))  # artifacts survive
     best_path = CKPT_DIR / f"ppo_best{suffix}.pt"
-    if not best_path.exists():
+
+    # M44 3a-3c: pausable leg. State is saved at the end of every iteration;
+    # a sentinel file pauses cleanly at the next iteration top.
+    state_path = CKPT_DIR / f"ppo_state{suffix}.pt"
+    pause_path = CKPT_DIR / f"ppo_pause{suffix}"
+    meta = {"start": start, "iterations": iterations,
+            "learn_deck": learn_deck, "opponents": opponents}
+    saved = _load_train_state(state_path, meta) if resume else None
+    # --resume consumes the sentinel; a FRESH run clears a stale one too, so a
+    # leftover touch from a finished leg cannot instantly pause its successor.
+    pause_path.unlink(missing_ok=True)
+
+    if not resume and not best_path.exists():
         shutil.copy(CKPT_DIR / start, best_path)       # the start is the initial champion
 
     dev = resolve_device(device)
@@ -495,7 +538,10 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         print(f"training on {dev} (updates only; collection/eval stay CPU)",
               flush=True)
     model = _load_model(CKPT_DIR / start)
-    if value_ckpt:
+    if resume:
+        model.load_state_dict(saved["model"])
+    elif value_ckpt:
+        # not on resume: the resumed sd already contains the warmed critic
         loaded = warm_start_value(model, Path(value_ckpt))
         print(f"critic warm-start from {value_ckpt}: {loaded}", flush=True)
     model.to(dev)
@@ -508,18 +554,36 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
         for p_ in ref_model.parameters():
             p_.requires_grad_(False)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    if resume:
+        # After AdamW construction (params already on dev): load_state_dict
+        # re-homes exp_avg/exp_avg_sq to each param's device/dtype.
+        opt.load_state_dict(saved["opt"])
 
-    # M23: promotion tracks the TEACHER (the sample agent — the strongest
-    # observable opponent), not the solver the M22 audit demoted to an
-    # endogenous in-loop readout. Bar = the current best's own measured rate,
-    # so a fresh warm start must genuinely improve to promote. vs_solver is
-    # still measured and logged every eval; it just no longer gates.
-    best_wr, _ = play_games(_as_kaggle_agent(best_path, eval_deck, "ppo_bp_base"),
-                            load_teacher("ppo_tc_base"), eval_games,
-                            names=("best", "teacher"))
-    print(f"baseline: current best vs_teacher {best_wr:.1%}", flush=True)
+    if resume:
+        # M44 3b: the stored bar, NOT a re-measure — re-measuring would drift
+        # the promotion bar by eval noise on every pause/resume cycle.
+        next_it, best_wr = saved["next_it"], saved["best_wr"]
+        print(f"resume: starting at iter {next_it}, "
+              f"best vs_teacher {best_wr:.1%} (stored)", flush=True)
+    else:
+        next_it = 0
+        # M23: promotion tracks the TEACHER (the sample agent — the strongest
+        # observable opponent), not the solver the M22 audit demoted to an
+        # endogenous in-loop readout. Bar = the current best's own measured rate,
+        # so a fresh warm start must genuinely improve to promote. vs_solver is
+        # still measured and logged every eval; it just no longer gates.
+        best_wr, _ = play_games(_as_kaggle_agent(best_path, eval_deck, "ppo_bp_base"),
+                                load_teacher("ppo_tc_base"), eval_games,
+                                names=("best", "teacher"))
+        print(f"baseline: current best vs_teacher {best_wr:.1%}", flush=True)
 
-    for it in range(iterations):
+    for it in range(next_it, iterations):
+        # M44 3c: pause sentinel — checked before the shard wipe so a paused
+        # leg leaves nothing half-collected.
+        if pause_path.exists():
+            _save_train_state(state_path, model, opt, it, best_wr, meta)
+            print(f"PAUSED before iter {it}", flush=True)
+            return
         # 1. fresh self-play data with the CURRENT policy
         for old in PPO_DIR.glob("ppo_shard_*.npz"):
             old.unlink()                                # on-policy: stale data is poison
@@ -532,7 +596,7 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
                 if mix else None)
         if mix:
             print(f"iter {it}: opponent mix {mix}", flush=True)
-        _, defect_rate = collect(
+        _, defect_rate, cause_counts = collect(
             games_per_iter, str(work), workers, decks_file=decks_file,
             pool=pool, race_shaping=race_shaping, shaping=shaping,
             # M43: the value potential defaults to the FROZEN START's head,
@@ -547,6 +611,22 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
             plan_ppo=plan_coef > 0, gust_boost=gust_boost,
             **({"learn_deck": learn_deck} if learn_deck else {}))
         writer.add_scalar("train/defect_rate", defect_rate, it)
+        # M44 3g: per-cause game-end telemetry (engine RESULT reason). The
+        # registered read: no loss cause may RISE over a leg while overall win
+        # rate improves — outcome-only reward can hide that trade.
+        from rl.collector import CAUSE_BUCKETS
+        for c in CAUSE_BUCKETS:
+            writer.add_scalar(f"loss_cause/{c}",
+                              cause_counts.get(f"loss_{c}", 0) / games_per_iter, it)
+            writer.add_scalar(f"win_cause/{c}",
+                              cause_counts.get(f"win_{c}", 0) / games_per_iter, it)
+        print(f"iter {it}: loss-cause "
+              + " ".join(f"{c}:{cause_counts.get('loss_' + c, 0)}"
+                         for c in CAUSE_BUCKETS)
+              + "  win-cause "
+              + " ".join(f"{c}:{cause_counts.get('win_' + c, 0)}"
+                         for c in CAUSE_BUCKETS)
+              + f"  /{games_per_iter}g", flush=True)
         data = load_shards()
 
         # 2. advantages per (game, seat) trajectory  [Piotr's compute_gae]
@@ -596,6 +676,10 @@ def train(iterations: int, games_per_iter: int = 400, workers: int = 4,
                 torch.save(cpu_sd, best_path)
                 torch.save(cpu_sd, CKPT_DIR / f"ppo{suffix}_it{it:04d}.pt")
                 print(f"iter {it}: PROMOTED (best vs_teacher {wr_teacher:.1%})")
+
+        # M44 3a: iteration complete — persist. A SIGKILL now loses nothing;
+        # mid-iteration it loses only this iteration.
+        _save_train_state(state_path, model, opt, it + 1, best_wr, meta)
 
 
 if __name__ == "__main__":
@@ -678,7 +762,18 @@ if __name__ == "__main__":
                         "available). Collection and eval stay CPU; "
                         "checkpoints are saved as CPU tensors either way; "
                         "cuda runs are NOT bit-reproducible vs cpu")
+    p.add_argument("--resume", action="store_true",
+                   help="M44: resume a paused/killed leg from checkpoints/"
+                        "ppo_state_<tag>.pt (requires --tag; skips the "
+                        "baseline re-measure — the stored promotion bar is "
+                        "reused — and deletes the pause sentinel). The CLI "
+                        "must repeat the original --start/--iterations/"
+                        "--learn-deck exactly")
     args = p.parse_args()
+    if args.resume and not args.tag:
+        p.error("--resume requires --tag (state files are tag-namespaced)")
+    if args.resume and not (CKPT_DIR / f"ppo_state_{args.tag}.pt").exists():
+        p.error(f"--resume: no state file checkpoints/ppo_state_{args.tag}.pt")
     if args.shaping != "race" and args.race_shaping == 0:
         # A non-default potential with a zero coefficient is always a mistake:
         # the collector builds no phi net and the leg silently runs unshaped
@@ -700,4 +795,4 @@ if __name__ == "__main__":
           gust_boost=args.gust_boost,
           entropy_anneal_to=args.entropy_anneal_to,
           kl_anneal_to=args.kl_anneal_to,
-          device=args.device)
+          device=args.device, resume=args.resume)

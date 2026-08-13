@@ -176,6 +176,27 @@ def _is_over_attach(obs, option) -> bool:
     return _turns_to_ready(target, opp_active, board_ids) == 0
 
 
+# M44 3g: engine result reasons (cg.api.LogType.RESULT, type 23) -> cause
+# bucket. 1-3 are the plan's named loss modes; 4 ("a card effect") exists in
+# the engine and gets its own bucket rather than polluting a named one.
+_CAUSE_BY_REASON = {1: "prizes", 2: "deckout", 3: "benchout", 4: "effect"}
+#: "other" = the RESULT log was absent from the terminal obs. obs.logs is
+#: per-seat (rl/memory.py) — the final obs belongs to whichever seat acted
+#: last, so the log can land in the other seat's window.
+CAUSE_BUCKETS = ("prizes", "deckout", "benchout", "effect", "other")
+
+
+def _terminal_cause(obs_dict: dict) -> str:
+    """Loss cause of a finished game, from the engine's own RESULT log.
+
+    Never inferred from board state: deck_end==0 alone OVERCOUNTS deck-outs
+    (scripts/deck_drain.py finding) — a player can lose on prizes with an
+    empty deck. The engine's reason code is authoritative."""
+    reason = next((lg.get("reason") for lg in obs_dict.get("logs") or []
+                   if lg.get("type") == 23), None)
+    return _CAUSE_BY_REASON.get(reason, "other")
+
+
 def parse_pool(items: list[str], checkpoint: str,
                learn_deck: str = LEARN_DECK, tag: str = "") -> tuple[list, list]:
     """M21 curriculum: parse "spec=weight" strings into (specs, weights).
@@ -502,6 +523,7 @@ def _play_worker(args: tuple) -> tuple:
         col_names += ["deck_idx"]
     cols: dict[str, list] = {k: [] for k in col_names}
     n_defects = 0                                   # M20: over-attach actions taken
+    causes: dict[str, int] = {}                     # M44 3g: {win,loss}_{cause} counts
 
     for game in range(n_games):
         pstate.update(key=None, vec=None)           # v3: fresh plan state per game
@@ -564,6 +586,10 @@ def _play_worker(args: tuple) -> tuple:
                 obs_dict = battle_select([int(i) for i in opp_fn(obs_dict)])
 
         result = obs_dict["current"]["result"]         # 0/1 winner, 2 draw
+        if result != 2:                                # M44 3g: draws have no cause
+            outcome = "win_" if result == learn_seat else "loss_"
+            key = outcome + _terminal_cause(obs_dict)
+            causes[key] = causes.get(key, 0) + 1
         battle_finish()
         if rows:                                        # terminal reward on learner's last row
             rows[-1]["reward"] += 0.0 if result == 2 else (1.0 if result == learn_seat else -1.0)
@@ -628,7 +654,7 @@ def _play_worker(args: tuple) -> tuple:
         arrays["deck_idx"] = np.array(cols["deck_idx"], dtype=np.int32)
     out = Path(out_dir) / f"ppo_shard_w{worker_id:02d}.npz"
     np.savez_compressed(out, **arrays)
-    return str(out), n_defects, n_games, nonlocal_counts["boosts"]
+    return str(out), n_defects, n_games, nonlocal_counts["boosts"], causes
 
 
 def _load_population(decks_file) -> list[list[int]]:
@@ -645,7 +671,7 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
             plan_ppo: bool = False,
             gust_boost: float = 0.0,
             plan_zero: bool = False,
-            phi_ckpt: str | None = None) -> tuple[list[str], float]:
+            phi_ckpt: str | None = None) -> tuple[list[str], float, dict[str, int]]:
     """Collect n_games across n_workers, learning policy vs an opponent pool.
 
     decks_file: population.json — the learner samples a deck per game from it
@@ -663,7 +689,10 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
     phi_ckpt (M43): the FROZEN START checkpoint whose value head serves as the
     `value` shaping potential — required when shaping == "value", explicit so
     a PPO loop cannot silently hand the moving learner to Phi.
-    Returns (shard paths, defect rate per game)."""
+    Returns (shard paths, defect rate per game, cause counts). Cause counts
+    (M44 3g) are the learner's finished games keyed "win_<cause>" /
+    "loss_<cause>" with cause in CAUSE_BUCKETS — the engine's own RESULT
+    reason, never inferred from board state."""
     if plan_zero and (plan_tau > 0 or plan_ppo):
         raise ValueError("plan_zero cannot combine with plan_tau/plan_ppo — "
                          "they explore and train the plan head this disables")
@@ -689,13 +718,17 @@ def collect(n_games: int, checkpoint: str, n_workers: int = 4,
     total_defects = sum(r[1] for r in results)
     total_games = sum(r[2] for r in results)
     total_boosts = sum(r[3] for r in results)
+    cause_counts: dict[str, int] = {}
+    for r in results:
+        for k, v in r[4].items():
+            cause_counts[k] = cause_counts.get(k, 0) + v
     defect_rate = total_defects / max(1, total_games)
     print(f"collect: over-attach actions {total_defects} in {total_games} games "
           f"= {defect_rate:.2f}/game"
           + (f"; gust-boosted samples {total_boosts} "
              f"= {total_boosts / max(1, total_games):.2f}/game"
              if gust_boost > 0 else ""), flush=True)
-    return shards, defect_rate
+    return shards, defect_rate, cause_counts
 
 
 if __name__ == "__main__":
@@ -738,7 +771,7 @@ if __name__ == "__main__":
                 if args.opponents else None)
     import time
     t0 = time.time()
-    shards, _rate = collect(args.games, args.checkpoint, args.workers,
+    shards, _rate, _causes = collect(args.games, args.checkpoint, args.workers,
                             learn_deck=args.learn_deck, pool=pool_arg,
                             decks_file=args.decks,
                             race_shaping=args.race_shaping,
