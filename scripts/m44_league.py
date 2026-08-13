@@ -39,6 +39,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -46,6 +47,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+# M43 box lesson (docs/M43.md ~:257): 8 workers × default BLAS threads thrash
+# 16 cores — ~2 games/s at load 65 vs ~31 games/s at load ~8 when pinned.
+# Set here (before any worker spawns) so no league invocation can run
+# un-pinned. 15× wall-clock is not an optional flag.
+for _var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+    os.environ.setdefault(_var, "1")
 
 CAUSE_BY_REASON = {1: "prizes", 2: "deckout", 3: "benchout", 4: "effect"}
 CAUSE_COLS = ("prizes", "deckout", "benchout", "effect", "?")
