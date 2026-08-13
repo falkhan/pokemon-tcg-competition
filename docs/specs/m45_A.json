@@ -1,0 +1,115 @@
+{
+ "name": "m45_A_ship_diag",
+ "question": "is the lucario clone (m45_bc_lucario_d3, planzero, lucario_solrock) better than the m43a incumbent on the 25-bed ladder proxy? ADVISORY \u2014 informs Piotr's go, does not select",
+ "arm": "model-pz:checkpoints/m45_bc_lucario_d3.pt:decks/lucario_solrock.csv",
+ "control": "model-c-pkgz:checkpoints/ppo_best_m43a_base.pt:alakazam_v2_h4",
+ "beds": [
+  {
+   "name": "tuned",
+   "spec": "rule:tuned:lucario"
+  },
+  {
+   "name": "mirror",
+   "spec": "model:checkpoints/m28_winners.pt:alakazam_v2_h4"
+  },
+  {
+   "name": "m28",
+   "spec": "model:checkpoints/m28_winners.pt:clone54618168"
+  },
+  {
+   "name": "iono",
+   "spec": "rule:iono"
+  },
+  {
+   "name": "wall_d1",
+   "spec": "model:checkpoints/m38_bc_wall.pt:greattusk_wall"
+  },
+  {
+   "name": "wall_d2",
+   "spec": "model:checkpoints/m39_bed_wall_d2.pt:greattusk_wall"
+  },
+  {
+   "name": "wall_d3",
+   "spec": "model:checkpoints/m39_bed_wall_d3.pt:greattusk_wall"
+  },
+  {
+   "name": "arch_d1",
+   "spec": "model:checkpoints/m39_bc_archaludon.pt:archaludon"
+  },
+  {
+   "name": "arch_d2",
+   "spec": "model:checkpoints/m39_bed_arch_d2.pt:archaludon"
+  },
+  {
+   "name": "arch_d3",
+   "spec": "model:checkpoints/m39_bed_arch_d3.pt:archaludon"
+  },
+  {
+   "name": "grim_d1",
+   "spec": "model:checkpoints/m39_bc_grim.pt:grim_live"
+  },
+  {
+   "name": "grim_d2",
+   "spec": "model:checkpoints/m39_bc_grim_b.pt:grim_live"
+  },
+  {
+   "name": "grim_d3",
+   "spec": "model:checkpoints/m39_bed_grim_d3.pt:grim_live"
+  },
+  {
+   "name": "topgrim_d1",
+   "spec": "model:checkpoints/m39_bc_topgrim.pt:grim_live"
+  },
+  {
+   "name": "topgrim_d2",
+   "spec": "model:checkpoints/m40_bed_topgrim_d2.pt:grim_live"
+  },
+  {
+   "name": "topgrim_d3",
+   "spec": "model:checkpoints/m40_bed_topgrim_d3.pt:grim_live"
+  },
+  {
+   "name": "dragapult_d1",
+   "spec": "model:checkpoints/m40_bed_dragapult_d1.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  },
+  {
+   "name": "dragapult_d2",
+   "spec": "model:checkpoints/m40_bed_dragapult_d2.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  },
+  {
+   "name": "dragapult_d3",
+   "spec": "model:checkpoints/m40_bed_dragapult_d3.pt:data/kaggle/dragapult_3631d393_deck.csv"
+  },
+  {
+   "name": "garchomp_d1",
+   "spec": "model:checkpoints/m40_bed_garchomp_d1.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  },
+  {
+   "name": "garchomp_d2",
+   "spec": "model:checkpoints/m40_bed_garchomp_d2.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  },
+  {
+   "name": "garchomp_d3",
+   "spec": "model:checkpoints/m40_bed_garchomp_d3.pt:data/kaggle/garchomp_c7b3253f_deck.csv"
+  },
+  {
+   "name": "rocket_d1",
+   "spec": "model:checkpoints/m40_bed_rocket_d1.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  },
+  {
+   "name": "rocket_d2",
+   "spec": "model:checkpoints/m40_bed_rocket_d2.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  },
+  {
+   "name": "rocket_d3",
+   "spec": "model:checkpoints/m40_bed_rocket_d3.pt:data/kaggle/rocket_59e27a5e_deck.csv"
+  }
+ ],
+ "n_per_cell": 400,
+ "seed": 1,
+ "bars": {
+  "pass": 0.02,
+  "kill": 0.0
+ },
+ "note": "M45 Track A. Arm md5 2514a4f34e0b507eb286852c48bed98a. Same cross-pair instrument O passed (+5.51pp) and K killed (-2.18pp) on 2026-08-13. Wide retrain and both fix probes were registered kills (docs/M45.md); the arm is the unmodified best BC draw."
+}
