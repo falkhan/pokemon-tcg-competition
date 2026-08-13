@@ -181,6 +181,12 @@ _MODEL_FIX_KINDS = {
     # M41 O18 `gustsnipe`, single-variable over model-pz — the ogerpon ship
     # candidate's config plus the one new rule, so the battery attributes it.
     "model-pz-snipe": frozenset({"planzero", "gustsnipe"}),
+    # M45 lucario fix probes, single-variable over model-pz (the lucario
+    # ship base): benchfloor targets the measured 14% bench-out losses vs
+    # tuned; gustveto is the M36 anti-scaling demote, probed vs iono's
+    # Voltaic Chain (docs/M45-plan.md A3).
+    "model-pz-bf": frozenset({"planzero", "benchfloor"}),
+    "model-pz-gv": frozenset({"planzero", "gustveto"}),
     "model-c-pkgz": frozenset({"conserve", "racemode2", "racemode4",
                                "planzero"}),
     # M40 deep-dive candidates (2026-08-03). Base = conserve+planzero: the
