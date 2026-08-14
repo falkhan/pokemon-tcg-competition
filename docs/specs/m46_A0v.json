@@ -156,7 +156,7 @@
  "bars": {
   "pass": 0.02,
   "kill": 0.0,
-  "family_z": -2.0
+  "family_z": -2.2
  },
  "bootstrap": {
   "B": 2000,

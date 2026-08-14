@@ -46,6 +46,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -163,6 +164,11 @@ def _md5(path: Path) -> str:
 
 
 def cmd_run(spec_path: Path, out: Path, workers: int) -> int:
+    # M43 box law (docs/M43.md:258): 8 matchrunner workers x default BLAS
+    # thread pools thrash the 16-thread box to ~1.5-2 games/s; single-thread
+    # pinning is 15x. Set BEFORE the pool spawns — workers inherit the env.
+    for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ.setdefault(var, "1")
     spec = load_band_spec(spec_path)
     out.mkdir(parents=True, exist_ok=True)
     (out / "band_spec.json").write_text(
