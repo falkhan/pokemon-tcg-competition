@@ -558,6 +558,22 @@ _RACEMODE4_SETUP_POKEMON = frozenset({ALAKAZAM_ID})
 # effects behind one name is how a gate cell stops being attributable.
 _RACEASH_AT = 20
 
+# --- M46 guardrail rules (docs/M46-plan.md Track B/C, 2026-08-14) ------------
+# Deck-agnostic pivotal-mistake vetoes, motivated by the m44 live post-mortem
+# (docs/m44-live-postmortem.md §4): a Run-Away-Draw self-benchout autoloss
+# confirmed 3× live, END/RETREAT while an attack was armed in the mirror
+# (ep92684808), and a wasted gust with no energy to attack behind it. B2-B4
+# share one primitive: an attack is ARMED when `combat._best_damage(active,
+# opp_active, scaling=True) > 0` — affordability-aware, this-turn, and
+# scaling-aware so Alakazam's printed-0 Powerful Hand reads its real damage
+# (the M36 W2 blindness that forced gustveto to stay damage-free is exactly
+# what `scaling=True` lifts).
+PLAY_FIX_DUDGUARD0 = "dudguard0"      # O20: no Dudunsparce draw at bench 0 (B1)
+PLAY_FIX_BENCHZERO = "benchzero"      # O21: no END at bench 0 while a basic is legal (C1)
+PLAY_FIX_ATTACKFLOOR = "attackfloor"  # O22: no END while an attack is ARMED (B2)
+PLAY_FIX_RETREATGUARD = "retreatguard"  # O23: no retreat that disarms an ARMED active (B3)
+PLAY_FIX_BOSSCOMBO = "bosscombo"      # O24: no gust without an ARMED follow-up (B4)
+
 
 def _board_pokemon_id(opt, me):
     """Card id of the board Pokémon a board-area option (ABILITY) acts on.
@@ -588,6 +604,20 @@ def _own_board_ids(me) -> frozenset:
     """The same public-board card-id fact as `_opp_board_ids`, read on OUR
     side. M39 P2b needs it for racemode4's "once the board is built" gate."""
     return _opp_board_ids(me)
+
+
+def _attack_armed(st, me) -> bool:
+    """True when our ACTIVE can deal > 0 damage THIS TURN (the M46 shared
+    primitive for O22-O24). `_best_damage` is affordability-aware and skips
+    condition-gated attacks via board_ids; `scaling=True` swaps printed damage
+    for the curated effective table so bench-scaling attackers (Alakazam's
+    printed-0 Powerful Hand) read their real damage. Both sides None-safe:
+    `_best_damage` returns 0 for a missing attacker or target."""
+    op = st.players[1 - st.yourIndex]
+    active = me.active[0] if me.active else None
+    opp_active = op.active[0] if op.active else None
+    return _best_damage(active, opp_active, board_ids=_own_board_ids(me),
+                        scaling=True) > 0
 
 
 def _racemode_engaged(st, me) -> bool:
@@ -656,10 +686,15 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
     refill (ash), board dig (poffinfloor) or hand refill (drawfloor) outranks
     the energy attach at its trigger state, and the turn's manual attach is
     still unused, so the next MAIN re-offers the ATTACH and O1 re-promotes it.
-    Only O3 tempo is additionally gated on `ranked[0]` being END, so tempo
-    alone cannot override O1. Promote order (first match wins): ash >
-    benchfloor > poffinfloor > drawfloor > tempo. The DEMOTE rules (deckguard,
-    conserve) only reorder when the top pick is the targeted ABILITY.
+    The END-gated promotes (benchzero, tempo, hammer, attackfloor) fire only
+    when `ranked[0]` is END, so they can never override O1. Promote order
+    (first match wins): ash > gustsnipe > benchfloor > poffinfloor >
+    drawfloor > benchzero > tempo > hammer > attackfloor — attackfloor is
+    deliberately LAST: it promotes a turn-ENDING option, and promotions of
+    non-turn-ending options must outrank it (at bench 0 with an armed attack
+    the basic must win — the attack can still happen later the same turn).
+    The DEMOTE rules (deckguard, conserve, dudguard0) only reorder when the
+    top pick is the targeted ABILITY.
     - O5 `ash`: own deck <= 10 and a Sacred Ash PLAY is legal (engine
       legality implies Pokémon in the discard) -> play it now.
     - O10 `benchfloor` (m35): bench-alive <= 1 and a basic-Pokemon PLAY is
@@ -730,6 +765,30 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
       PLAY on the menu -> play it. The top band plays hammer on 49.6% of
       offers vs our 22-25%, and ENDs with a playable item 7.6% vs our
       13-33% — this converts pure END passivity into the tempo tool.
+    - O20 `dudguard0` (m46 B1): bench-alive == 0 and the top pick is a
+      Dudunsparce ABILITY -> demote every such ability. Run Away Draw
+      shuffles the LAST Pokémon into the deck = instant bench-out loss
+      (confirmed 3× live with 6 prizes intact); strict domination, no
+      counterexample exists.
+    - O21 `benchzero` (m46 C1): about to END at bench 0 with a basic PLAY
+      legal -> play the highest-ranked basic. Distinct from the M45-killed
+      benchfloor (<= 1): the == 0 case is donk/bench-out protection and
+      near-strict domination (2 live flash-losses + 3 self-kills found).
+    - O22 `attackfloor` (m46 B2): about to END while an attack is ARMED
+      (`_attack_armed`) -> take the highest-ranked ATTACK instead. The
+      damage > 0 gate removes the 0-damage/immune-wall edge case by
+      construction (mirror t5 evidence: ep92684808 ENDed with a
+      fully-evolved Alakazam).
+    - O23 `retreatguard` (m46 B3): top pick is RETREAT while the active is
+      ARMED -> demote every RETREAT below the rest. The damage gate lets
+      genuine wall-escape retreats through (unarmed active). Note this also
+      forbids the defensive sac-retreat — vs 360-one-shot grim the enforced
+      stay-and-trade is usually right; the mirror panel cell decides.
+    - O24 `bosscombo` (m46 B4): top pick is a gust-class PLAY with NO armed
+      attack this turn -> demote every gust PLAY. Complements O11 gustveto
+      (the opp-match-point case); the one observed live Boss play had no
+      attack behind it. Forbids gust-to-strand, so adoption additionally
+      requires a non-killing stall panel cell (docs/M46-plan.md B4).
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -779,6 +838,14 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                  and _hand_card_id(opts[i], hand) == HILDA_ID]
         if hilda:
             pick = hilda[0]
+    if (pick is None and PLAY_FIX_BENCHZERO in fixes
+            and opts[ranked[0]].type == OptionType.END
+            and not any(p is not None for p in (me.bench or []))):
+        basics = [i for i in ranked
+                  if opts[i].type == OptionType.PLAY
+                  and _hand_card_id(opts[i], hand) in _IS_BASIC_POKEMON]
+        if basics:
+            pick = basics[0]
     if (pick is None and PLAY_FIX_TEMPO in fixes
             and opts[ranked[0]].type == OptionType.END):
         tempo = [i for i in ranked
@@ -793,10 +860,19 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
                   and _hand_card_id(opts[i], hand) == ENHANCED_HAMMER_ID]
         if hammer:
             pick = hammer[0]
+    if (pick is None and PLAY_FIX_ATTACKFLOOR in fixes
+            and opts[ranked[0]].type == OptionType.END
+            and _attack_armed(st, me)):
+        attacks = [i for i in ranked if opts[i].type == OptionType.ATTACK]
+        if attacks:
+            pick = attacks[0]
     if pick is not None and pick != ranked[0]:
         return [pick] + [i for i in ranked if i != pick]
     demote_ids = frozenset()
     if PLAY_FIX_DECKGUARD in fixes and me.deckCount <= _DECKGUARD_AT:
+        demote_ids |= DUDUNSPARCE_IDS
+    if (PLAY_FIX_DUDGUARD0 in fixes
+            and not any(p is not None for p in (me.bench or []))):
         demote_ids |= DUDUNSPARCE_IDS
     if PLAY_FIX_CONSERVE in fixes and me.deckCount <= _CONSERVE_AT:
         demote_ids |= _CONSERVE_ABILITY_IDS
@@ -841,6 +917,22 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
         keep = [i for i in ranked
                 if not (opts[i].type == OptionType.PLAY
                         and _hand_card_id(opts[i], hand) in GUST_IDS)]
+        if keep:
+            return keep + [i for i in ranked if i not in keep]
+    if (PLAY_FIX_BOSSCOMBO in fixes
+            and opts[ranked[0]].type == OptionType.PLAY
+            and _hand_card_id(opts[ranked[0]], hand) in GUST_IDS
+            and not _attack_armed(st, me)):
+        keep = [i for i in ranked
+                if not (opts[i].type == OptionType.PLAY
+                        and _hand_card_id(opts[i], hand) in GUST_IDS)]
+        if keep:
+            return keep + [i for i in ranked if i not in keep]
+    if (PLAY_FIX_RETREATGUARD in fixes
+            and opts[ranked[0]].type == OptionType.RETREAT
+            and _attack_armed(st, me)):
+        keep = [i for i in ranked
+                if opts[i].type != OptionType.RETREAT]
         if keep:
             return keep + [i for i in ranked if i not in keep]
     return ranked

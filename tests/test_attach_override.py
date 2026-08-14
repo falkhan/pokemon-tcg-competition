@@ -18,12 +18,16 @@ from rl.plan import (ATTACH_FIX_BACKSTOP, ATTACH_FIX_DEADENERGY,
                      ATTACH_FIX_TELEPATH,
                      ENHANCED_HAMMER_ID, FEZANDIPITI_ID,
                      HILDA_ID, POFFIN_ID, PLAY_FIX_ASH, PLAY_FIX_ASHGUARD,
-                     PLAY_FIX_BENCHFLOOR, PLAY_FIX_CONSERVE,
+                     PLAY_FIX_ATTACKFLOOR, PLAY_FIX_BENCHFLOOR,
+                     PLAY_FIX_BENCHZERO, PLAY_FIX_BOSSCOMBO,
+                     PLAY_FIX_CONSERVE,
                      PLAY_FIX_DECKGUARD, PLAY_FIX_DRAWFLOOR,
-                     PLAY_FIX_GUSTVETO, PLAY_FIX_HAMMER,
+                     PLAY_FIX_DUDGUARD0, PLAY_FIX_GUSTVETO, PLAY_FIX_HAMMER,
                      PLAY_FIX_POFFINFLOOR, PLAY_FIX_RACEMODE,
-                     PLAY_FIX_RACEMODER, PLAY_FIX_TEMPO, SACRED_ASH_ID,
-                     TELEPATH_ID, apply_attach_overrides, apply_play_overrides)
+                     PLAY_FIX_RACEMODER, PLAY_FIX_RETREATGUARD,
+                     PLAY_FIX_TEMPO, SACRED_ASH_ID,
+                     TELEPATH_ID, apply_attach_overrides, apply_play_overrides,
+                     _attack_armed as rp_attack_armed)
 
 BASIC_P = 4          # Basic {P} Energy — any basic energy id works for tests
 NON_ENERGY = 741     # Abra
@@ -897,3 +901,190 @@ def test_o19_is_absent_from_every_shipped_config():
     naming = {k for k, v in _MODEL_FIX_KINDS.items()
               if ATTACH_FIX_DEADENERGY in v}
     assert naming == {"model-c-pkg-de", "model-de"}
+
+
+# --- M46 guardrail rules (O20-O24, docs/M46-plan.md Track B/C) --------------
+# The armed cells run on the fake card table: card 1's 50-damage attack costs
+# [FIGHTING] (tests/fake_cg, same cells test_combat.py pins), and rl.scaling's
+# nominal_damage falls back to printed damage for ids outside its curated
+# table, so `scaling=True` is exercised without monkeypatching.
+
+from tests import builders as b  # noqa: E402  (in-play pokemon with energies)
+
+ARMED = [b.pokemon(1, energies=[FIGHTING])]     # 50 > 0 this turn
+UNARMED = [b.pokemon(1)]                        # no energy: nothing affordable
+M46 = frozenset({PLAY_FIX_DUDGUARD0, PLAY_FIX_BENCHZERO, PLAY_FIX_ATTACKFLOOR,
+                 PLAY_FIX_RETREATGUARD, PLAY_FIX_BOSSCOMBO})
+
+
+def test_attack_armed_primitive():
+    armed = _obs([], hand=[], active=ARMED, opp_active=(5,))
+    assert rp_attack_armed(armed.current, armed.current.players[0])
+    unarmed = _obs([], hand=[], active=UNARMED, opp_active=(5,))
+    assert not rp_attack_armed(unarmed.current, unarmed.current.players[0])
+    # None-safe both sides: no active / no opposing active reads unarmed
+    empty = _obs([], hand=[], active=(), opp_active=())
+    assert not rp_attack_armed(empty.current, empty.current.players[0])
+
+
+def test_o20_dudguard0_demotes_run_away_draw_at_bench_zero():
+    opts = [_opt(OptionType.ABILITY, 0, area=AreaType.ACTIVE),
+            _opt(OptionType.PLAY, 0), _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_DUDGUARD0})
+    lone = _obs(opts, hand=[NON_ENERGY], active=[_card(DUDUNSPARCE)],
+                deck_count=40)
+    assert apply_play_overrides(lone, [0, 1, 2], fixes) == [1, 2, 0]
+
+
+def test_o20_dudguard0_guards():
+    opts = [_opt(OptionType.ABILITY, 0, area=AreaType.ACTIVE),
+            _opt(OptionType.PLAY, 0), _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_DUDGUARD0})
+    # a bench body exists -> Run Away Draw is safe, untouched
+    benched = _obs(opts, hand=[NON_ENERGY], active=[_card(DUDUNSPARCE)],
+                   bench=[_card(NON_ENERGY)] + [None] * 4)
+    assert apply_play_overrides(benched, [0, 1, 2], fixes) == [0, 1, 2]
+    # veto semantics: fires only when the ability IS the top pick
+    lone = _obs(opts, hand=[NON_ENERGY], active=[_card(DUDUNSPARCE)])
+    assert apply_play_overrides(lone, [1, 0, 2], fixes) == [1, 0, 2]
+
+
+def test_o21_benchzero_plays_a_basic_instead_of_ending():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),
+            _opt(OptionType.ATTACK)]
+    fixes = frozenset({PLAY_FIX_BENCHZERO})
+    obs = _obs(opts, hand=[NON_ENERGY], active=[_card(DUDUNSPARCE)])
+    assert apply_play_overrides(obs, [0, 1, 2], fixes) == [1, 0, 2]
+
+
+def test_o21_benchzero_guards():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0)]
+    fixes = frozenset({PLAY_FIX_BENCHZERO})
+    # any bench body -> the ==0 rule stays out of it (that was benchfloor's
+    # <=1 territory, killed in M45)
+    benched = _obs(opts, hand=[NON_ENERGY],
+                   bench=[_card(NON_ENERGY)] + [None] * 4)
+    assert apply_play_overrides(benched, [0, 1], fixes) == [0, 1]
+    # END-gated: never fires when the model already wants to act
+    obs = _obs(opts, hand=[NON_ENERGY])
+    assert apply_play_overrides(obs, [1, 0], fixes) == [1, 0]
+    # no basic in hand -> nothing to promote
+    no_basic = _obs(opts, hand=[POFFIN_ID])
+    assert apply_play_overrides(no_basic, [0, 1], fixes) == [0, 1]
+
+
+def test_o22_attackfloor_attacks_instead_of_ending():
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),
+            _opt(OptionType.ATTACK)]
+    fixes = frozenset({PLAY_FIX_ATTACKFLOOR})
+    armed = _obs(opts, hand=[POFFIN_ID], active=ARMED, opp_active=(5,))
+    assert apply_play_overrides(armed, [0, 1, 2], fixes) == [2, 0, 1]
+
+
+def test_o22_attackfloor_guards():
+    opts = [_opt(OptionType.END), _opt(OptionType.ATTACK)]
+    fixes = frozenset({PLAY_FIX_ATTACKFLOOR})
+    # unarmed (no energy) -> END stands; the damage>0 gate removes the
+    # 0-damage/immune-wall edge case by construction
+    unarmed = _obs(opts, hand=[], active=UNARMED, opp_active=(5,))
+    assert apply_play_overrides(unarmed, [0, 1], fixes) == [0, 1]
+    # armed but no ATTACK on the menu (e.g. paralyzed) -> untouched
+    armed = _obs([_opt(OptionType.END), _opt(OptionType.PLAY, 0)],
+                 hand=[POFFIN_ID], active=ARMED, opp_active=(5,))
+    assert apply_play_overrides(armed, [0, 1], fixes) == [0, 1]
+
+
+def test_o23_retreatguard_demotes_a_disarming_retreat():
+    opts = [_opt(OptionType.RETREAT), _opt(OptionType.ATTACK),
+            _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_RETREATGUARD})
+    armed = _obs(opts, hand=[], active=ARMED, opp_active=(5,))
+    assert apply_play_overrides(armed, [0, 1, 2], fixes) == [1, 2, 0]
+
+
+def test_o23_retreatguard_lets_wall_escape_retreats_through():
+    opts = [_opt(OptionType.RETREAT), _opt(OptionType.ATTACK),
+            _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_RETREATGUARD})
+    # unarmed active (mirror t5 wall-escape evidence): retreat is genuine
+    unarmed = _obs(opts, hand=[], active=UNARMED, opp_active=(5,))
+    assert apply_play_overrides(unarmed, [0, 1, 2], fixes) == [0, 1, 2]
+    # veto semantics: fires only when RETREAT is the top pick
+    armed = _obs(opts, hand=[], active=ARMED, opp_active=(5,))
+    assert apply_play_overrides(armed, [1, 0, 2], fixes) == [1, 0, 2]
+
+
+def test_o24_bosscombo_demotes_gust_with_no_armed_follow_up():
+    import rl.plan as rp
+    gust_id = next(iter(rp.GUST_IDS))
+    opts = [_opt(OptionType.PLAY, 0), _opt(OptionType.ATTACK),
+            _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_BOSSCOMBO})
+    unarmed = _obs(opts, hand=[gust_id], active=UNARMED, opp_active=(5,))
+    assert apply_play_overrides(unarmed, [0, 1, 2], fixes) == [1, 2, 0]
+    # armed -> the gust has a follow-up, untouched
+    armed = _obs(opts, hand=[gust_id], active=ARMED, opp_active=(5,))
+    assert apply_play_overrides(armed, [0, 1, 2], fixes) == [0, 1, 2]
+
+
+def test_o24_composes_with_o11_gustveto():
+    """gustveto (opp match point) and bosscombo (no armed follow-up) cover
+    different failure modes of the same card; an ARMED gust at opp match
+    point must still be demoted by gustveto alone."""
+    import rl.plan as rp
+    gust_id = next(iter(rp.GUST_IDS))
+    opts = [_opt(OptionType.PLAY, 0), _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_GUSTVETO, PLAY_FIX_BOSSCOMBO})
+    obs = _obs(opts, hand=[gust_id], active=ARMED, opp_active=(5,),
+               opp_prizes=1)
+    assert apply_play_overrides(obs, [0, 1], fixes) == [1, 0]
+
+
+def test_o21_wins_over_o22_when_stacked_at_bench_zero():
+    """The registered precedence law (docs/M46-plan.md Track C): at bench 0
+    with an armed attack and END on top, the basic must win the promotion —
+    playing a basic is non-turn-ending, the attack can still happen later
+    the same turn."""
+    opts = [_opt(OptionType.END), _opt(OptionType.PLAY, 0),
+            _opt(OptionType.ATTACK)]
+    obs = _obs(opts, hand=[NON_ENERGY], active=ARMED, opp_active=(5,))
+    assert apply_play_overrides(obs, [0, 1, 2], M46) == [1, 0, 2]
+
+
+def test_o5_ash_wins_over_o20_dudguard0():
+    """A promote that fires returns before the demote half runs — the
+    dangerous top pick is displaced either way."""
+    opts = [_opt(OptionType.ABILITY, 0, area=AreaType.ACTIVE),
+            _opt(OptionType.PLAY, 0), _opt(OptionType.END)]
+    fixes = frozenset({PLAY_FIX_ASH, PLAY_FIX_DUDGUARD0})
+    obs = _obs(opts, hand=[SACRED_ASH_ID], active=[_card(DUDUNSPARCE)],
+               deck_count=8)
+    assert apply_play_overrides(obs, [0, 1, 2], fixes) == [1, 0, 2]
+
+
+def test_m46_guards_inert_when_gates_cold():
+    """The full M46 package on a healthy mid-game board changes nothing:
+    bench occupied, active armed, top pick a PLAY."""
+    opts = [_opt(OptionType.PLAY, 0), _opt(OptionType.ATTACK),
+            _opt(OptionType.END)]
+    obs = _obs(opts, hand=[POFFIN_ID], active=ARMED, opp_active=(5,),
+               bench=[_card(NON_ENERGY)] + [None] * 4)
+    assert apply_play_overrides(obs, [0, 1, 2], M46) == [0, 1, 2]
+
+
+def test_m46_absent_from_every_shipped_config():
+    """Inertness proof: no live fix string names any O20-O24 guard, and each
+    probe token that names one also carries its base package."""
+    from rl.matchrunner import _MODEL_FIX_KINDS
+    shipped = ("conserve,planzero,ash,ashguard",      # the 810 incumbent
+               "conserve,racemode2,racemode4,planzero")  # the M44 K ship
+    for cfg in shipped:
+        assert not M46 & set(cfg.split(","))
+    for guard, token in ((PLAY_FIX_DUDGUARD0, "model-pz-dg0"),
+                         (PLAY_FIX_ATTACKFLOOR, "model-pz-af"),
+                         (PLAY_FIX_RETREATGUARD, "model-pz-rg"),
+                         (PLAY_FIX_BOSSCOMBO, "model-pz-bc"),
+                         (PLAY_FIX_BENCHZERO, "model-pz-bz")):
+        assert _MODEL_FIX_KINDS[token] == frozenset({"planzero", guard})
+    assert _MODEL_FIX_KINDS["model-cz-ashw-dg0"] == (
+        _MODEL_FIX_KINDS["model-cz-ashw"] | {PLAY_FIX_DUDGUARD0})

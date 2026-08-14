@@ -199,6 +199,23 @@ _MODEL_FIX_KINDS = {
     "model-cz-tempo": frozenset({"conserve", "planzero", "tempo"}),
     # M40b Track C — value-guided veto on top of the cz base.
     "model-cz-vv": frozenset({"conserve", "planzero", "vveto"}),
+    # M46 guardrail probes (docs/M46-plan.md Track B/C). Two bases, both with
+    # existing controls: `model-pz` for the minimal single-variable read, and
+    # `model-cz-ashw` — verified (ship commit 4094166) to be the EXACT fix set
+    # the 810 incumbent 55265099 shipped — for the guards-only early-bank arm.
+    # PRIMARY read = the A0 band-weighted panel; tuned/iono advisory only (Q2).
+    "model-pz-dg0": frozenset({"planzero", "dudguard0"}),
+    "model-pz-af": frozenset({"planzero", "attackfloor"}),
+    "model-pz-rg": frozenset({"planzero", "retreatguard"}),
+    "model-pz-bc": frozenset({"planzero", "bosscombo"}),
+    "model-pz-bz": frozenset({"planzero", "benchzero"}),
+    "model-cz-ashw-dg0": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                    "dudguard0"}),
+    # B5 string-restore composite for the K line (recorded as a COMPOSITE, not
+    # single-variable — accepted under deadline; control = model-c-pkgz).
+    "model-c-pkgz-b5": frozenset({"conserve", "racemode2", "racemode4",
+                                  "planzero", "ash", "ashguard", "tempo",
+                                  "deckguard", "hammer"}),
 }
 
 # M40b Track C `vveto` knobs (module-level like SOLVED_* so probes can read
