@@ -46,20 +46,20 @@ BEDS = {
     "grim": ("m39_bc_grim.pt", "grim_live"),
     "archaludon": ("m39_bc_archaludon.pt", "archaludon"),
     "top": ("m39_bc_top.pt", "clone54618168"),
+    # M46: the first stall bed ever (live stall wr 0.00 and it was never in
+    # QC). d2 = the hardest of the three G-13 draws on the null-panel read.
+    "stall": ("m46_bed_stall_d2.pt", "fanrotom_stall"),
 }
 
-# Kept in sync with submission/main.py's _ATTACH_FIXES default. The assert
-# below is a deliberate tripwire: when the ship config changes, this script
-# must fail rather than quietly build beds carrying a stale rule stack. It
-# fired as designed on the M39 Ship A change (gacfr3 -> conserve).
-# M42: refreshed to the M41 ogerpon ship's string. The tripwire had been stale
-# since that ship, so the next bed rebuild would have SystemExit'd -- which is
-# the design working, but the beds on disk were built under the older config
-# and any rebuild must re-read this line rather than bump it reflexively.
-# M44: refreshed to the M43b ogerpon ship's string ("planzero" alone). The
-# quoted literal now also matches the `_PLAN_ZERO = "planzero" in ...` line;
-# replacing both still yields a plain bed (`"" in frozenset()` is False).
-SHIP_FIXES = '"planzero"'
+# M46 note on fix neutralisation: this script used to blank a SHIP_FIXES
+# literal copied from main.py by hand — a tripwire that went stale twice
+# (M42, M44) and, against the M44 K string, would have matched only the
+# `_PLAN_ZERO = "planzero" in ...` line and built beds SILENTLY CARRYING
+# our rule stack. Beds are now neutralised through the same regex the
+# export itself uses (`_set_bundle_fixes` via `export(fixes="")`): the
+# anchor is structural, and a moved anchor raises BundleError instead of
+# passing quietly. An empty default also turns planzero off — matchrunner's
+# `model:` kind applies no fixes and serves plans, so QC bed == gate bed.
 
 
 def build_one(name: str, checkpoint: str, deck: str) -> Path:
@@ -70,20 +70,16 @@ def build_one(name: str, checkpoint: str, deck: str) -> Path:
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
 
-    # 1. main.py, with the fix string neutralised (assert, never silently pass)
+    # 1. main.py copied verbatim; export(fixes="") neutralises the default
+    #    through the structural regex (BundleError if the anchor moved).
     src = (ROOT / "submission/main.py").read_text(encoding="utf-8")
-    if SHIP_FIXES not in src:
-        raise SystemExit(
-            f"submission/main.py no longer contains {SHIP_FIXES} — the ship "
-            "fix string changed; update SHIP_FIXES in this script rather than "
-            "shipping a bed that silently carries our rule stack")
-    (dest / "main.py").write_text(src.replace(SHIP_FIXES, '""'), encoding="utf-8")
+    (dest / "main.py").write_text(src, encoding="utf-8")
 
     # 2. weights / deck / engine / rl package, into the bed dir
     original = shipping.SUBMISSION
     try:
         shipping.SUBMISSION = dest
-        shipping.export(checkpoint=checkpoint, deck=deck)
+        shipping.export(checkpoint=checkpoint, deck=deck, fixes="")
     finally:
         shipping.SUBMISSION = original
     return dest
