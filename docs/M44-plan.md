@@ -1,360 +1,354 @@
-# M44 — the Kaggle sim: competitive PPO league across (pilot, deck) pairs — DRAFT r2 for Piotr's review
+# M44 — competitive PPO league across (pilot, deck) pairs — EXECUTION PLAN r4
 
-**Pre-registered:** DRAFT 2026-08-12 — bars and specs to be hashed at
-execution start, after Piotr's review of this draft. Nothing below is a
-registered bar yet.
+**r4 (2026-08-13, Piotr's directive):** the league grows to FOUR pairs
+(mega lucario ex joins the roster), selection moves from the gate delta
+to an **ELO ranking computed from pilot-vs-pilot play**, and the **TWO
+highest-ELO pairs ship** (not one). The pipeline must periodically print
+a ranking table. Training must demonstrably address all three loss
+modes — deck-out, bench-out, prizes — with per-cause telemetry (new code,
+Step 3g). r3's pausability requirement and math audit stand; the r1/r2
+review narrative lives in git history (commit 9279aea).
 
-**REVISION r2 (2026-08-12): pipeline-verified draft.** Every CLI token,
-tool and artifact named by r1 was checked against the working tree. The
-D2 command survives verbatim (all twelve flags exist in `rl/ppo.py`;
-`model-pz:ckpt:deck=w`, `mirror=`, `past=` all parse in
-`rl/collector.py parse_pool`; cross-deck opponents are fully supported;
-dragapult is hard-refused in any training pool at
-`rl/collector.py:218-246`). Four r1 claims did NOT survive and are
-corrected in place:
+**Deadline — SHIP TODAY (Piotr, 2026-08-13):** two new submissions go to
+Kaggle TODAY. Motivation: M43 fell short of the campaign's 1000-ELO goal
+— the wide alakazam ship sits ~823 live, ogerpon ~650, and 55464234's
+only datum (hour-1 public 883.4) is not on a 1000 trajectory. The
+competition ends 2026-08-16, so today's ships are the last that accrue
+2+ days of ladder games. Every step below is scheduled against a
+same-day ship, net of pause time; the compression rule (Step 5) cuts
+iterations before it cuts legs, and a cut leg only un-trains a pair — it
+stays in the ranking on its seed. The ship-today commitment does NOT
+waive QC or Piotr's review — conflicts escalate (Kill criterion 4),
+never resolve silently.
 
-1. **D3's instrument claim was wrong on the record.** M43's gate was
-   `scripts/gate_spec.py` — an UNWEIGHTED pooled two-proportion z over
-   the hashed 25-bed spec (`docs/M43.md:331`: 0.7506 vs 0.7135, +3.72pp,
-   z=5.93). The meta-weighted decoder is a different tool
-   (`scripts/m40_decide.py`) with an incompatible runs layout, a 22-bed
-   pool (topgrim excluded), and a missing input
-   (`data/m39_live_mix.json`, regenerable). D3 now selects AND gates on
-   the gate_spec instrument; meta-weighting is demoted to an optional
-   diagnostic.
-2. **The round-robin league grid assumed a tool that does not exist.**
-   `rl/rank.py` is the M12 value-as-ranker (collect/train), not a
-   ranking harness; `rl/league.py` is the stale M7 openskill table. The
-   grid is now a 3-cell `matchrunner play` diagnostic — no new tooling.
-3. **D2's "inner kills" are OPERATOR procedure, not code.** `rl/ppo.py`
-   has no entropy guard, no KL bound, no auto-stop, no revert — the bars
-   are watched on TensorBoard and enforced by killing the process,
-   exactly as M43 ran them (`docs/M43-plan.md:186-190`). D2 now says so
-   and states the revert semantics the pipeline actually provides.
-4. **D4 cited the E0 KILL bar as the pass bar.** Pass is matched-pair
-   ≥ 0.62 AND within-game variance share ≥ 0.10; 0.58 is the kill
-   (`scripts/m40_e0_value.py:57-58`). Under the one-round compression
-   D4 drops transplant experiments entirely — M43 already measured the
-   transplant (wide body + retain_b head → 0.559 FAIL, "the head is
-   body-specific"), and no transplant harness exists in the repo.
+## Settled decisions (pre-registered; hash specs at execution start)
 
-Plus one new hard prerequisite: **Phase R (artifact preflight)**. The
-repo tracks no checkpoints (`checkpoints/**` gitignored); a fresh
-checkout — like the one this revision was verified on — holds NONE of
-the seed nets, none of the 25 gate beds, no E0 corpora, no
-`dist/qc_beds/`. M44 must inventory artifacts on the execution box
-before any game is spent. See Phase R for recovery routes and the
-descope ladder.
+| decision | value |
+|---|---|
+| form | iterated best response — ONE pair trains per leg, the other three frozen in its pool (no simultaneous both-seat updates; `mirror=` provides within-leg self-play) |
+| roster | **K** `ppo_best_m43a_base.pt` / alakazam_v2_h4 / `model-c-pkgz` · **L** (NEW) best-of-3 seed pick / **lucario** (the mega lucario ex deck, = the tuned sample agent's and the 0.899-weight meta deck) / `model-pz` · **O** `m41_ogerpon.pt` / ogerpon / `model-pz` · **G** `m39_bc_grim.pt` / grim_live / `model-pz` — pair D (garchomp) stays OFF |
+| reward | outcome ±1 ONLY — it already penalizes ALL three loss modes (deck-out, bench-out, prizes) symmetrically, which is exactly "learn to prevent losing" without reward-hacking surface. Per-cause penalties/bonuses stay a NON-GOAL (flip only on Piotr's explicit call). What r4 adds is per-cause MEASUREMENT (Step 3g) so each leg's diary shows whether every loss mode actually declines |
+| selection | **ELO (Bradley-Terry) fitted on the league round-robin** — 4 pairs + 2 frozen rule anchors (tuned/lucario, iono) as calibration players, tuned FIXED at R=1000 to pin the scale across ranking points. Ranking table printed + Hermes'd at every ranking point (baseline, after every leg, final) |
+| ship | **the 2 highest-ELO pairs at the final ranking, each with its own deck** — two exports, two QC batteries, two MODELS entries, Piotr's review/go/deck-confirm for BOTH |
+| gate role | `scripts/gate_spec.py` vs the m43a-ship control is DEMOTED to a diagnostic, run on the two ship candidates only — it informs Piotr's go (is the candidate better than the incumbent on the 25-bed ladder proxy?), it no longer selects. Bars pass ≥ +0.02 / kill ≤ 0.0 are read advisorily; a kill triggers escalation, not silent no-ship |
+| promotion metric (in-leg) | `vs_teacher` (rule tuned/lucario, `load_teacher()` defaults) — each leg beats its own pre-loop baseline; `vs_solver` logged, never gates |
+| critics | K trains on its own head (just trained under GAE); L, O, G run plain outcome-reward GAE from their own heads, diaried as such. No Φ anywhere — "no valid Φ exists" stands until a candidate's OWN head passes E0 at the PASS bar (matched-pair ≥ 0.62 AND within-game variance share ≥ 0.10; 0.58 is the KILL bar, `scripts/m40_e0_value.py:57-58`) |
+| held-out | dragapult trains nowhere (collector hard-refuses it in pools); legal in gate beds and QC |
+| non-goals | no per-cause reward terms, no new decks beyond the roster, no dragapult pair, no AZ/PSRO machinery, no simultaneous both-seat gradients, no meta-weighted verdict |
 
-**AMENDMENT (2026-08-12, Piotr): the competition ends 2026-08-16 — M44
-compresses to ONE round** (3 legs + league + gate), champion ships
-2026-08-13 evening at the latest so it accrues 2+ days of ladder games.
-D2's "2 rounds pre-registered" is superseded: round 2 runs only if the
-round-1 champion ships early and time clearly allows. The second part of
-the amendment is DONE: `m43b_oger_wide` shipped 2026-08-12 as sub
-55464395 (ogerpon deck, QC 10W-2L, Piotr's go on record, monitor MODELS
-dict updated in commit 1ade100) — the Lane B live A/B is running on the
-ladder now, not pending.
+## Audit (2026-08-13) — math + RL best practices (r3, extended in r4)
 
-## The directive
+Verified against the working tree; **no formula corrections were
+required** in the trainer:
 
-Piotr (2026-08-12): *"explore the possibility of 2 pilots playing each
-other to simulate the kaggle environment — but with PPO learning. We will
-then select the agent+deck with the highest winrate."*
+- `compute_gae` (`rl/ppo.py:195-221`) is textbook GAE(γ=0.99, λ=0.95):
+  δ_t = r_t + γV(s_{t+1}) − V(s_t) with V(s_T)=0, A_t = δ_t + γλA_{t+1}
+  backward, returns = A + V. Correct.
+- `ppo_update` (`rl/ppo.py:246-366`) is the standard clipped surrogate:
+  additive loss (policy + 0.5·huber value − entropy·coef), ratio clip
+  0.2, grad-norm clip 0.5, invalid options masked before softmax and
+  excluded from entropy, KL(π_new ‖ π_frozen-start) anchor matching its
+  docstring. Correct.
+- Accepted (registered, not changed): global-once advantage
+  normalization; huber value loss without value clipping; no LR anneal.
+  All match what M43's positive was measured on — do not change
+  mid-campaign.
+- **ELO model (new in r4):** P(i beats j) = 1 / (1 + 10^((R_j−R_i)/400)).
+  Fit by Bradley-Terry MLE on the round-robin grid via the Zermelo/MM
+  iteration on π_i = 10^(R_i/400):
+  π_i ← W_i / Σ_{j≠i} [ n_ij / (π_i + π_j) ],
+  draws counted as half a win to each side (the `rl/league.py`
+  convention), then rescale so tuned = 1000. Report ±SE from the
+  observed Fisher information, I_ii = (ln10/400)² Σ_j n_ij p̂_ij(1−p̂_ij).
+- **Statistical registrations:**
+  - Ranking cells n=200 ⇒ per-cell CI ±6.9pp; each pair's rating pools 5
+    opponents × 200. Intermediate rankings are progress prints, not
+    verdicts; the FINAL ranking runs n=800/cell (per-cell ±3.5pp) and is
+    the selection instrument.
+  - Winner's curse: "top-2 of 4 by fitted ELO" inflates the winners'
+    ratings by selection; diary final ELOs with this caveat and never
+    quote them as unbiased strength.
+  - The league ELO is a CLOSED-population measure (pilot-vs-pilot +
+    2 anchors); it is NOT a ladder predictor ([[no-validated-live-
+    predictor]] stands). The gate diagnostic on the top-2 (25-bed
+    battery, SE(Δ) ≈ 0.71pp pooled, z≈2.83 at the +2.0pp advisory bar)
+    is the ladder-proxy read that informs Piotr's go. Offline =
+    screening, live decides.
+  - Promotion evals n=200 ⇒ ±6.9pp: in-leg promotion is a screen.
+  - Seed floor n=400 ⇒ CI ≤ ±4.9pp (±4.2pp at the 0.25 bar).
 
-Read as a design: a small **population of (pilot, deck) pairs that train
-BY PLAYING EACH OTHER** — the live ladder in miniature — with PPO doing
-the learning, and a final selection of the strongest pair as the ship
-candidate. This picks up **BACKLOG #13(b)** (clones vs clones — the
-double oracle) and the compute-feasible core of **#9** (population loop,
-parked since M38 on compute that the new box + GPU + OMP pinning now
-provide: a full 50-it PPO leg is ~2.5h, a hashed 25-bed battery ~11 min
-at the pinned ~31 games/s).
+## Pausability map (Piotr will pause/resume on this box)
 
-## Why now
-
-- M43 proved the substrate: honest PPO improves the strongest BC start
-  (+3.72pp z=5.93) with stable inner dynamics. One arm, one deck.
-- The M43 A-base leg trained against FROZEN opponents (beds + past
-  selves). The live ladder is not frozen — it is other adapting agents.
-  A co-training league is the cheapest honest approximation of that.
-- The M43.1 rebuild produced trained/clonable starts for several
-  archetypes **on the M43 box** (manifest `docs/M43.md:382-402`; the
-  repo itself carries none of them — Phase R): the alakazam PPO
-  champion, the exact ogerpon net, and BC clones of grim (90k-row
-  corpus — the ladder's biggest family), plus thinner
-  wall/arch/garchomp/rocket corpora.
-- Lane B's carry-forward said ogerpon needs opponents with headroom, not
-  more corpus — a league where its opponents ALSO improve is exactly that.
-
-## Phase 0 — forensics first (standing rule)
-
-- `uv run python -m rl.kaggle_ingest refresh` for subs 55464234 and
-  55464395 — the local `data/kaggle/episodes.parquet` (9,054 rows) tops
-  out at sub 55450580; NEITHER new ship is ingested yet.
-- Live read of 55464234 once n≥45 (G-10; the only datum on record is the
-  hour-1 public score 883.4, not a claim). Read 55464395 vs incumbent
-  55265105 the same way — that A/B is the ladder deciding what the
-  ceilinged offline battery could not. Diary both, incl. replay
-  forensics of losses.
-
-## Phase R — artifact preflight (hard prerequisite, before D1)
-
-Verify on the EXECUTION box, ~5 min if it is the M43 box (`ls` + md5
-against the M43.1 manifest), else a rebuild measured in hours:
-
-| artifact | role | recovery if missing |
+| stage | pausable? | mechanism |
 |---|---|---|
-| `checkpoints/ppo_best_m43a_base.pt` | pair K seed AND the D3 control | **no repo route** — the 55464234 npz was never committed (the tracked bundle went M41 ogerpon → m43b ogerpon, commits 3db93a8 → 5e59a9f). Exists only in `dist/submission_neural_20260812_183326.tar.gz` + `checkpoints/` on the M43 box, else Kaggle re-download. Single point of failure — open item 6. |
-| `checkpoints/m41_ogerpon.pt` | pair O seed | exact recovery from git: commit 3db93a8's tracked npz (the documented M43 route; md5 `4eae59d0…`, `docs/M43.md:66-68`) |
-| `checkpoints/m39_bc_grim.pt` | pair G seed | rebuild per `scripts/m43_rebuild.sh` recipes (grim d1: 90,867-decision corpus `3121746f@700`, init m28_winners, val .642) |
-| 21 panel beds + `m28_winners.pt` | the 25-bed gate roster | `scripts/m43_rebuild.sh` after `kaggle_ingest refresh` + harvest; m28_winners recoverable from commit 2946a56's tracked npz if absent |
-| `dist/qc_beds/`, previous ship tarballs | qc_battery legs | copy from M43 box / re-export |
+| PPO legs (Step 5) | **after Step 3 lands** | sentinel-file pause + `--resume` (state saved every iteration; SIGKILL loses at most the in-flight iteration, ~4 min) |
+| ranking grid (Steps 5/6) | already, by design | cells cached keyed by (net-md5 pair, decks, n, seed); a rerun replays only missing/stale cells |
+| gate diagnostic (Step 6) | already | `rl.matchrunner.run_pairs` header-checked per-cell resume — kill anytime, rerun the SAME command |
+| seed floor, QC | atomic | minutes each; rerun if killed |
+| `plan_iter collect` | NO resume | **not used in M44** |
 
-**Descope ladder if Phase R forces a rebuild:** K > G > O > D. K is the
-champion continuation and the control — non-negotiable; G is the novelty
-seat; O costs a ~1.5h leg the compressed window may not have; D was
-default OFF already.
+Never run two PPO legs concurrently (`data/ppo/` shards are shared).
+Pausing leg X and launching leg Y, then resuming X later, is safe —
+every iteration wipes and recollects shards.
 
-## Design
+---
 
-### D0 — form (settled in draft, challengeable)
+## Step 0 — forensics first (standing rule)
 
-**Iterated best response, NOT simultaneous both-seat learning.** Each
-leg, ONE pair trains while the others sit frozen in its opponent pool.
-Rationale: (a) zero collector surgery — the pool mechanism
-(`--opponents "model-pz:ckpt:deck=w"`) already does this;
-(b) simultaneous two-seat updates make both policies non-stationary
-learning targets — the known cycling failure of naive co-evolution; the
-collector also only records the learning seat, and that is a feature.
-True simultaneous self-play (both seats recorded, one net) remains what
-`mirror=` already provides WITHIN each leg. v2 territory if M44 pays.
+- [ ] `uv run python -m rl.kaggle_ingest refresh` — local
+      `data/kaggle/episodes.parquet` tops out at sub 55450580; neither new
+      ship (55464234 alakazam, 55464395 ogerpon) is ingested.
+- [ ] Live read of 55464234 once n≥45; read 55464395 vs incumbent
+      55265105 the same way. Diary both, including replay forensics of
+      losses — specifically tag each observed live loss by cause
+      (deck-out / bench-out / prizes): that breakdown seeds the Step 3g
+      telemetry's first hypotheses.
 
-### D1 — the roster (pilot, deck) seeds
+## Step 1 — artifact preflight
 
-| pair | start checkpoint | deck | fix token (pool + gate + ship) | standing |
-|---|---|---|---|---|
-| **K** (kazam) | `ppo_best_m43a_base.pt` | alakazam_v2_h4 | `model-c-pkgz` (conserve,racemode2,racemode4,planzero) | live champion, sub 55464234 |
-| **O** (oger) | `m41_ogerpon.pt` | ogerpon | `model-pz` (planzero) | exact M41 live net |
-| **G** (grim) | `m39_bc_grim.pt` (val .642, 90k-row corpus) | grim_live | `model-pz` (provisional) | NEW learner — the ladder's biggest family (~49.5%) gets a pilot of ours for the first time |
-| D (stretch, default OFF) | `m40_bed_garchomp_d1.pt` | garchomp c7b3253f | `model-pz` | only if K/O/G come in under budget |
+**Verified on THIS box 2026-08-13** — it IS the M43 box: seeds
+(`ppo_best_m43a_base.pt`, `m41_ogerpon.pt`, `m39_bc_grim.pt`), bed
+checkpoints, `docs/specs/m43_laneA_base.json` (25 beds), E0 corpora,
+both 2026-08-12 ship tarballs, `decks/grim_live.csv` and
+`decks/lucario.csv` all present. Remaining actions:
 
-Fix tokens are pre-registered per pair so pool opponents == gate arms ==
-ship artifact (the M43-review finding-#4 discipline; `ship_verify.py
---gate-arm` enforces it at export).
+- [ ] Record md5 of all seeds (incl. pair L's, once picked in Step 4) in
+      the diary.
+- [ ] Rebuild `dist/qc_beds/` (missing): `uv run python
+      scripts/m39_build_qc_beds.py` — qc_battery silently skips its
+      loss-family legs without it.
+- [ ] `data/m39_live_mix.json` absent — regenerate only if the optional
+      live-mix diagnostic is run; never a verdict.
+- Contingency: a seed that fails md5/`_load_model` un-trains its pair
+  (leg cut; the pair stays ranked on whatever seed is recoverable). K's
+  seed unrecoverable → recover from
+  `dist/submission_neural_20260812_183326.tar.gz`, else STOP and
+  escalate.
 
-Pair D mechanics, should it ever activate: the deck is NOT a `decks/`
-name — the csv lives at `data/kaggle/garchomp_c7b3253f_deck.csv`, which
-works in opponent specs (path-tolerant `resolve_deck`) but NOT as
-`--learn-deck` (bare-name-only, `rl/collector.py:54`); training pair D
-requires copying the csv to `decks/garchomp_c7b3253f.csv` first. Do not
-confuse it with `decks/cynthia_garchomp.csv` — a different deck.
+## Step 2 — champion weight custody (before anything touches checkpoints/)
 
-Dragapult stays the held-out evaluator everywhere (the collector
-hard-refuses it in training pools — `_assert_dragapult_held_out`,
-`ValueError` unless `ALLOW_DRAGAPULT_TRAINING=1`; it remains legal in
-gate beds).
+- [ ] Commit an md5-pinned copy of 55464234's weights (the m43a export
+      npz or `ppo_best_m43a_base.pt`) — never committed, exists only on
+      this box and Kaggle, and it is pair K's seed AND the gate-diagnostic
+      control. m43a WAS shipped, so this respects the ship-only commit
+      rule.
 
-**Seed floor (kill; NEW bar, first registered here — no precedent):**
-every seed must score ≥0.25 vs each rule anchor (tuned, iono; n=400 per
-anchor, ~±4.9pp CI half-width) before round 1, via plain
-`matchrunner play` — a pair too weak to threaten anyone teaches nothing
-and pollutes the league. K passes trivially; run it anyway for the
-record.
+## Step 3 — CODE CHANGES (mandatory before any leg)
 
-### D2 — the round (ONE, per the amendment)
+Change `train()` and the collector's game-end accounting ONLY —
+`compute_gae`/`ppo_update` stay untouched (the `tcg/ppo.py` parity twin
+and its tests must not move).
 
-Per pair P, sequential under the worker cap (fresh tag per leg — a
-reused tag inherits the old `ppo_best_<tag>.pt` and its baseline bar,
-`rl/ppo.py:489`):
+**3a–3f: pausable PPO** (unchanged from r3):
+
+- [ ] **3a. State persistence.** `_save_train_state(path, model, opt,
+      next_it, best_wr, meta)` → `checkpoints/ppo_state_<tag>.pt` holding
+      `{model: cpu_sd, opt: opt.state_dict(), next_it, best_wr, meta:
+      {start, iterations, learn_deck, opponents}}`. Write `<path>.tmp`
+      then `os.replace` (atomic). Call at the END of every iteration,
+      after the promotion block.
+- [ ] **3b. `--resume` flag** (store_true, requires `--tag`). Refuse if
+      the state file is missing or stored `meta` disagrees with the CLI
+      (`start`/`iterations`/`learn_deck`). Restore model sd →
+      `model.to(dev)` → build AdamW → `opt.load_state_dict` (PyTorch
+      re-homes optimizer state). Loop `range(next_it, iterations)`.
+      **Skip the baseline re-measure and use stored `best_wr`** — no bar
+      drift. Skip the `start → ppo_best` copy. KL `ref_model` rebuilds
+      from `--start` (frozen); anneals key off `it` and continue
+      correctly.
+- [ ] **3c. Pause sentinel.** Top of each iteration: if
+      `checkpoints/ppo_pause_<tag>` exists → save state, print `PAUSED
+      before iter N`, exit 0. Pause = `touch
+      checkpoints/ppo_pause_m44_<P>_r1`; `--resume` auto-deletes the
+      sentinel at startup.
+- [ ] **3d. Register:** RNG state not persisted — resumed runs are not
+      bit-identical (cuda already isn't). `past=`/`mirror=` survive
+      resume by construction.
+- [ ] **3e. Test.** `tests/test_ppo_resume.py`: round-trip a tiny
+      OptionScorer + AdamW (one step taken) through save/load — exact
+      tensor equality, `next_it`, `best_wr`, meta-mismatch refusal. Run
+      with the parity suite:
+      `uv run pytest tests/test_ppo_resume.py tests/test_ppo.py -v`.
+- [ ] **3f. Acceptance smoke** (~5 min): `--iterations 2
+      --games-per-iter 8 --workers 2 --eval-every 1 --eval-games 4 --tag
+      m44_resume_smoke` → sentinel-pause after iter 0 → `--resume` →
+      confirm start at iter 1, NO baseline re-measure line. Delete smoke
+      artifacts.
+
+**3g: loss-cause telemetry** (NEW — the "prevent losing by deck-out /
+bench-out / prizes" instrument):
+
+- [ ] Classify every finished collection game's terminal state in the
+      collector worker: loser's cause ∈ {deckout, benchout, prizes}
+      (deck empty at forced draw / no Pokemon in play / opponent took
+      all prizes — exact engine fields confirmed at implementation
+      against the wrapper; the `me.prize` remaining-prizes convention is
+      `rl/collector.py:532-536`). Return per-game cause with the
+      existing per-game stats.
+- [ ] Aggregate per iteration in `train()`: the learner's losses AND
+      wins split by cause. TB scalars `loss_cause/{deckout,benchout,
+      prizes}` + `win_cause/...`, one stdout line per iteration.
+      (Win-by-deckout is a strategy — the deck-out race — worth seeing
+      rise or fall too.)
+- [ ] Registered read (per leg, diaried): no loss cause may RISE over a
+      leg while overall win rate improves — a falling total hiding a
+      rising deck-out share is exactly what outcome-only reward can
+      mask, and it's the trigger for Piotr to reconsider the per-cause
+      penalty non-goal in v2.
+- [ ] Test: unit-test the classifier on 3 synthetic terminal states (one
+      per cause) in `tests/test_ppo_resume.py` or a sibling.
+
+**3h: league ranking script** (NEW — `scripts/m44_league.py`):
+
+- [ ] Round-robin driver over a roster file (`docs/specs/m44_roster.json`:
+      pair → {net md5-pinned, deck, fix token} + the 2 anchors): every
+      unordered player pair = one cell, both seats, played via
+      `rl/matchrunner` primitives (workers ≤ 8). `rl/league.py` was
+      evaluated and rejected — M7-era PlackettLuce over a stale anchor
+      field; only its draws-as-half-wins convention is kept.
+- [ ] Cell cache keyed by (md5(netA), md5(netB), deckA, deckB, n, seed)
+      under `data/m44_league/` — reruns replay only missing/stale cells;
+      this is also the pause story (kill anytime, rerun).
+- [ ] Bradley-Terry fit + table print per the Audit formulas: rank,
+      pair, deck, ELO ±SE, W-L-D, Δ since previous ranking point. Table
+      goes to stdout, the diary, and Hermes at every ranking point.
+- [ ] Loss-cause columns in the table (from the same games): losses by
+      deckout/benchout/prizes per pair — the league-level view of 3g.
+- [ ] Test: BT fit on a synthetic 3-player grid with known rates
+      recovers the constructed rating order; tuned-anchor pinning = 1000
+      exact.
+
+## Step 4 — seeds: pair L pick + seed floor (kill bar, before any training)
+
+- [ ] **Pair L seed pick** (~15 min): no modern lucario pilot exists
+      (`bc_lucario*.pt` are July v1-era). Candidates, all piloting
+      `lucario`: `ppo_best_m43a_base.pt`, `m41b_wide_prod.pt`,
+      `m28_winners.pt`. n=400 each vs the tuned anchor; highest wins,
+      md5 recorded. (KL anchors to the frozen start per-pair, so a
+      cross-deck start is legitimate; the seed floor below still
+      applies.)
+- [ ] **Seed floor:** every seed (K, L, O, G) scores ≥ 0.25 vs each rule
+      anchor (tuned/lucario, iono), n=400 per anchor, via `matchrunner
+      play` (decode per the measure-agent skill). A failing seed
+      un-trains its pair (leg cut) — the pair still enters the ranking
+      on its seed unless the seed also fails to load.
+- [ ] **Baseline ranking** (ranking point 0): `m44_league.py` over all 4
+      seeds + anchors, n=200/cell — the league's starting table, printed
+      + Hermes'd.
+
+## Step 5 — the round (4 legs, sequential, workers ≤ 8)
+
+Leg order **K → L → G → O** (champion continuation first, Piotr's new
+seat second). Per pair P, fresh tag `m44_<P>_r1`; opponents = the other
+three pairs' CURRENT league nets (updated as legs complete):
 
 ```
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 uv run python -m rl.ppo \
-  --start <P.seed>.pt              # resolved relative to checkpoints/
+  --start <P.seed>.pt \
   --learn-deck <P.deck> --eval-deck <P.deck> \
   --iterations 25 --games-per-iter 400 --workers 8 \
   --eval-every 5 --eval-games 200 \
   --kl-coef 0.1 --device auto --tag m44_<P>_r1 \
-  --opponents "<Q1.fix>:checkpoints/<Q1.net>.pt:<Q1.deck>=0.225" \
-              "<Q2.fix>:checkpoints/<Q2.net>.pt:<Q2.deck>=0.225" \
+  --opponents "<Q1.fix>:checkpoints/<Q1.net>.pt:<Q1.deck>=0.15" \
+              "<Q2.fix>:checkpoints/<Q2.net>.pt:<Q2.deck>=0.15" \
+              "<Q3.fix>:checkpoints/<Q3.net>.pt:<Q3.deck>=0.15" \
               "mirror=0.25" "past=0.10" \
               "rule:tuned:lucario=0.10" "rule:iono=0.10"
 ```
 
-Mechanics, verified against the working tree:
+(Weights sum to 1.00. Rule anchors spelled IN FULL — bare `rule:tuned`
+crashes on the absent `decks/tuned.csv`. `past=` is tag-scoped, inert
+until first promotion; `mirror=` re-resolves each iteration; both ride
+P's own deck. KL 0.1 anchors to the frozen `--start` ⇒ per-pair
+automatically.)
 
-- The rule anchors MUST be spelled in full. Bare `rule:tuned` defaults
-  the deck slot to "tuned" and crashes on the deliberately absent
-  `decks/tuned.csv` — the M23 first-smoke failure. `rule:iono` is fine
-  (decks/iono.csv exists).
-- `past=` is tag-scoped to `ppo_m44_<P>_r1_it*.pt` (the M43-review fix)
-  and silently inert until the leg's first promotion — expected, not a
-  bug. `mirror=` re-resolves to the live work checkpoint every
-  iteration; both ride P's own deck by construction.
-- 25 iterations per leg — the M43 curve banked its best at it34 of 50
-  and faded after (76.0 → 68.0 by it49); one compressed round gets the
-  productive half.
-- KL 0.1 is to the frozen `--start`, so the anchor is per-pair
-  automatically.
-- The promotion metric is `vs_teacher` = `rule tuned/lucario` REGARDLESS
-  of `--eval-deck` (`load_teacher()` called with defaults,
-  `rl/ppo.py:518`) — the same instrument M43 promoted on. Each leg
-  measures its own pre-loop baseline; `vs_solver` is logged, never
-  gates.
-- No `--value-ckpt`, no `--phi-ckpt` anywhere (D4). Default race shaping
-  at coef 0.0 is a parser-legal no-op.
+- **After each leg:** the pair's league net becomes
+  `ppo_best_m44_<P>_r1.pt` if the leg ever promoted, else the seed
+  (non-adoption = revert). Then **ranking point**: `m44_league.py`
+  n=200/cell (cache makes this only the updated pair's row, ~1 min) —
+  table printed + Hermes'd. Subsequent legs pool the UPDATED net.
+- **Inner kills — OPERATOR procedure on TensorBoard** (no guard code;
+  M43 references): entropy must not rise (0.823 → 0.769); KL to frozen
+  start bounded (peak 0.146); `vs_teacher` beats the leg's own baseline
+  within 15 iterations (it9). Plus 3g: no loss cause rising while win
+  rate improves. Breach → kill the process (exact PID); the pair keeps
+  its seed.
+- **Compression rule (pre-registered):** if wall-clock jeopardizes the
+  same-day ship, FIRST cut remaining legs to `--iterations 15` (M43 beat
+  its baseline by it9; ~55 min/leg), THEN cut legs in order O, G. A cut
+  leg's pair stays in the ranking on its seed. K's and L's legs are
+  never cut.
+- Ops: ~1.25–1.5h per 25-it leg net of pauses; pause/resume per Step 3;
+  Hermes update at every leg start/end + hourly heartbeat + immediate
+  failure notification; watch the workers-8 pool wedge (stall-detect and
+  bounce, `docs/M43.md:257-264`); diary metrics as they land, never
+  retrospectively.
 
-**Inner kills — OPERATOR procedure on TensorBoard, not code** (there is
-no entropy guard, KL bound, auto-stop or revert in `rl/ppo.py`; M43
-reference values in parentheses):
+## Step 6 — final ranking, selection, ship diagnostic
 
-- entropy (`train/entropy`) must not rise over the leg (M43:
-  0.823 → 0.769, monotone-ish down);
-- KL to the frozen start stays bounded (M43 peak 0.146);
-- `vs_teacher` must beat the leg's own baseline within 15 iterations
-  (M43: beaten at it9).
-- Breach → operator kills the process. "Revert" is non-adoption: the
-  pair's league net is `ppo_best_m44_<P>_r1.pt` if the leg ever
-  promoted, else the pair keeps its seed. Nothing needs restoring.
-- Ops: M43 measured ~2.5h at 50 it ⇒ ~1.25–1.5h per 25-it leg; Hermes
-  stage-transition updates + hourly heartbeat per standing rule; watch
-  for the intermittent workers-8 pool wedge (stall-detect and bounce,
-  `docs/M43.md:257-264`).
+- [ ] **Final ranking** (the selection instrument): `m44_league.py` over
+      the 4 league nets + anchors at **n=800/cell** (cache upgrades the
+      n=200 cells; ~12k games ≈ 7 min). Table printed + Hermes'd +
+      diaried with the winner's-curse caveat.
+- [ ] **Selection: the 2 highest-ELO pairs ship**, each with its own
+      deck. No tie math beyond SE overlap: if #2 and #3 overlap within
+      1 SE, escalate the choice to Piotr with the table.
+- [ ] **Gate diagnostic on both ship candidates:**
+      `docs/specs/m44_<P>.json` per candidate — arm = league net under
+      P's fix token, control =
+      `model-c-pkgz:checkpoints/ppo_best_m43a_base.pt:alakazam_v2_h4`,
+      beds verbatim from `m43_laneA_base.json`, n=400/cell, seed 1, bars
+      `{pass: 0.02, kill: 0.0}` read ADVISORILY. `gate_spec.py hash →
+      run → decode` (~11 min each; resumable). Results go to Piotr with
+      the QC replays — a kill (≤ 0.0 vs the m43a incumbent) triggers
+      Kill criterion 4 escalation, not silent no-ship.
 
-**Round 2** (only if the round-1 champion ships early and time clearly
-allows): re-run D2 with every pair's pool refreshed to the round-1 nets.
-A pair whose D3 delta came in ≤ 0 is FROZEN (stays as opponent, stops
-training). No round 3 without a new plan entry.
+## Step 7 — optional diagnostics (never verdicts)
 
-### D3 — selection + ship gate (one instrument, one battery)
+- [ ] Only with slack: regenerate `data/m39_live_mix.json`
+      (`scripts/m39_live_mix.py`) and read live-mix family weights
+      against the final table (which pairs' decks the live meta actually
+      contains). The r3 head-to-head grid is superseded — the ranking IS
+      the head-to-head, with rating math on top.
 
-Selection and the ship gate collapse into the SAME instrument — the one
-M43 actually used, `scripts/gate_spec.py`, hash-disciplined:
+## Step 8 — ship ritual (binding, per candidate — run TWICE)
 
-- Three hashed specs `docs/specs/m44_<P>.json` (hashed at execution
-  start): arm = pair P's league net under P's registered fix token;
-  control = **the SHIPPED m43 net** `ppo_best_m43a_base`
-  (`model-c-pkgz`, alakazam_v2_h4) for ALL three; beds = the 25-bed
-  roster verbatim from `docs/specs/m43_laneA_base.json`; n=400/cell,
-  seed 1, bars pass ≥ +2.0pp pooled / kill ≤ 0.0.
-- `gate_spec.py hash → run → decode` per spec; ~20k games ≈ 11 min per
-  spec at the pinned rate, ~35 min for all three. The decode refuses
-  mismatched hashes/n — the pre-registration teeth.
-- **Champion = highest pooled delta vs the shared control.** The ship
-  gate is the champion's own PASS. One number answers both questions:
-  "who won the league" and "did the league add anything on top of M43"
-  — for every pair including K, whose spec is automatically
-  "K-evolved vs K-as-shipped".
-- The selection is deliberately NOT raw head-to-head — "agent+deck with
-  the highest winrate" must not reward a deck-matchup lottery (K beats
-  O ≠ K is the better ship). The head-to-head grid is a DIAGNOSTIC:
-  3 cells (K–O, K–G, O–G) × n=800 via `matchrunner play` (~2,400 games,
-  ~2 min). No ranking tool exists (`rl/rank.py` is not one) and none is
-  built.
-- Optional diagnostic, only if slack: regenerate `data/m39_live_mix.json`
-  (`scripts/m39_live_mix.py`; episodes.parquet is present) and read the
-  live-mix family weights against per-bed rates. It cannot be a second
-  verdict: `m40_decide.py` reads a different runs layout than
-  `gate_spec.py` writes, and its pool excludes the topgrim beds. THE
-  VERDICT IS THE POOLED gate_spec NUMBER.
-
-### D4 — critics (the E0 law, compressed)
-
-Correction from r1: the E0 **pass** bar is matched-pair ≥ 0.62 AND
-within-game variance share ≥ 0.10; **0.58 is the kill bar**
-(`scripts/m40_e0_value.py:57-58`). r1's transplant branch is CUT for
-M44: no transplant harness exists (M43 merged checkpoints by hand), the
-four E0 corpora are box-local, and M43 already measured the answer —
-wide body + retain_b head → E0 0.559, FAIL, "the head is body-specific;
-transplanting it loses the ranking."
-
-Therefore: **K trains on its own head** (it just trained under GAE);
-**O and G run plain outcome-reward GAE from their own (weak) BC heads**,
-diaried as such. No Φ anywhere: "no valid Φ exists yet" stands until a
-candidate's OWN head passes E0 — at the pass bar, not the kill bar.
-
-## What this is measuring (the honest question)
-
-Does competitive pressure from co-trained opponents produce a stronger
-ship than M43's frozen-pool PPO — on the same roster, same bars, same
-control? The league is also the first true test of pair G: whether OUR
-pilot on the ladder's dominant deck can beat the ladder's own grim
-pilots (the beds).
+For EACH of the two selected pairs: export → `scripts/ship_verify.py`
+with `--gate-arm` = that pair's spec token → `uv run python
+scripts/qc_battery.py --prefix m44_qc_<pair>` (all working sample agents
++ qc_beds legs + previous ship tarball
+`submission_neural_20260812_184453.tar.gz` as mirror leg; add a bespoke
+`play_games` leg for behavior the pair specifically changed) → **STOP
+for Piotr's manual replay review, explicit go, AND deck confirmation for
+BOTH candidates** → each ship commit includes its `MODELS` dict entry in
+`notebooks/model_monitor.ipynb` (+ `DECK_META` for decks new to the
+monitor — grim_live and lucario would be).
 
 ## Kill criteria / stop rules
 
-- Phase R kill: a seed that cannot be recovered removes its pair
-  (descope ladder K > G > O > D); if K's seed is unrecoverable, M44
-  stops and escalates to Piotr — there is no league without the
-  champion and no gate without the control.
-- Seed floor kill (D1) before any training is spent.
-- Per-leg inner kills (D2) — operator-enforced; a killed leg means
-  non-adoption, the pair keeps its seed.
-- Gate kill ≤ 0.0pp vs the m43 ship = the league added nothing; diary,
-  no ship, carry the roster to BACKLOG.
-- Standing law: offline = screening, live decides. One ship max.
+1. Preflight kill: unrecoverable seed → its leg is cut, pair ranks on
+   whatever loads; K unrecoverable → STOP, escalate.
+2. Seed floor kill (Step 4): a sub-0.25 seed un-trains its pair.
+3. Per-leg inner kills (Step 5) — non-adoption, pair keeps its seed.
+4. Ship-conflict escalation: a ship candidate whose gate diagnostic
+   kills (≤ 0.0 vs the m43a incumbent), or #2/#3 ELO within 1 SE,
+   collides with the ship-today directive → escalate to Piotr
+   immediately with the numbers (his options: ship anyway on his
+   explicit call, substitute #3, or hold an incumbent). Never resolve
+   silently in either direction.
+5. Standing law: offline = screening, live decides. Two ships max.
 
-## Cost (M43-measured, new box, OMP-pinned ~31 games/s on batteries)
+## Cost (M43-measured; net of pause time)
 
 | item | games | wall |
 |---|---|---|
-| Phase 0: ingest + live reads | — | ~15 min |
-| Phase R preflight (M43 box / rebuild) | — | ~5 min / **hours → descope** |
-| seed floor (3 pairs × 2 anchors × 400) | 2.4k | ~10 min |
-| one PPO leg (25 it × 400 + 5 evals × 400) | ~12k | ~1.25–1.5h |
-| the round (3 legs, sequential) | ~36k | ~4–4.5h |
-| selection + gate (3 specs × 25 beds × 400 × 2) | 60k | ~35 min |
-| head-to-head diagnostic (3 × 800) | 2.4k | ~2 min |
-| export + ship_verify + qc_battery + Piotr review | — | ~1h + review |
-| **total** | **~100k** | **fits 2026-08-13 evening IFF Phase R is clean** |
-
-## Non-goals (pre-registered)
-
-- No simultaneous both-seat gradient updates (v1 is iterated BR).
-- No new decks / deck search — the roster is built from nets we hold.
-- No dragapult pair (held-out evaluator law).
-- No event-bonus rewards; no Φ without an E0-passing own head.
-- No AZ/PSRO machinery — 3 pairs × 1 round is a pilot of the idea, not
-  a population algorithm.
-- No new league/grid tooling — the diagnostic is a 3-cell
-  `matchrunner play` loop; no meta-weighted verdict this milestone.
-
-## Ship ritual (unchanged, binding)
-
-Offline gate PASS → export → `scripts/ship_verify.py` (with
-`--gate-arm` = the champion's spec token) → `scripts/qc_battery.py
---prefix m44_qc_<pair>` (all working sample agents + previous ship
-tarball mirror leg) → **STOP for Piotr's manual replay review, explicit
-go, and deck confirmation** → ship commit includes the `MODELS` dict
-entry in `notebooks/model_monitor.ipynb` (+ `DECK_META` if the champion
-deck is new to the monitor — grim_live would be).
-
-## Open items for Piotr's review
-
-1. Roster: is pair G (our first grim pilot) in? Highest-upside,
-   highest-novelty seat. Pair D default OFF — confirm.
-2. Selection metric: r2 RECOMMENDS the unweighted pooled gate_spec delta
-   vs the m43-ship control (the actual M43 instrument, hash-disciplined,
-   selection and gate in one battery). This SUPERSEDES r1's
-   meta-weighted recommendation, which named a decoder whose input file
-   is missing and whose layout is incompatible with the gate runner.
-   Confirm.
-3. 25 it × 1 round stands per the amendment; round 2 only on early ship
-   (r1's "2 rounds" item is moot).
-4. Does the ogerpon seat earn its ~1.5h of the compressed window? The
-   league gives it exactly the headroom opponents Lane B's carry-forward
-   asked for — but it is also the first pair the descope ladder drops.
-   Keep or drop.
-5. Phase 0 = live reads of BOTH 55464234 and 55464395 once n≥45
-   (standing rule: forensics of the previous ship starts every
-   milestone; the ingest gap means neither is readable locally yet).
-6. NEW — champion weight custody: 55464234's weights were never
-   committed (the tracked bundle now carries 55464395's). They exist
-   only on the M43 box and on Kaggle. Recommend committing the m43a
-   export npz (or an md5-pinned `ppo_best_m43a_base.pt`) BEFORE M44
-   touches anything — it is the live champion, pair K's seed, and the
-   D3 control.
-7. NEW — confirm M44 executes on the M43 box. A fresh checkout (this
-   one) cannot run Phase R → D3 as-is: no seeds, no beds, no E0
-   corpora, no qc_beds.
+| Step 0 ingest + live reads | — | ~15 min |
+| Step 1 preflight + qc_beds rebuild | — | ~20 min |
+| Step 2 custody commit | — | ~5 min |
+| Step 3 code changes + tests + smoke (3a–3h) | — | ~1.5–2h |
+| Step 4 L seed pick + seed floor + baseline ranking | ~6.2k | ~25 min |
+| Step 5 round (4 × ~12k) + 4 ranking points | ~52k | ~5–6h (25 it) / ~3.5–4h (15 it) |
+| Step 6 final ranking + 2 gate diagnostics | ~52k | ~30 min |
+| Step 8 2× (export + verify + QC) + review | — | ~1.5h + review |
+| **total** | **~110k** | **same-day evening ONLY with a morning start or the 15-it compression; Steps 3–4 must begin immediately** |

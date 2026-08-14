@@ -56,7 +56,10 @@ BEDS = {
 # since that ship, so the next bed rebuild would have SystemExit'd -- which is
 # the design working, but the beds on disk were built under the older config
 # and any rebuild must re-read this line rather than bump it reflexively.
-SHIP_FIXES = '"conserve,planzero,ash,ashguard"'
+# M44: refreshed to the M43b ogerpon ship's string ("planzero" alone). The
+# quoted literal now also matches the `_PLAN_ZERO = "planzero" in ...` line;
+# replacing both still yields a plain bed (`"" in frozenset()` is False).
+SHIP_FIXES = '"planzero"'
 
 
 def build_one(name: str, checkpoint: str, deck: str) -> Path:

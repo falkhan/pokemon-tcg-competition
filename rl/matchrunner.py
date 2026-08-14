@@ -181,6 +181,12 @@ _MODEL_FIX_KINDS = {
     # M41 O18 `gustsnipe`, single-variable over model-pz — the ogerpon ship
     # candidate's config plus the one new rule, so the battery attributes it.
     "model-pz-snipe": frozenset({"planzero", "gustsnipe"}),
+    # M45 lucario fix probes, single-variable over model-pz (the lucario
+    # ship base): benchfloor targets the measured 14% bench-out losses vs
+    # tuned; gustveto is the M36 anti-scaling demote, probed vs iono's
+    # Voltaic Chain (docs/M45-plan.md A3).
+    "model-pz-bf": frozenset({"planzero", "benchfloor"}),
+    "model-pz-gv": frozenset({"planzero", "gustveto"}),
     "model-c-pkgz": frozenset({"conserve", "racemode2", "racemode4",
                                "planzero"}),
     # M40 deep-dive candidates (2026-08-03). Base = conserve+planzero: the
@@ -857,6 +863,14 @@ def _engine_game(fn0, fn1, deck0: list[int], deck1: list[int],
                 "decks": [p.get("deckCount") for p in players],
                 "prizes": [len(p.get("prize", [])) for p in players],
             }
+            # M44 3g: the engine's own end reason (RESULT log, type 23 —
+            # 1=prizes 2=deckout 3=benchout 4=card effect), None when the log
+            # landed in the other seat's per-seat window. A SIBLING of
+            # "final": _from_a_view re-keys every "final" value by seat and
+            # would choke on a scalar.
+            stats["reason"] = next(
+                (lg.get("reason") for lg in obs_dict.get("logs") or []
+                 if lg.get("type") == 23), None)
         return obs_dict["current"]["result"]
     finally:
         battle_finish()
@@ -920,6 +934,7 @@ def _from_a_view(seat_stats: dict, a_seat: int) -> dict:
     final = seat_stats.get("final")
     if final:
         view["final"] = {k: [v[a_seat], v[1 - a_seat]] for k, v in final.items()}
+    view["reason"] = seat_stats.get("reason")   # M44: seat-independent scalar
     return view
 
 
@@ -967,7 +982,7 @@ def _make_jobs(pairs: list[tuple], workers: int, seed_base: int = 1000) -> list[
 MARGIN_FIELDS = ("a_prizes", "b_prizes", "a_deck", "b_deck")
 
 
-def _pair_worker(arg: tuple) -> tuple[int, int, list[int], list]:
+def _pair_worker(arg: tuple) -> tuple[int, int, list[int], list, list]:
     """One chunk: the per-game results AND their margins.
 
     M41b § II.3c: `_engine_game` has always captured the end state, and
@@ -979,12 +994,14 @@ def _pair_worker(arg: tuple) -> tuple[int, int, list[int], list]:
     """
     job_idx, (pair_idx, spec_a, spec_b, n, seed) = arg
     margins: list = []
+    reasons: list = []                      # M44: engine end-reason per game
 
     def on_game(_g, _result, view):
         final = view.get("final") or {}
         prizes, decks = final.get("prizes"), final.get("decks")
         margins.append([prizes[0], prizes[1], decks[0], decks[1]]
                        if prizes and decks else None)
+        reasons.append(view.get("reason"))
 
     chunk = play_series(spec_a, spec_b, n, seed=seed, on_game=on_game)
     # Index alignment is the whole contract: margins[i] MUST describe the game
@@ -992,7 +1009,8 @@ def _pair_worker(arg: tuple) -> tuple[int, int, list[int], list]:
     # margin and reports a confident wrong correlation. A game_fn that never
     # fires on_game (test seams) would otherwise short the list.
     margins += [None] * (len(chunk) - len(margins))
-    return job_idx, pair_idx, chunk, margins[:len(chunk)]
+    reasons += [None] * (len(chunk) - len(reasons))
+    return job_idx, pair_idx, chunk, margins[:len(chunk)], reasons[:len(chunk)]
 
 
 def _run_key(pairs: list[tuple], workers: int, seed: int,
@@ -1025,7 +1043,9 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
     variance either way — repeated runs are independent samples).
 
     Each persisted chunk also carries `margins` — one MARGIN_FIELDS row per
-    game (M41b § II.3c). Old checkpoints have no such key and still resume.
+    game (M41b § II.3c) — and `reasons` (M44): the engine's end reason per
+    game (1=prizes 2=deckout 3=benchout 4=card effect, None when absent).
+    Old checkpoints have neither key and still resume.
 
     checkpoint (M8.1): a jsonl path. Line 1 pins the run key
     (pairs/workers/seed); each completed chunk appends one line as it
@@ -1076,14 +1096,15 @@ def run_pairs(pairs: list[tuple], workers: int = 4, game_fn=None,
         if pending:
             ctx = mp.get_context("spawn")
             with ctx.Pool(min(workers, len(pending))) as pool:
-                for job_idx, pair_idx, chunk, chunk_margins in \
+                for job_idx, pair_idx, chunk, chunk_margins, chunk_reasons in \
                         pool.imap_unordered(_pair_worker, pending):
                     results[pair_idx].extend(chunk)
                     margins[pair_idx].extend(chunk_margins)
                     if fh is not None:
                         fh.write(json.dumps({"job": job_idx, "pair": pair_idx,
                                              "results": chunk,
-                                             "margins": chunk_margins}) + "\n")
+                                             "margins": chunk_margins,
+                                             "reasons": chunk_reasons}) + "\n")
                         fh.flush()
     finally:
         if fh is not None:

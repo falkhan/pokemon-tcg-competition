@@ -1,0 +1,24 @@
+{
+  "name": "m44_league",
+  "note": "docs/M44-plan.md r4 roster. Pair L joins after the Step 4 seed pick (best-of-3 vs tuned, n=400). md5 pins are the cell-cache identity: a promoted leg updates net+md5 here DELIBERATELY, which rotates that pair's cell digest and replays only its rows.",
+  "players": [
+    {"id": "K", "spec": "model-c-pkgz:checkpoints/ppo_best_m44_K_r1.pt:alakazam_v2_h4",
+     "net": "checkpoints/ppo_best_m44_K_r1.pt",
+     "md5": "05d0a47abf1ca2ef41a7a95ca7722cc8", "deck": "alakazam_v2_h4",
+     "note": "leg K promoted it9 vs_teacher 0.790 (baseline 0.760); seed was ppo_best_m43a_base 749e0c8c"},
+    {"id": "L", "spec": "model-pz:checkpoints/m28_winners.pt:lucario",
+     "net": "checkpoints/m28_winners.pt",
+     "md5": "dda082d1ca20390e9f8f76ef585d4f73", "deck": "lucario"},
+    {"id": "O", "spec": "model-pz:checkpoints/ppo_best_m44_O_r1.pt:ogerpon",
+     "net": "checkpoints/ppo_best_m44_O_r1.pt",
+     "md5": "47d014cfd79baae0251279b51f3c8d23", "deck": "ogerpon",
+     "note": "leg O promoted it14 vs_teacher 0.505 (baseline 0.475); seed was m41_ogerpon 4eae59d0"},
+    {"id": "G", "spec": "model-pz:checkpoints/ppo_best_m44_G_r1.pt:grim_live",
+     "net": "checkpoints/ppo_best_m44_G_r1.pt",
+     "md5": "ea865ced65004d99cd9d63fd2060ab26", "deck": "grim_live",
+     "note": "leg G promoted it9 vs_teacher 0.455 (baseline 0.425); seed was m39_bc_grim ddd079e8"},
+    {"id": "tuned", "spec": "rule:tuned:lucario", "deck": "lucario",
+     "anchor": true, "pin": 1000},
+    {"id": "iono", "spec": "rule:iono", "deck": "iono", "anchor": true}
+  ]
+}

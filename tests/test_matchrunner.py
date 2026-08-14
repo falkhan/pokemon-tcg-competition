@@ -413,6 +413,26 @@ def test_run_pairs_persists_margins_aligned_with_results(tmp_path, monkeypatch):
         assert all(m[1] == 6 and m[2] == 30 for m in margins)
 
 
+def test_run_pairs_persists_reasons_aligned_with_results(tmp_path, monkeypatch):
+    """M44: the engine end-reason rides next to margins, index-aligned — the
+    league table's loss-cause columns read it back off the jsonl."""
+    def series(a, b, n, seed=0, on_game=None, **k):
+        for g in range(n):
+            on_game(g, g % 2, {"final": {"prizes": [g, 6], "decks": [30, g]},
+                               "reason": 1 + (g % 4)})
+        return [g % 2 for g in range(n)]
+
+    _patch_pool(monkeypatch, series)
+    ck = tmp_path / "m.jsonl"
+    mr.run_pairs([(("generic", "x"), ("generic", "y"), 8)],
+                 workers=2, seed=5, checkpoint=str(ck))
+    rows = [json.loads(line) for line in ck.read_text().splitlines()][1:]
+    for row in rows:
+        assert len(row["reasons"]) == len(row["results"])
+        # the stub sets reason = 1 + (index % 4); a slid list breaks this
+        assert row["reasons"] == [1 + (i % 4) for i in range(len(row["results"]))]
+
+
 def test_run_pairs_margins_stay_aligned_when_on_game_never_fires(tmp_path,
                                                                  monkeypatch):
     """A test seam (or an errored game) that never reports a final state must
@@ -426,6 +446,8 @@ def test_run_pairs_margins_stay_aligned_when_on_game_never_fires(tmp_path,
     for row in rows:
         assert len(row["margins"]) == len(row["results"])
         assert all(m is None for m in row["margins"])
+        assert len(row["reasons"]) == len(row["results"])   # M44: same pad law
+        assert all(r is None for r in row["reasons"])
 
 
 def test_run_pairs_resumes_a_pre_m41b_checkpoint_without_margins(tmp_path,
