@@ -209,6 +209,8 @@ _MODEL_FIX_KINDS = {
     "model-pz-rg": frozenset({"planzero", "retreatguard"}),
     "model-pz-bc": frozenset({"planzero", "bosscombo"}),
     "model-pz-bz": frozenset({"planzero", "benchzero"}),
+    "model-pz-lm": frozenset({"planzero", "lastmon"}),
+    "model-pz-dz": frozenset({"planzero", "deckzero"}),
     "model-cz-ashw-dg0": frozenset({"conserve", "planzero", "ash", "ashguard",
                                     "dudguard0"}),
     # B5 string-restore composite for the K line (recorded as a COMPOSITE, not

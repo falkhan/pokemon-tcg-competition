@@ -1072,6 +1072,37 @@ def test_m46_guards_inert_when_gates_cold():
     assert apply_play_overrides(obs, [0, 1, 2], M46) == [0, 1, 2]
 
 
+def test_o25_lastmon_generalizes_dudguard0():
+    import rl.plan as rp
+    opts = [_opt(OptionType.ABILITY, 0, area=AreaType.ACTIVE),
+            _opt(OptionType.PLAY, 0), _opt(OptionType.END)]
+    fixes = frozenset({rp.PLAY_FIX_LASTMON})
+    for cid in sorted(rp._SELF_REMOVAL_ABILITY_IDS):   # every mined member
+        lone = _obs(opts, hand=[NON_ENERGY], active=[_card(cid)])
+        assert apply_play_overrides(lone, [0, 1, 2], fixes) == [1, 2, 0], cid
+        benched = _obs(opts, hand=[NON_ENERGY], active=[_card(cid)],
+                       bench=[_card(NON_ENERGY)] + [None] * 4)
+        assert apply_play_overrides(benched, [0, 1, 2], fixes) == [0, 1, 2]
+
+
+def test_o26_deckzero_vetoes_a_deck_out_play():
+    import rl.plan as rp
+    cid, worst = 1232, rp._DECK_COST_WORST[1232]       # mined worst-case 7
+    opts = [_opt(OptionType.PLAY, 0), _opt(OptionType.END)]
+    fixes = frozenset({rp.PLAY_FIX_DECKZERO})
+    risky = _obs(opts, hand=[cid], deck_count=worst)
+    assert apply_play_overrides(risky, [0, 1], fixes) == [1, 0]
+    safe = _obs(opts, hand=[cid], deck_count=worst + 1)
+    assert apply_play_overrides(safe, [0, 1], fixes) == [0, 1]
+    # veto semantics: inert unless the risky play IS the top pick
+    assert apply_play_overrides(risky, [1, 0], fixes) == [1, 0]
+    # board-ability route: Fezandipiti (id 140, worst 3) at deck 3
+    ab = [_opt(OptionType.ABILITY, 0, area=AreaType.BENCH),
+          _opt(OptionType.END)]
+    fez = _obs(ab, hand=[], bench=[_card(FEZANDIPITI_ID)], deck_count=3)
+    assert apply_play_overrides(fez, [0, 1], fixes) == [1, 0]
+
+
 def test_m46_absent_from_every_shipped_config():
     """Inertness proof: no live fix string names any O20-O24 guard, and each
     probe token that names one also carries its base package."""

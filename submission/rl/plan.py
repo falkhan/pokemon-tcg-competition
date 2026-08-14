@@ -573,6 +573,37 @@ PLAY_FIX_BENCHZERO = "benchzero"      # O21: no END at bench 0 while a basic is 
 PLAY_FIX_ATTACKFLOOR = "attackfloor"  # O22: no END while an attack is ARMED (B2)
 PLAY_FIX_RETREATGUARD = "retreatguard"  # O23: no retreat that disarms an ARMED active (B3)
 PLAY_FIX_BOSSCOMBO = "bosscombo"      # O24: no gust without an ARMED follow-up (B4)
+PLAY_FIX_LASTMON = "lastmon"          # O25: no self-removal ability at bench 0 (C1)
+PLAY_FIX_DECKZERO = "deckzero"        # O26: no optional play into own deck-out (C1)
+
+# --- M46 C3: mined card-fact registries (frozen 2026-08-14) ------------------
+# The SERVABLE copy of data/rule_facts.json (7,565 raw episodes, both seats;
+# scripts/build_rule_facts.py) — the bundle cannot read data/ at Kaggle serve
+# time, so the facts are frozen here and tests/test_rule_facts.py asserts the
+# constants stay subsets of the mined tables on every regeneration.
+#
+# Self-removal: ABILITY use followed by the user leaving OUR board the same
+# turn — Dudunsparce (Run Away Draw, 22,128 obs), Abra-109 (83), Dusclops
+# (111), Dusknoir (121). O25 `lastmon` is O20 `dudguard0` generalized over
+# this registry (the Dudunsparce instance stays separately probe-able).
+_SELF_REMOVAL_ABILITY_IDS = frozenset({66, 109, 132, 133})
+# WORST-CASE observed own-deck cost per optional PLAY/ABILITY/ATTACH
+# (registered semantics: worst-case, never the mean — the consumer is a
+# deck-out veto; entries < 2 dropped as noise). Cross-validates the hand
+# measures: Enriching Energy 13 -> 4 (m37 audit 4.0/attach), Fezandipiti
+# 140 -> 3 (m30 probe 2.8). Known conservatism, diaried: co-occurring
+# triggered draws inflate some entries (Rare Candy reads 5).
+_DECK_COST_WORST = {
+    13: 4, 19: 2, 81: 3, 86: 3, 140: 3, 174: 3, 271: 6, 293: 2,
+    547: 2, 641: 2, 675: 3, 756: 2, 1077: 3, 1079: 5, 1080: 5,
+    1082: 3, 1086: 2, 1092: 4, 1094: 2, 1115: 2, 1126: 5, 1128: 5,
+    1181: 2, 1185: 6, 1187: 5, 1192: 5, 1194: 2, 1195: 2, 1198: 2,
+    1199: 3, 1200: 2, 1202: 2, 1203: 5, 1205: 3, 1206: 3, 1208: 6,
+    1210: 2, 1213: 4, 1215: 3, 1216: 8, 1217: 5, 1220: 3, 1223: 5,
+    1224: 3, 1225: 2, 1227: 8, 1231: 3, 1232: 7, 1233: 4, 1236: 3,
+    1239: 5,
+}
+_DECKZERO_DECK_AT = max(_DECK_COST_WORST.values())   # O26 early-out floor
 
 
 def _board_pokemon_id(opt, me):
@@ -789,6 +820,15 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
       (the opp-match-point case); the one observed live Boss play had no
       attack behind it. Forbids gust-to-strand, so adoption additionally
       requires a non-killing stall panel cell (docs/M46-plan.md B4).
+    - O25 `lastmon` (m46 C1): O20 generalized over the MINED self-removal
+      registry (_SELF_REMOVAL_ABILITY_IDS — Dudunsparce, Abra-109,
+      Dusclops, Dusknoir): at bench 0, demote any ability whose user is
+      known to leave play on use. Deck-agnostic bench-out protection.
+    - O26 `deckzero` (m46 C1): demote any optional PLAY/ABILITY/ATTACH
+      whose MINED worst-case deck cost (_DECK_COST_WORST) meets or exceeds
+      our remaining deck — the play could draw the deck to 0 and lose at
+      turn start. Worst-case semantics by registration (a deck-out veto
+      must over- rather than under-estimate).
     """
     if (not fixes or obs.select is None or obs.current is None
             or obs.select.context != SelectContext.MAIN):
@@ -874,6 +914,9 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
     if (PLAY_FIX_DUDGUARD0 in fixes
             and not any(p is not None for p in (me.bench or []))):
         demote_ids |= DUDUNSPARCE_IDS
+    if (PLAY_FIX_LASTMON in fixes
+            and not any(p is not None for p in (me.bench or []))):
+        demote_ids |= _SELF_REMOVAL_ABILITY_IDS
     if PLAY_FIX_CONSERVE in fixes and me.deckCount <= _CONSERVE_AT:
         demote_ids |= _CONSERVE_ABILITY_IDS
     if PLAY_FIX_RACEMODE in fixes or PLAY_FIX_RACEMODER in fixes:
@@ -896,6 +939,11 @@ def apply_play_overrides(obs, ranked: list, fixes: frozenset) -> list:
             demote_hand_ids |= _RACEMODE4_SETUP_IDS
     if PLAY_FIX_ASHGUARD in fixes and me.deckCount > _ASHGUARD_AT:
         demote_hand_ids |= frozenset({SACRED_ASH_ID})
+    if PLAY_FIX_DECKZERO in fixes and me.deckCount <= _DECKZERO_DECK_AT:
+        risky = frozenset(c for c, w in _DECK_COST_WORST.items()
+                          if me.deckCount <= w)
+        demote_ids |= risky          # board abilities (Dudunsparce, Fez, ...)
+        demote_hand_ids |= risky     # hand plays / attaches
 
     def _demoted(i) -> bool:
         opt = opts[i]
