@@ -213,6 +213,20 @@ _MODEL_FIX_KINDS = {
     "model-pz-dz": frozenset({"planzero", "deckzero"}),
     "model-cz-ashw-dg0": frozenset({"conserve", "planzero", "ash", "ashguard",
                                     "dudguard0"}),
+    # B2-B4 panel probes on the m41b candidate line (single-variable over
+    # model-cz-ashw, the incumbent's exact live set):
+    "model-cz-ashw-af": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "attackfloor"}),
+    "model-cz-ashw-rg": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "retreatguard"}),
+    "model-cz-ashw-bc": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "bosscombo"}),
+    # C1 Tier-0 composite (floor screen only — each member's adoption bar is
+    # unit tests + no-regression floor, not a panel probe; dudguard0 is a
+    # subset of lastmon and rides along for string-level continuity):
+    "model-cz-ashw-t0": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "dudguard0", "benchzero", "lastmon",
+                                   "deckzero"}),
     # B5 string-restore composite for the K line (recorded as a COMPOSITE, not
     # single-variable — accepted under deadline; control = model-c-pkgz).
     "model-c-pkgz-b5": frozenset({"conserve", "racemode2", "racemode4",
