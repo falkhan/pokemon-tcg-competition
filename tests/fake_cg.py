@@ -82,6 +82,10 @@ class LogType(IntEnum):
     TURN_END = 3
     DRAW = 4
     MOVE_CARD = 6
+    SWITCH = 8
+    CHANGE = 9
+    ATTACK = 15
+    HP_CHANGE = 16
     RESULT = 23
 
 
