@@ -1,0 +1,181 @@
+{
+ "beds": [
+  {
+   "name": "grim_d1",
+   "spec": "model:checkpoints/m46_bed_grim_d1.pt:grim_live",
+   "family": "grim"
+  },
+  {
+   "name": "grim_d2",
+   "spec": "model:checkpoints/m46_bed_grim_d2.pt:grim_live",
+   "family": "grim"
+  },
+  {
+   "name": "grim_d3",
+   "spec": "model:checkpoints/m46_bed_grim_d3.pt:grim_live",
+   "family": "grim"
+  },
+  {
+   "name": "mirror_d1",
+   "spec": "model:checkpoints/m46_bed_mirror_d1.pt:alakazam_v2_h4",
+   "family": "mirror"
+  },
+  {
+   "name": "mirror_d2",
+   "spec": "model:checkpoints/m46_bed_mirror_d2.pt:alakazam_v2_h4",
+   "family": "mirror"
+  },
+  {
+   "name": "mirror_d3",
+   "spec": "model:checkpoints/m46_bed_mirror_d3.pt:alakazam_v2_h4",
+   "family": "mirror"
+  },
+  {
+   "name": "wall_d1",
+   "spec": "model:checkpoints/m46_bed_wall_d1.pt:data/kaggle/wall_6f87e9d4_deck.csv",
+   "family": "wall"
+  },
+  {
+   "name": "wall_d2",
+   "spec": "model:checkpoints/m46_bed_wall_d2.pt:data/kaggle/wall_6f87e9d4_deck.csv",
+   "family": "wall"
+  },
+  {
+   "name": "wall_d3",
+   "spec": "model:checkpoints/m46_bed_wall_d3.pt:data/kaggle/wall_6f87e9d4_deck.csv",
+   "family": "wall"
+  },
+  {
+   "name": "lucario",
+   "spec": "model:checkpoints/m45_bc_lucario_d3.pt:lucario_solrock",
+   "family": "lucario"
+  },
+  {
+   "name": "stall_d1",
+   "spec": "model:checkpoints/m46_bed_stall_d1.pt:data/kaggle/stall_e234578d_deck.csv",
+   "family": "stall"
+  },
+  {
+   "name": "stall_d2",
+   "spec": "model:checkpoints/m46_bed_stall_d2.pt:data/kaggle/stall_e234578d_deck.csv",
+   "family": "stall"
+  },
+  {
+   "name": "stall_d3",
+   "spec": "model:checkpoints/m46_bed_stall_d3.pt:data/kaggle/stall_e234578d_deck.csv",
+   "family": "stall"
+  },
+  {
+   "name": "dragapult_d1",
+   "spec": "model:checkpoints/m46_bed_drag_d1.pt:data/kaggle/dragapult_f2b4039a_deck.csv",
+   "family": "dragapult"
+  },
+  {
+   "name": "dragapult_d2",
+   "spec": "model:checkpoints/m46_bed_drag_d2.pt:data/kaggle/dragapult_f2b4039a_deck.csv",
+   "family": "dragapult"
+  },
+  {
+   "name": "dragapult_d3",
+   "spec": "model:checkpoints/m46_bed_drag_d3.pt:data/kaggle/dragapult_f2b4039a_deck.csv",
+   "family": "dragapult"
+  },
+  {
+   "name": "garchomp_d1",
+   "spec": "model:checkpoints/m40_bed_garchomp_d1.pt:data/kaggle/garchomp_c7b3253f_deck.csv",
+   "family": "garchomp"
+  },
+  {
+   "name": "garchomp_d2",
+   "spec": "model:checkpoints/m40_bed_garchomp_d2.pt:data/kaggle/garchomp_c7b3253f_deck.csv",
+   "family": "garchomp"
+  },
+  {
+   "name": "garchomp_d3",
+   "spec": "model:checkpoints/m40_bed_garchomp_d3.pt:data/kaggle/garchomp_c7b3253f_deck.csv",
+   "family": "garchomp"
+  },
+  {
+   "name": "arch_d1",
+   "spec": "model:checkpoints/m39_bc_archaludon.pt:archaludon",
+   "family": "archaludon"
+  },
+  {
+   "name": "arch_d2",
+   "spec": "model:checkpoints/m39_bed_arch_d2.pt:archaludon",
+   "family": "archaludon"
+  },
+  {
+   "name": "arch_d3",
+   "spec": "model:checkpoints/m39_bed_arch_d3.pt:archaludon",
+   "family": "archaludon"
+  },
+  {
+   "name": "rocket_d1",
+   "spec": "model:checkpoints/m40_bed_rocket_d1.pt:data/kaggle/rocket_59e27a5e_deck.csv",
+   "family": "rocket"
+  },
+  {
+   "name": "rocket_d2",
+   "spec": "model:checkpoints/m40_bed_rocket_d2.pt:data/kaggle/rocket_59e27a5e_deck.csv",
+   "family": "rocket"
+  },
+  {
+   "name": "rocket_d3",
+   "spec": "model:checkpoints/m40_bed_rocket_d3.pt:data/kaggle/rocket_59e27a5e_deck.csv",
+   "family": "rocket"
+  },
+  {
+   "name": "tuned",
+   "spec": "rule:tuned:lucario",
+   "family": null,
+   "advisory": true
+  },
+  {
+   "name": "iono",
+   "spec": "rule:iono",
+   "family": null,
+   "advisory": true
+  }
+ ],
+ "weights": {
+  "n_games": 83,
+  "source": "docs/m44-live-postmortem.md §2 — pooled 780+-band opponents over six subs; remainder split 5/5/5 over garchomp/archaludon/rocket (equal split, plan-approval decision)",
+  "games": {
+   "grim": 32,
+   "mirror": 19,
+   "wall": 5,
+   "lucario": 5,
+   "stall": 4,
+   "dragapult": 3,
+   "garchomp": 5,
+   "archaludon": 5,
+   "rocket": 5
+  }
+ },
+ "bars": {
+  "pass": 0.02,
+  "kill": 0.0,
+  "family_z": -2.0
+ },
+ "bootstrap": {
+  "B": 2000,
+  "seed": 46,
+  "stability_floor": 0.95
+ },
+ "coverage_floor": 0.8,
+ "name": "m46_A0v_acceptance",
+ "question": "does the 780+-band-weighted panel rank m41b_wide_prod (live 810) above ppo_best_m44_K_r1 (live 735)? A0v: if not, the instrument is invalid.",
+ "arm": "model-c-pkgz:checkpoints/ppo_best_m44_K_r1.pt:alakazam_v2_h4",
+ "control": "model-cz-ashw:checkpoints/m41b_wide_prod.pt:alakazam_v2_h4",
+ "n_per_cell": 800,
+ "seeds": [
+  1,
+  2
+ ],
+ "acceptance": {
+  "expect": "KILL",
+  "max_z": -1.96,
+  "reason": "live truth 810 vs 735; PASS or delta>0 = instrument invalid -> advisory demotion + guards-only fallback + escalate to Piotr"
+ }
+}

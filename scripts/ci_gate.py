@@ -85,6 +85,7 @@ def tier_instruments() -> tuple[bool, list[str]]:
                     "tests/test_instrument_agreement.py",
                     "tests/test_gate_estimator.py",
                     "tests/test_gate_spec.py",
+                    "tests/test_m46_band_gate.py",
                     "-q", "--no-header"])
     tail = [ln for ln in out.splitlines() if " passed" in ln or " failed" in ln]
     return rc == 0, [f"instruments: {tail[-1].strip()}" if tail else out[-200:]]
