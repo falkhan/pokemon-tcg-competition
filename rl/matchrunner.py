@@ -199,6 +199,39 @@ _MODEL_FIX_KINDS = {
     "model-cz-tempo": frozenset({"conserve", "planzero", "tempo"}),
     # M40b Track C — value-guided veto on top of the cz base.
     "model-cz-vv": frozenset({"conserve", "planzero", "vveto"}),
+    # M46 guardrail probes (docs/M46-plan.md Track B/C). Two bases, both with
+    # existing controls: `model-pz` for the minimal single-variable read, and
+    # `model-cz-ashw` — verified (ship commit 4094166) to be the EXACT fix set
+    # the 810 incumbent 55265099 shipped — for the guards-only early-bank arm.
+    # PRIMARY read = the A0 band-weighted panel; tuned/iono advisory only (Q2).
+    "model-pz-dg0": frozenset({"planzero", "dudguard0"}),
+    "model-pz-af": frozenset({"planzero", "attackfloor"}),
+    "model-pz-rg": frozenset({"planzero", "retreatguard"}),
+    "model-pz-bc": frozenset({"planzero", "bosscombo"}),
+    "model-pz-bz": frozenset({"planzero", "benchzero"}),
+    "model-pz-lm": frozenset({"planzero", "lastmon"}),
+    "model-pz-dz": frozenset({"planzero", "deckzero"}),
+    "model-cz-ashw-dg0": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                    "dudguard0"}),
+    # B2-B4 panel probes on the m41b candidate line (single-variable over
+    # model-cz-ashw, the incumbent's exact live set):
+    "model-cz-ashw-af": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "attackfloor"}),
+    "model-cz-ashw-rg": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "retreatguard"}),
+    "model-cz-ashw-bc": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "bosscombo"}),
+    # C1 Tier-0 composite (floor screen only — each member's adoption bar is
+    # unit tests + no-regression floor, not a panel probe; dudguard0 is a
+    # subset of lastmon and rides along for string-level continuity):
+    "model-cz-ashw-t0": frozenset({"conserve", "planzero", "ash", "ashguard",
+                                   "dudguard0", "benchzero", "lastmon",
+                                   "deckzero"}),
+    # B5 string-restore composite for the K line (recorded as a COMPOSITE, not
+    # single-variable — accepted under deadline; control = model-c-pkgz).
+    "model-c-pkgz-b5": frozenset({"conserve", "racemode2", "racemode4",
+                                  "planzero", "ash", "ashguard", "tempo",
+                                  "deckguard", "hammer"}),
 }
 
 # M40b Track C `vveto` knobs (module-level like SOLVED_* so probes can read

@@ -93,6 +93,13 @@ BED_FAMILY = {
     "garchomp_d1": "garchomp", "garchomp_d2": "garchomp",
     "garchomp_d3": "garchomp",
     "rocket_d1": "rocket", "rocket_d2": "rocket", "rocket_d3": "rocket",
+    # M46 band-panel beds (docs/M46-plan.md A0/A0t; synced with
+    # scripts/m40_decide.py — no statistic changes, keys only). The m46
+    # instrument itself reads NEITHER copy (its family map lives in the
+    # hashed band spec); this sync keeps future live-mix regeneration honest.
+    "mirror_d1": "mirror", "mirror_d2": "mirror", "mirror_d3": "mirror",
+    "stall_d1": "stall", "stall_d2": "stall", "stall_d3": "stall",
+    "lucario": "lucario",
 }
 
 

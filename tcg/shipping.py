@@ -88,6 +88,29 @@ def export_rules(deck: str = DEFAULT_RULES_DECK) -> None:
     print(f"exported RULE agent (generic pilot) paired with deck '{deck}' -> {SUBMISSION_RULES}")
 
 
+# M46 `core` meta-token (docs/M46-plan.md Track C packaging): the ADOPTED
+# deck-agnostic guards, named once here and expanded at --fixes COMPOSE time.
+# `core` itself must NEVER reach the bundle string or a _MODEL_FIX_KINDS
+# frozenset — ship_verify check 3 reflects only *_FIX_* constants and check 3b
+# is literal set equality between bundle string and gate-arm frozenset, so
+# both sides always carry the EXPANDED names. Empty until guards clear their
+# adoption bars (probe results, docs/M46.md); rides along on any future
+# deck's ship, each ship's own probe/gate still validates it there.
+CORE_FIXES: tuple[str, ...] = ()
+
+
+def expand_core_fixes(fixes: str) -> str:
+    """Expand the `core` meta-token in a comma-joined fix string, dedup-safe
+    and order-preserving. Every --fixes consumer calls this BEFORE the string
+    reaches the bundle or a spec, so `core` never appears literally anywhere
+    ship_verify compares."""
+    names: list[str] = []
+    for name in (n for n in fixes.split(",") if n):
+        expanded = CORE_FIXES if name == "core" else (name,)
+        names.extend(n for n in expanded if n not in names)
+    return ",".join(names)
+
+
 def _set_bundle_fixes(fixes: str) -> None:
     """M43 review finding #4: pin the bundle's fix package to the GATED one.
 
@@ -184,7 +207,7 @@ def export(checkpoint: str = DEFAULT_CHECKPOINT, deck: str = DEFAULT_DECK,
     np.save(str(rl_pkg / "card_features.npy"), FEAT)
 
     if fixes is not None:
-        _set_bundle_fixes(fixes)
+        _set_bundle_fixes(expand_core_fixes(fixes))
 
     # M41b § II.3e: the export gates ITSELF. `ship_verify` Tier-1 was a script
     # someone had to remember to run, and M41 is what that costs — an export

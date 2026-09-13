@@ -1,0 +1,2572 @@
+{
+ "_doc": "mined by scripts/build_rule_facts.py over 7565 raw episodes, both seats (docs/M46-plan.md C3). zero_damage_pairs are ALL-ZERO (one damaging observation vetoes); deck_cost is WORST-CASE observed.",
+ "n_episodes": 7565,
+ "self_removal_abilities": {
+  "66": {
+   "name": "Dudunsparce",
+   "n": 22128,
+   "example_ep": 84963504
+  },
+  "109": {
+   "name": "Abra",
+   "n": 83,
+   "example_ep": 84966385
+  },
+  "132": {
+   "name": "Dusclops",
+   "n": 111,
+   "example_ep": 84968817
+  },
+  "133": {
+   "name": "Dusknoir",
+   "n": 121,
+   "example_ep": 84968817
+  }
+ },
+ "zero_damage_pairs": [
+  {
+   "attacker": 31,
+   "attacker_name": "Chi-Yu",
+   "defender": 112,
+   "defender_name": "Munkidori",
+   "n": 26
+  },
+  {
+   "attacker": 31,
+   "attacker_name": "Chi-Yu",
+   "defender": 860,
+   "defender_name": "Snorunt",
+   "n": 6
+  },
+  {
+   "attacker": 33,
+   "attacker_name": "Froakie",
+   "defender": 676,
+   "defender_name": "Solrock",
+   "n": 6
+  },
+  {
+   "attacker": 42,
+   "attacker_name": "Applin",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 3
+  },
+  {
+   "attacker": 42,
+   "attacker_name": "Applin",
+   "defender": 677,
+   "defender_name": "Riolu",
+   "n": 4
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 66,
+   "defender_name": "Dudunsparce",
+   "n": 42
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 86,
+   "defender_name": "Metang",
+   "n": 6
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 90,
+   "defender_name": "Thwackey",
+   "n": 20
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 104,
+   "defender_name": "Froslass",
+   "n": 33
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 112,
+   "defender_name": "Munkidori",
+   "n": 79
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 116,
+   "defender_name": "Okidogi",
+   "n": 3
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 119,
+   "defender_name": "Dreepy",
+   "n": 8
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 120,
+   "defender_name": "Drakloak",
+   "n": 6
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 121,
+   "defender_name": "Dragapult ex",
+   "n": 45
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 131,
+   "defender_name": "Duskull",
+   "n": 7
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 140,
+   "defender_name": "Fezandipiti ex",
+   "n": 51
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 142,
+   "defender_name": "Genesect",
+   "n": 16
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 163,
+   "defender_name": "Slowking",
+   "n": 4
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 164,
+   "defender_name": "Comfey",
+   "n": 19
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 169,
+   "defender_name": "Duraludon",
+   "n": 337
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 190,
+   "defender_name": "Archaludon ex",
+   "n": 76
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 235,
+   "defender_name": "Budew",
+   "n": 16
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 239,
+   "defender_name": "Flareon ex",
+   "n": 20
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 305,
+   "defender_name": "Dunsparce",
+   "n": 123
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 318,
+   "defender_name": "Ho-Oh",
+   "n": 4
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 330,
+   "defender_name": "Sylveon",
+   "n": 3
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 341,
+   "defender_name": "Cynthia's Roselia",
+   "n": 14
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 342,
+   "defender_name": "Cynthia's Roserade",
+   "n": 34
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 343,
+   "defender_name": "Shaymin",
+   "n": 61
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 354,
+   "defender_name": "Ethan's Typhlosion",
+   "n": 4
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 380,
+   "defender_name": "Cynthia's Gabite",
+   "n": 46
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 381,
+   "defender_name": "Cynthia's Garchomp ex",
+   "n": 19
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 387,
+   "defender_name": "Cynthia's Spiritomb",
+   "n": 5
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 400,
+   "defender_name": "Team Rocket's Tarountula",
+   "n": 12
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 401,
+   "defender_name": "Team Rocket's Spidops",
+   "n": 16
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 414,
+   "defender_name": "Team Rocket's Articuno",
+   "n": 15
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 431,
+   "defender_name": "Team Rocket's Mewtwo ex",
+   "n": 41
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 434,
+   "defender_name": "Team Rocket's Mimikyu",
+   "n": 16
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 463,
+   "defender_name": "Team Rocket's Murkrow",
+   "n": 3
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 506,
+   "defender_name": "Cubchoo",
+   "n": 28
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 641,
+   "defender_name": "Steven's Metagross ex",
+   "n": 10
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 646,
+   "defender_name": "Marnie's Impidimp",
+   "n": 31
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 647,
+   "defender_name": "Marnie's Morgrem",
+   "n": 22
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 666,
+   "defender_name": "Cinderace",
+   "n": 56
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 30
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 674,
+   "defender_name": "Hariyama",
+   "n": 37
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 675,
+   "defender_name": "Lunatone",
+   "n": 24
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 676,
+   "defender_name": "Solrock",
+   "n": 61
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 677,
+   "defender_name": "Riolu",
+   "n": 41
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 678,
+   "defender_name": "Mega Lucario ex",
+   "n": 152
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 689,
+   "defender_name": "Yveltal",
+   "n": 3
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 721,
+   "defender_name": "Kyogre",
+   "n": 39
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 723,
+   "defender_name": "Mega Abomasnow ex",
+   "n": 68
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 51
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 742,
+   "defender_name": "Kadabra",
+   "n": 84
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 743,
+   "defender_name": "Alakazam",
+   "n": 466
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 858,
+   "defender_name": "Psyduck",
+   "n": 3
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 878,
+   "defender_name": "Hop's Phantump",
+   "n": 3
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 934,
+   "defender_name": "Centiskorch",
+   "n": 3
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 1030,
+   "defender_name": "Staryu",
+   "n": 12
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 1051,
+   "defender_name": "Binacle",
+   "n": 8
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 1052,
+   "defender_name": "Barbaracle",
+   "n": 10
+  },
+  {
+   "attacker": 58,
+   "attacker_name": "Great Tusk",
+   "defender": 1072,
+   "defender_name": "Snorlax",
+   "n": 10
+  },
+  {
+   "attacker": 63,
+   "attacker_name": "Raging Bolt ex",
+   "defender": 678,
+   "defender_name": "Mega Lucario ex",
+   "n": 5
+  },
+  {
+   "attacker": 96,
+   "attacker_name": "Teal Mask Ogerpon ex",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 53
+  },
+  {
+   "attacker": 96,
+   "attacker_name": "Teal Mask Ogerpon ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 369
+  },
+  {
+   "attacker": 116,
+   "attacker_name": "Okidogi",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 31
+  },
+  {
+   "attacker": 120,
+   "attacker_name": "Drakloak",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 8
+  },
+  {
+   "attacker": 131,
+   "attacker_name": "Duskull",
+   "defender": 58,
+   "defender_name": "Great Tusk",
+   "n": 6
+  },
+  {
+   "attacker": 140,
+   "attacker_name": "Fezandipiti ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 13
+  },
+  {
+   "attacker": 140,
+   "attacker_name": "Fezandipiti ex",
+   "defender": 674,
+   "defender_name": "Hariyama",
+   "n": 4
+  },
+  {
+   "attacker": 163,
+   "attacker_name": "Slowking",
+   "defender": 354,
+   "defender_name": "Ethan's Typhlosion",
+   "n": 4
+  },
+  {
+   "attacker": 163,
+   "attacker_name": "Slowking",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 6
+  },
+  {
+   "attacker": 163,
+   "attacker_name": "Slowking",
+   "defender": 742,
+   "defender_name": "Kadabra",
+   "n": 4
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 58,
+   "defender_name": "Great Tusk",
+   "n": 19
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 96,
+   "defender_name": "Teal Mask Ogerpon ex",
+   "n": 6
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 112,
+   "defender_name": "Munkidori",
+   "n": 3
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 305,
+   "defender_name": "Dunsparce",
+   "n": 13
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 344,
+   "defender_name": "Dwebble",
+   "n": 4
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 6
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 381,
+   "defender_name": "Cynthia's Garchomp ex",
+   "n": 8
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 646,
+   "defender_name": "Marnie's Impidimp",
+   "n": 9
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 647,
+   "defender_name": "Marnie's Morgrem",
+   "n": 16
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 648,
+   "defender_name": "Marnie's Grimmsnarl ex",
+   "n": 58
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 675,
+   "defender_name": "Lunatone",
+   "n": 4
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 678,
+   "defender_name": "Mega Lucario ex",
+   "n": 6
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 721,
+   "defender_name": "Kyogre",
+   "n": 23
+  },
+  {
+   "attacker": 164,
+   "attacker_name": "Comfey",
+   "defender": 743,
+   "defender_name": "Alakazam",
+   "n": 19
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 96,
+   "defender_name": "Teal Mask Ogerpon ex",
+   "n": 10
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 112,
+   "defender_name": "Munkidori",
+   "n": 4
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 305,
+   "defender_name": "Dunsparce",
+   "n": 4
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 344,
+   "defender_name": "Dwebble",
+   "n": 4
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 646,
+   "defender_name": "Marnie's Impidimp",
+   "n": 6
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 648,
+   "defender_name": "Marnie's Grimmsnarl ex",
+   "n": 4
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 4
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 674,
+   "defender_name": "Hariyama",
+   "n": 6
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 676,
+   "defender_name": "Solrock",
+   "n": 16
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 677,
+   "defender_name": "Riolu",
+   "n": 4
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 678,
+   "defender_name": "Mega Lucario ex",
+   "n": 5
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 4
+  },
+  {
+   "attacker": 183,
+   "attacker_name": "Smoochum",
+   "defender": 743,
+   "defender_name": "Alakazam",
+   "n": 5
+  },
+  {
+   "attacker": 190,
+   "attacker_name": "Archaludon ex",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 11
+  },
+  {
+   "attacker": 190,
+   "attacker_name": "Archaludon ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 71
+  },
+  {
+   "attacker": 235,
+   "attacker_name": "Budew",
+   "defender": 169,
+   "defender_name": "Duraludon",
+   "n": 5
+  },
+  {
+   "attacker": 235,
+   "attacker_name": "Budew",
+   "defender": 190,
+   "defender_name": "Archaludon ex",
+   "n": 3
+  },
+  {
+   "attacker": 272,
+   "attacker_name": "Lillie’s Clefairy ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 3
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 58,
+   "defender_name": "Great Tusk",
+   "n": 12
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 65,
+   "defender_name": "Dunsparce",
+   "n": 6
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 90,
+   "defender_name": "Thwackey",
+   "n": 3
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 96,
+   "defender_name": "Teal Mask Ogerpon ex",
+   "n": 6
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 119,
+   "defender_name": "Dreepy",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 131,
+   "defender_name": "Duskull",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 140,
+   "defender_name": "Fezandipiti ex",
+   "n": 19
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 190,
+   "defender_name": "Archaludon ex",
+   "n": 3
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 235,
+   "defender_name": "Budew",
+   "n": 15
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 305,
+   "defender_name": "Dunsparce",
+   "n": 34
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 341,
+   "defender_name": "Cynthia's Roselia",
+   "n": 10
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 343,
+   "defender_name": "Shaymin",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 344,
+   "defender_name": "Dwebble",
+   "n": 11
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 387,
+   "defender_name": "Cynthia's Spiritomb",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 400,
+   "defender_name": "Team Rocket's Tarountula",
+   "n": 8
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 414,
+   "defender_name": "Team Rocket's Articuno",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 431,
+   "defender_name": "Team Rocket's Mewtwo ex",
+   "n": 14
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 432,
+   "defender_name": "Team Rocket's Wobbuffet",
+   "n": 17
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 478,
+   "defender_name": "Squawkabilly",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 647,
+   "defender_name": "Marnie's Morgrem",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 666,
+   "defender_name": "Cinderace",
+   "n": 8
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 6
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 675,
+   "defender_name": "Lunatone",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 677,
+   "defender_name": "Riolu",
+   "n": 29
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 678,
+   "defender_name": "Mega Lucario ex",
+   "n": 8
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 721,
+   "defender_name": "Kyogre",
+   "n": 8
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 722,
+   "defender_name": "Snover",
+   "n": 5
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 40
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 742,
+   "defender_name": "Kadabra",
+   "n": 9
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 743,
+   "defender_name": "Alakazam",
+   "n": 19
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 756,
+   "defender_name": "Mega Kangaskhan ex",
+   "n": 18
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 849,
+   "defender_name": "Mega Lopunny ex",
+   "n": 3
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 860,
+   "defender_name": "Snorunt",
+   "n": 12
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 878,
+   "defender_name": "Hop's Phantump",
+   "n": 7
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 879,
+   "defender_name": "Hop's Trevenant",
+   "n": 3
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 1030,
+   "defender_name": "Staryu",
+   "n": 4
+  },
+  {
+   "attacker": 305,
+   "attacker_name": "Dunsparce",
+   "defender": 1031,
+   "defender_name": "Mega Starmie ex",
+   "n": 4
+  },
+  {
+   "attacker": 311,
+   "attacker_name": "Hop’s Cramorant",
+   "defender": 304,
+   "defender_name": "Hop’s Snorlax",
+   "n": 4
+  },
+  {
+   "attacker": 311,
+   "attacker_name": "Hop’s Cramorant",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 4
+  },
+  {
+   "attacker": 336,
+   "attacker_name": "Zacian ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 19
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 45,
+   "defender_name": "Shaymin",
+   "n": 4
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 57,
+   "defender_name": "Relicanth",
+   "n": 4
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 58,
+   "defender_name": "Great Tusk",
+   "n": 36
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 65,
+   "defender_name": "Dunsparce",
+   "n": 17
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 96,
+   "defender_name": "Teal Mask Ogerpon ex",
+   "n": 41
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 112,
+   "defender_name": "Munkidori",
+   "n": 42
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 116,
+   "defender_name": "Okidogi",
+   "n": 19
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 5
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 119,
+   "defender_name": "Dreepy",
+   "n": 17
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 121,
+   "defender_name": "Dragapult ex",
+   "n": 3
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 140,
+   "defender_name": "Fezandipiti ex",
+   "n": 10
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 169,
+   "defender_name": "Duraludon",
+   "n": 20
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 174,
+   "defender_name": "Fan Rotom",
+   "n": 4
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 222,
+   "defender_name": "Dedenne",
+   "n": 30
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 235,
+   "defender_name": "Budew",
+   "n": 6
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 265,
+   "defender_name": "Iono’s Voltorb",
+   "n": 4
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 272,
+   "defender_name": "Lillie’s Clefairy ex",
+   "n": 5
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 304,
+   "defender_name": "Hop’s Snorlax",
+   "n": 6
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 305,
+   "defender_name": "Dunsparce",
+   "n": 99
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 341,
+   "defender_name": "Cynthia's Roselia",
+   "n": 12
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 343,
+   "defender_name": "Shaymin",
+   "n": 20
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 38
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 354,
+   "defender_name": "Ethan's Typhlosion",
+   "n": 4
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 379,
+   "defender_name": "Cynthia's Gible",
+   "n": 17
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 380,
+   "defender_name": "Cynthia's Gabite",
+   "n": 4
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 381,
+   "defender_name": "Cynthia's Garchomp ex",
+   "n": 3
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 387,
+   "defender_name": "Cynthia's Spiritomb",
+   "n": 6
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 400,
+   "defender_name": "Team Rocket's Tarountula",
+   "n": 8
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 401,
+   "defender_name": "Team Rocket's Spidops",
+   "n": 13
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 414,
+   "defender_name": "Team Rocket's Articuno",
+   "n": 6
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 431,
+   "defender_name": "Team Rocket's Mewtwo ex",
+   "n": 5
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 432,
+   "defender_name": "Team Rocket's Wobbuffet",
+   "n": 3
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 463,
+   "defender_name": "Team Rocket's Murkrow",
+   "n": 8
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 646,
+   "defender_name": "Marnie's Impidimp",
+   "n": 32
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 647,
+   "defender_name": "Marnie's Morgrem",
+   "n": 5
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 648,
+   "defender_name": "Marnie's Grimmsnarl ex",
+   "n": 18
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 666,
+   "defender_name": "Cinderace",
+   "n": 7
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 30
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 674,
+   "defender_name": "Hariyama",
+   "n": 8
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 675,
+   "defender_name": "Lunatone",
+   "n": 29
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 676,
+   "defender_name": "Solrock",
+   "n": 57
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 677,
+   "defender_name": "Riolu",
+   "n": 58
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 678,
+   "defender_name": "Mega Lucario ex",
+   "n": 26
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 721,
+   "defender_name": "Kyogre",
+   "n": 11
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 722,
+   "defender_name": "Snover",
+   "n": 18
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 723,
+   "defender_name": "Mega Abomasnow ex",
+   "n": 5
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 84
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 742,
+   "defender_name": "Kadabra",
+   "n": 7
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 743,
+   "defender_name": "Alakazam",
+   "n": 109
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 756,
+   "defender_name": "Mega Kangaskhan ex",
+   "n": 3
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 849,
+   "defender_name": "Mega Lopunny ex",
+   "n": 11
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 860,
+   "defender_name": "Snorunt",
+   "n": 8
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 878,
+   "defender_name": "Hop's Phantump",
+   "n": 16
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 879,
+   "defender_name": "Hop's Trevenant",
+   "n": 4
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 1030,
+   "defender_name": "Staryu",
+   "n": 10
+  },
+  {
+   "attacker": 344,
+   "attacker_name": "Dwebble",
+   "defender": 1031,
+   "defender_name": "Mega Starmie ex",
+   "n": 3
+  },
+  {
+   "attacker": 381,
+   "attacker_name": "Cynthia's Garchomp ex",
+   "defender": 164,
+   "defender_name": "Comfey",
+   "n": 7
+  },
+  {
+   "attacker": 381,
+   "attacker_name": "Cynthia's Garchomp ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 143
+  },
+  {
+   "attacker": 387,
+   "attacker_name": "Cynthia's Spiritomb",
+   "defender": 860,
+   "defender_name": "Snorunt",
+   "n": 4
+  },
+  {
+   "attacker": 401,
+   "attacker_name": "Team Rocket's Spidops",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 3
+  },
+  {
+   "attacker": 431,
+   "attacker_name": "Team Rocket's Mewtwo ex",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 3
+  },
+  {
+   "attacker": 431,
+   "attacker_name": "Team Rocket's Mewtwo ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 33
+  },
+  {
+   "attacker": 433,
+   "attacker_name": "Team Rocket's Chingling",
+   "defender": 235,
+   "defender_name": "Budew",
+   "n": 4
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 66,
+   "defender_name": "Dudunsparce",
+   "n": 10
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 112,
+   "defender_name": "Munkidori",
+   "n": 42
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 140,
+   "defender_name": "Fezandipiti ex",
+   "n": 8
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 343,
+   "defender_name": "Shaymin",
+   "n": 23
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 344,
+   "defender_name": "Dwebble",
+   "n": 9
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 379,
+   "defender_name": "Cynthia's Gible",
+   "n": 8
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 380,
+   "defender_name": "Cynthia's Gabite",
+   "n": 4
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 387,
+   "defender_name": "Cynthia's Spiritomb",
+   "n": 10
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 400,
+   "defender_name": "Team Rocket's Tarountula",
+   "n": 8
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 414,
+   "defender_name": "Team Rocket's Articuno",
+   "n": 4
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 434,
+   "defender_name": "Team Rocket's Mimikyu",
+   "n": 4
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 646,
+   "defender_name": "Marnie's Impidimp",
+   "n": 55
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 647,
+   "defender_name": "Marnie's Morgrem",
+   "n": 5
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 648,
+   "defender_name": "Marnie's Grimmsnarl ex",
+   "n": 17
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 6
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 756,
+   "defender_name": "Mega Kangaskhan ex",
+   "n": 8
+  },
+  {
+   "attacker": 463,
+   "attacker_name": "Team Rocket's Murkrow",
+   "defender": 860,
+   "defender_name": "Snorunt",
+   "n": 8
+  },
+  {
+   "attacker": 464,
+   "attacker_name": "Team Rocket's Sneasel",
+   "defender": 646,
+   "defender_name": "Marnie's Impidimp",
+   "n": 4
+  },
+  {
+   "attacker": 473,
+   "attacker_name": "Team Rocket's Porygon",
+   "defender": 65,
+   "defender_name": "Dunsparce",
+   "n": 4
+  },
+  {
+   "attacker": 507,
+   "attacker_name": "Beartic",
+   "defender": 190,
+   "defender_name": "Archaludon ex",
+   "n": 3
+  },
+  {
+   "attacker": 507,
+   "attacker_name": "Beartic",
+   "defender": 742,
+   "defender_name": "Kadabra",
+   "n": 4
+  },
+  {
+   "attacker": 521,
+   "attacker_name": "Elgyem",
+   "defender": 674,
+   "defender_name": "Hariyama",
+   "n": 4
+  },
+  {
+   "attacker": 547,
+   "attacker_name": "Genesect ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 6
+  },
+  {
+   "attacker": 641,
+   "attacker_name": "Steven's Metagross ex",
+   "defender": 58,
+   "defender_name": "Great Tusk",
+   "n": 9
+  },
+  {
+   "attacker": 641,
+   "attacker_name": "Steven's Metagross ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 7
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 31,
+   "defender_name": "Chi-Yu",
+   "n": 11
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 119,
+   "defender_name": "Dreepy",
+   "n": 6
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 121,
+   "defender_name": "Dragapult ex",
+   "n": 4
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 140,
+   "defender_name": "Fezandipiti ex",
+   "n": 23
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 174,
+   "defender_name": "Fan Rotom",
+   "n": 6
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 303,
+   "defender_name": "N’s Reshiram",
+   "n": 3
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 341,
+   "defender_name": "Cynthia's Roselia",
+   "n": 14
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 342,
+   "defender_name": "Cynthia's Roserade",
+   "n": 5
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 343,
+   "defender_name": "Shaymin",
+   "n": 15
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 352,
+   "defender_name": "Ethan's Cyndaquil",
+   "n": 4
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 380,
+   "defender_name": "Cynthia's Gabite",
+   "n": 7
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 387,
+   "defender_name": "Cynthia's Spiritomb",
+   "n": 8
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 414,
+   "defender_name": "Team Rocket's Articuno",
+   "n": 30
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 431,
+   "defender_name": "Team Rocket's Mewtwo ex",
+   "n": 28
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 432,
+   "defender_name": "Team Rocket's Wobbuffet",
+   "n": 10
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 434,
+   "defender_name": "Team Rocket's Mimikyu",
+   "n": 8
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 464,
+   "defender_name": "Team Rocket's Sneasel",
+   "n": 3
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 8
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 675,
+   "defender_name": "Lunatone",
+   "n": 4
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 721,
+   "defender_name": "Kyogre",
+   "n": 4
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 722,
+   "defender_name": "Snover",
+   "n": 4
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 848,
+   "defender_name": "Buneary",
+   "n": 4
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 849,
+   "defender_name": "Mega Lopunny ex",
+   "n": 5
+  },
+  {
+   "attacker": 646,
+   "attacker_name": "Marnie's Impidimp",
+   "defender": 1071,
+   "defender_name": "Meowth ex",
+   "n": 4
+  },
+  {
+   "attacker": 648,
+   "attacker_name": "Marnie's Grimmsnarl ex",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 48
+  },
+  {
+   "attacker": 648,
+   "attacker_name": "Marnie's Grimmsnarl ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 1090
+  },
+  {
+   "attacker": 655,
+   "attacker_name": "Celebi",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 4
+  },
+  {
+   "attacker": 655,
+   "attacker_name": "Celebi",
+   "defender": 676,
+   "defender_name": "Solrock",
+   "n": 4
+  },
+  {
+   "attacker": 655,
+   "attacker_name": "Celebi",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 4
+  },
+  {
+   "attacker": 666,
+   "attacker_name": "Cinderace",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 29
+  },
+  {
+   "attacker": 674,
+   "attacker_name": "Hariyama",
+   "defender": 117,
+   "defender_name": "Cornerstone Mask Ogerpon ex",
+   "n": 10
+  },
+  {
+   "attacker": 675,
+   "attacker_name": "Lunatone",
+   "defender": 344,
+   "defender_name": "Dwebble",
+   "n": 3
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 33,
+   "defender_name": "Froakie",
+   "n": 8
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 74,
+   "defender_name": "Rabsca",
+   "n": 22
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 108,
+   "defender_name": "Wellspring Mask Ogerpon ex",
+   "n": 6
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 210,
+   "defender_name": "Pikachu ex",
+   "n": 4
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 251,
+   "defender_name": "Regigigas",
+   "n": 8
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 290,
+   "defender_name": "Tyranitar",
+   "n": 4
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 566,
+   "defender_name": "Virizion",
+   "n": 10
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 597,
+   "defender_name": "Frillish",
+   "n": 6
+  },
+  {
+   "attacker": 676,
+   "attacker_name": "Solrock",
+   "defender": 767,
+   "defender_name": "Mimikyu",
+   "n": 46
+  },
+  {
+   "attacker": 677,
+   "attacker_name": "Riolu",
+   "defender": 174,
+   "defender_name": "Fan Rotom",
+   "n": 7
+  },
+  {
+   "attacker": 678,
+   "attacker_name": "Mega Lucario ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 919
+  },
+  {
+   "attacker": 721,
+   "attacker_name": "Kyogre",
+   "defender": 96,
+   "defender_name": "Teal Mask Ogerpon ex",
+   "n": 5
+  },
+  {
+   "attacker": 723,
+   "attacker_name": "Mega Abomasnow ex",
+   "defender": 330,
+   "defender_name": "Sylveon",
+   "n": 15
+  },
+  {
+   "attacker": 723,
+   "attacker_name": "Mega Abomasnow ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 132
+  },
+  {
+   "attacker": 743,
+   "attacker_name": "Alakazam",
+   "defender": 203,
+   "defender_name": "Skeledirge",
+   "n": 7
+  },
+  {
+   "attacker": 743,
+   "attacker_name": "Alakazam",
+   "defender": 414,
+   "defender_name": "Team Rocket's Articuno",
+   "n": 413
+  },
+  {
+   "attacker": 743,
+   "attacker_name": "Alakazam",
+   "defender": 473,
+   "defender_name": "Team Rocket's Porygon",
+   "n": 20
+  },
+  {
+   "attacker": 743,
+   "attacker_name": "Alakazam",
+   "defender": 835,
+   "defender_name": "Empoleon ex",
+   "n": 5
+  },
+  {
+   "attacker": 743,
+   "attacker_name": "Alakazam",
+   "defender": 1136,
+   "defender_name": "Antique Cover Fossil",
+   "n": 43
+  },
+  {
+   "attacker": 756,
+   "attacker_name": "Mega Kangaskhan ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 107
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 305,
+   "defender_name": "Dunsparce",
+   "n": 3
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 344,
+   "defender_name": "Dwebble",
+   "n": 3
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 3
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 673,
+   "defender_name": "Makuhita",
+   "n": 4
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 675,
+   "defender_name": "Lunatone",
+   "n": 4
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 676,
+   "defender_name": "Solrock",
+   "n": 5
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 678,
+   "defender_name": "Mega Lucario ex",
+   "n": 4
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 741,
+   "defender_name": "Abra",
+   "n": 4
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 743,
+   "defender_name": "Alakazam",
+   "n": 6
+  },
+  {
+   "attacker": 848,
+   "attacker_name": "Buneary",
+   "defender": 756,
+   "defender_name": "Mega Kangaskhan ex",
+   "n": 9
+  },
+  {
+   "attacker": 849,
+   "attacker_name": "Mega Lopunny ex",
+   "defender": 330,
+   "defender_name": "Sylveon",
+   "n": 12
+  },
+  {
+   "attacker": 861,
+   "attacker_name": "Mega Froslass ex",
+   "defender": 345,
+   "defender_name": "Crustle",
+   "n": 32
+  },
+  {
+   "attacker": 891,
+   "attacker_name": "Team Rocket's Honchkrow",
+   "defender": 648,
+   "defender_name": "Marnie's Grimmsnarl ex",
+   "n": 3
+  },
+  {
+   "attacker": 891,
+   "attacker_name": "Team Rocket's Honchkrow",
+   "defender": 743,
+   "defender_name": "Alakazam",
+   "n": 4
+  },
+  {
+   "attacker": 891,
+   "attacker_name": "Team Rocket's Honchkrow",
+   "defender": 879,
+   "defender_name": "Hop's Trevenant",
+   "n": 3
+  },
+  {
+   "attacker": 1013,
+   "attacker_name": "Shaymin",
+   "defender": 722,
+   "defender_name": "Snover",
+   "n": 4
+  },
+  {
+   "attacker": 1072,
+   "attacker_name": "Snorlax",
+   "defender": 58,
+   "defender_name": "Great Tusk",
+   "n": 8
+  }
+ ],
+ "deck_cost": {
+  "13": {
+   "name": "Enriching Energy",
+   "worst": 4,
+   "n": 2943
+  },
+  "19": {
+   "name": "Telepath Psychic Energy",
+   "worst": 2,
+   "n": 9391
+  },
+  "36": {
+   "name": "Morpeko",
+   "worst": 1,
+   "n": 10
+  },
+  "66": {
+   "name": "Dudunsparce",
+   "worst": 1,
+   "n": 23219
+  },
+  "81": {
+   "name": "Drilbur",
+   "worst": 3,
+   "n": 4
+  },
+  "86": {
+   "name": "Metang",
+   "worst": 3,
+   "n": 27
+  },
+  "90": {
+   "name": "Thwackey",
+   "worst": 1,
+   "n": 306
+  },
+  "96": {
+   "name": "Teal Mask Ogerpon ex",
+   "worst": 1,
+   "n": 5779
+  },
+  "98": {
+   "name": "Chandelure",
+   "worst": 1,
+   "n": 46
+  },
+  "120": {
+   "name": "Drakloak",
+   "worst": 1,
+   "n": 5857
+  },
+  "122": {
+   "name": "Tatsugiri",
+   "worst": 1,
+   "n": 53
+  },
+  "140": {
+   "name": "Fezandipiti ex",
+   "worst": 3,
+   "n": 7083
+  },
+  "174": {
+   "name": "Fan Rotom",
+   "worst": 3,
+   "n": 402
+  },
+  "271": {
+   "name": "Iono’s Kilowattrel",
+   "worst": 6,
+   "n": 180
+  },
+  "293": {
+   "name": "N’s Zoroark ex",
+   "worst": 2,
+   "n": 311
+  },
+  "353": {
+   "name": "Ethan's Quilava",
+   "worst": 1,
+   "n": 323
+  },
+  "380": {
+   "name": "Cynthia's Gabite",
+   "worst": 1,
+   "n": 4237
+  },
+  "547": {
+   "name": "Genesect ex",
+   "worst": 2,
+   "n": 26
+  },
+  "641": {
+   "name": "Steven's Metagross ex",
+   "worst": 2,
+   "n": 7
+  },
+  "675": {
+   "name": "Lunatone",
+   "worst": 3,
+   "n": 10155
+  },
+  "756": {
+   "name": "Mega Kangaskhan ex",
+   "worst": 2,
+   "n": 1958
+  },
+  "834": {
+   "name": "Toxtricity",
+   "worst": 1,
+   "n": 19
+  },
+  "915": {
+   "name": "Erika's Tangela",
+   "worst": 1,
+   "n": 17
+  },
+  "1071": {
+   "name": "Meowth ex",
+   "worst": 1,
+   "n": 430
+  },
+  "1077": {
+   "name": "Roto-Stick",
+   "worst": 3,
+   "n": 42
+  },
+  "1079": {
+   "name": "Rare Candy",
+   "worst": 5,
+   "n": 6571
+  },
+  "1080": {
+   "name": "Unfair Stamp",
+   "worst": 5,
+   "n": 1919
+  },
+  "1082": {
+   "name": "Hyper Aroma",
+   "worst": 3,
+   "n": 4
+  },
+  "1086": {
+   "name": "Buddy-Buddy Poffin",
+   "worst": 2,
+   "n": 17562
+  },
+  "1092": {
+   "name": "Secret Box",
+   "worst": 4,
+   "n": 36
+  },
+  "1094": {
+   "name": "Bug Catching Set",
+   "worst": 2,
+   "n": 2674
+  },
+  "1102": {
+   "name": "Dusk Ball",
+   "worst": 1,
+   "n": 4110
+  },
+  "1115": {
+   "name": "Hop’s Bag",
+   "worst": 2,
+   "n": 475
+  },
+  "1119": {
+   "name": "Energy Search",
+   "worst": 1,
+   "n": 1572
+  },
+  "1121": {
+   "name": "Ultra Ball",
+   "worst": 1,
+   "n": 5185
+  },
+  "1122": {
+   "name": "Pokégear 3.0",
+   "worst": 1,
+   "n": 5980
+  },
+  "1125": {
+   "name": "Master Ball",
+   "worst": 1,
+   "n": 2
+  },
+  "1126": {
+   "name": "Precious Trolley",
+   "worst": 5,
+   "n": 51
+  },
+  "1127": {
+   "name": "Tera Orb",
+   "worst": 1,
+   "n": 433
+  },
+  "1128": {
+   "name": "Brilliant Blender",
+   "worst": 5,
+   "n": 3
+  },
+  "1132": {
+   "name": "Team Rocket's Great Ball",
+   "worst": 1,
+   "n": 8
+  },
+  "1134": {
+   "name": "Team Rocket's Transceiver",
+   "worst": 1,
+   "n": 1760
+  },
+  "1142": {
+   "name": "Fighting Gong",
+   "worst": 1,
+   "n": 8307
+  },
+  "1145": {
+   "name": "Mega Signal",
+   "worst": 1,
+   "n": 647
+  },
+  "1152": {
+   "name": "Poké Pad",
+   "worst": 1,
+   "n": 28427
+  },
+  "1181": {
+   "name": "Billy & O'Nare",
+   "worst": 2,
+   "n": 5
+  },
+  "1185": {
+   "name": "Explorer’s Guidance",
+   "worst": 6,
+   "n": 1801
+  },
+  "1187": {
+   "name": "Morty’s Conviction",
+   "worst": 5,
+   "n": 50
+  },
+  "1189": {
+   "name": "Salvatore",
+   "worst": 1,
+   "n": 211
+  },
+  "1192": {
+   "name": "Carmine",
+   "worst": 5,
+   "n": 1939
+  },
+  "1193": {
+   "name": "Hassel",
+   "worst": 1,
+   "n": 1
+  },
+  "1194": {
+   "name": "Colress’s Tenacity",
+   "worst": 2,
+   "n": 1005
+  },
+  "1195": {
+   "name": "Janine’s Secret Art",
+   "worst": 2,
+   "n": 15
+  },
+  "1198": {
+   "name": "Crispin",
+   "worst": 2,
+   "n": 1363
+  },
+  "1199": {
+   "name": "Lacey",
+   "worst": 3,
+   "n": 12
+  },
+  "1200": {
+   "name": "Kofu",
+   "worst": 2,
+   "n": 2
+  },
+  "1202": {
+   "name": "Drayton",
+   "worst": 2,
+   "n": 7
+  },
+  "1203": {
+   "name": "Surfer",
+   "worst": 5,
+   "n": 114
+  },
+  "1205": {
+   "name": "Cyrano",
+   "worst": 3,
+   "n": 217
+  },
+  "1206": {
+   "name": "Larry’s Skill",
+   "worst": 3,
+   "n": 95
+  },
+  "1208": {
+   "name": "Iris’s Fighting Spirit",
+   "worst": 6,
+   "n": 15
+  },
+  "1210": {
+   "name": "Brock’s Scouting",
+   "worst": 2,
+   "n": 463
+  },
+  "1213": {
+   "name": "Judge",
+   "worst": 4,
+   "n": 1599
+  },
+  "1215": {
+   "name": "Ethan's Adventure",
+   "worst": 3,
+   "n": 367
+  },
+  "1216": {
+   "name": "Team Rocket's Ariana",
+   "worst": 8,
+   "n": 1117
+  },
+  "1217": {
+   "name": "Team Rocket's Archer",
+   "worst": 5,
+   "n": 335
+  },
+  "1219": {
+   "name": "Team Rocket's Petrel",
+   "worst": 1,
+   "n": 3438
+  },
+  "1220": {
+   "name": "Team Rocket's Proton",
+   "worst": 3,
+   "n": 1057
+  },
+  "1223": {
+   "name": "Harlequin",
+   "worst": 5,
+   "n": 271
+  },
+  "1224": {
+   "name": "Cheren",
+   "worst": 3,
+   "n": 116
+  },
+  "1225": {
+   "name": "Hilda",
+   "worst": 2,
+   "n": 5481
+  },
+  "1227": {
+   "name": "Lillie's Determination",
+   "worst": 8,
+   "n": 15911
+  },
+  "1231": {
+   "name": "Dawn",
+   "worst": 3,
+   "n": 6915
+  },
+  "1232": {
+   "name": "Firebreather",
+   "worst": 7,
+   "n": 3
+  },
+  "1233": {
+   "name": "Canari",
+   "worst": 4,
+   "n": 39
+  },
+  "1235": {
+   "name": "Waitress",
+   "worst": 1,
+   "n": 277
+  },
+  "1236": {
+   "name": "Urbain",
+   "worst": 3,
+   "n": 24
+  },
+  "1237": {
+   "name": "Lucian",
+   "worst": 1,
+   "n": 3
+  },
+  "1239": {
+   "name": "Naveen",
+   "worst": 5,
+   "n": 3
+  }
+ },
+ "gust_cards": {
+  "1088": {
+   "name": "Prime Catcher",
+   "n": 21
+  },
+  "1124": {
+   "name": "Pokémon Catcher",
+   "n": 5
+  },
+  "1137": {
+   "name": "Tool Scrapper",
+   "n": 4
+  },
+  "1182": {
+   "name": "Boss’s Orders",
+   "n": 7413
+  },
+  "1204": {
+   "name": "Lisia’s Appeal",
+   "n": 361
+  },
+  "1218": {
+   "name": "Team Rocket's Giovanni",
+   "n": 532
+  }
+ }
+}
